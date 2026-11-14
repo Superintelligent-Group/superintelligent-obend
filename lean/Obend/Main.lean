@@ -70,6 +70,7 @@ def usage : String :=
   "       obend receipt identity N CERT.lrat OUT.json [--prev PREV.json] | receipt negotiation OUT.json [--full] [--prev PREV.json] | receipt cnf N OUT.cnf\n" ++
   "       obend tapeout [FILE.obend] [--entry NAME] [--mode pipelined|seq|comb] [--out-sv FILE.sv] [--out-librelane FILE.json] [--out-receipt RECEIPT.json]\n" ++
   "       obend verilate <FILE.obend> [--top NAME] [--vectors N] [--cycles C] [--vcd OUT.vcd]"
+def usage64 : IO UInt32 := do IO.eprintln usage; return 64
 
 /-! ## The typed-core packet path (lane A) -/
 
@@ -111,41 +112,32 @@ def runJit (t : Obend.Core.Term.Term) (mode : String) (emit : Option String) : I
   finally IO.FS.removeDirAll dir
 
 structure RunOptions where
-  jit : String := ""
-  emitC99 : Option String := none
-  ticks : Nat := 100000
-  heap : Nat := 65536
-  stack : Nat := 4096
-
+  (jit : String := "") (emitC99 : Option String := none) (ticks : Nat := 100000) (heap : Nat := 65536) (stack : Nat := 4096)
 def parseOptions : List String → RunOptions → Except String RunOptions
   | [], options => .ok options
   | "--jit" :: rest, options => parseOptions rest { options with jit := "vm" }
   | "--jit=cc" :: rest, options => parseOptions rest { options with jit := "cc" }
   | "--emit-c99" :: p :: rest, options => parseOptions rest { options with emitC99 := some p }
+  | ["--emit-c99"], _ => .error "refused: --emit-c99 needs a path"
   | flag :: value :: rest, options =>
-    match value.toNat? with
-    | none => .error s!"{flag} needs a number, got {value}"
-    | some n =>
-      match flag with
-      | "--ticks" => parseOptions rest { options with ticks := n }
-      | "--heap" => parseOptions rest { options with heap := n }
-      | "--stack" => parseOptions rest { options with stack := n }
-      | _ => .error s!"unknown option {flag}"
-  | [flag], _ => .error s!"{flag} needs a value"
-
+    if flag.startsWith "--jit" then .error s!"refused: unknown JIT mode {flag}" else
+    match flag, value.toNat? with
+    | _, none => .error s!"{flag} needs a number, got {value}"
+    | "--ticks", some n => parseOptions rest { options with ticks := n }
+    | "--heap", some n => parseOptions rest { options with heap := n }
+    | "--stack", some n => parseOptions rest { options with stack := n }
+    | _, _ => .error s!"unknown option {flag}"
+  | [flag], _ => .error (if flag.startsWith "--jit" then s!"refused: unknown JIT mode {flag}" else s!"{flag} needs a value")
 def packetValueJson : Machine.RuntimeValue → Json
   | .natural n => toJson n
   | .boolean b => toJson b
   | .label s => toJson s
   | other => toJson (toString (repr other))
-
 def receipt (status : String) (fields : List (String × Json)) : Json :=
   Json.mkObj ([("schema", toJson "dregg.objective-bend.run-receipt.v1"), ("status", toJson status)] ++ fields)
-
 def refusePacket (stage message : String) : IO UInt32 := do
   IO.eprintln (receipt "refused" [("stage", toJson stage), ("message", toJson message)]).compress
   return 2
-
 def runPacket (path : String) (options : RunOptions) : IO UInt32 := do
   let input ← IO.FS.readFile path
   match Json.parse input >>= Packet.decodePacket with
@@ -329,16 +321,9 @@ def packageOfWorkspace (spec : String) (entry : Option String) : FE Package := d
 `dregg.objective-bend.package-input.v1` JSON specs. -/
 partial def packageOfSpec (spec : String) (entry : Option String) : FE Package := do
   let fp := System.FilePath.mk spec
-  let isDir ← (do
-    try return .ok (← fp.isDir)
-    catch _ => return .ok false : IO (Except Diagnostic Bool))
-  if isDir then
-    let wsJson := (fp / "workspace.json").toString
-    let pkgJson := (fp / "package.json").toString
-    let hasWs ← (do try return .ok (← System.FilePath.pathExists wsJson) catch _ => return .ok false : IO (Except Diagnostic Bool))
-    if hasWs then return ← packageOfSpec wsJson entry
-    let hasPkg ← (do try return .ok (← System.FilePath.pathExists pkgJson) catch _ => return .ok false : IO (Except Diagnostic Bool))
-    if hasPkg then return ← packageOfSpec pkgJson entry
+  if ← (fp.isDir : IO Bool) then
+    for manifest in ["workspace.json", "package.json"] do
+      if ← ((fp / manifest).pathExists : IO Bool) then return ← packageOfSpec (fp / manifest).toString entry
     return ← packageOfObendDir spec entry
   if spec.endsWith ".obend" then
     return ← packageOfObendFile spec entry
@@ -353,10 +338,6 @@ partial def packageOfSpec (spec : String) (entry : Option String) : FE Package :
   let ast ← liftFE (parseSource m.name m.source)
   let decls := ((ast.getObjVal? "declarations").bind Json.getArr?).toOption.getD #[]
   return ⟨c.modules.toList, c.entryModule, entryDefinition, decls.toList.map declarationName, none⟩
-
-/-- Load a package from a `.obend` file, directory, or `.json` spec/workspace. -/
-def packageOfFile (file : String) (entry : Option String) : FE Package :=
-  packageOfSpec file entry
 
 def hostLimits (ticks : String) : Json :=
   Json.mkObj [("ticks", toJson ticks), ("heap", toJson "100000"), ("stack", toJson "10000"), ("checkWork", toJson "65536")]
@@ -473,25 +454,22 @@ def parseRunArgs : List String → RunArgs → List String → Except String (Ru
   | "--jit" :: rest, r, positional => parseRunArgs rest { r with jit := "vm" } positional
   | "--jit=cc" :: rest, r, positional => parseRunArgs rest { r with jit := "cc" } positional
   | "--emit-c99" :: p :: rest, r, positional => parseRunArgs rest { r with emitC99 := some p } positional
-  | ["--emit-c99"], _, _ => .error "--emit-c99 needs a path"
+  | ["--emit-c99"], _, _ => .error "refused: --emit-c99 needs a path"
   | "--json" :: rest, r, positional => parseRunArgs rest { r with json := true } positional
   | "--ticks" :: n :: rest, r, positional => parseRunArgs rest { r with ticks := n } positional
   | ["--ticks"], _, _ => .error "--ticks needs a value"
   | "--entry" :: e :: rest, r, positional => parseRunArgs rest { r with entry := some e } positional
   | ["--entry"], _, _ => .error "--entry needs a definition name"
-  | x :: rest, r, positional => parseRunArgs rest r (x :: positional)
-
+  | x :: rest, r, positional =>
+    if x.startsWith "--jit" then .error s!"refused: unknown JIT mode {x}" else parseRunArgs rest r (x :: positional)
 def runSource (package : FE Package) (rest : List String) : IO UInt32 := do
   let (options, positional) ← match parseRunArgs rest {} [] with
     | .ok v => pure v
-    | .error e => do IO.eprintln e; return 64
-  let argsJson := positional.getD 0 "[]"
-  let responsesJson := positional.getD 1 "[]"
+    | .error e => do IO.eprintln e; return (if e.startsWith "refused" then 2 else 64)
   let parsed : Except String (Json × Json) := do
-    let args ← Json.parse argsJson
-    let responses ← Json.parse responsesJson
-    let responseArray ← responses.getArr?
-    pure (args, Json.arr (responseArray.map responseOf))
+    let args ← Json.parse (positional.getD 0 "[]")
+    let responses ← Json.parse (positional.getD 1 "[]") >>= Json.getArr?
+    pure (args, Json.arr (responses.map responseOf))
   let (args, responses) ← match parsed with
     | .ok v => pure v
     | .error e => do IO.eprintln ("arguments and responses must be JSON arrays: " ++ e); return 64
@@ -560,7 +538,6 @@ def checkSource (package : FE Package) : IO UInt32 := do
     return (if failed then 2 else 0)
 
 /-! ## Workspace commands -/
-
 def admitCommand (spec turnPath : String) : IO UInt32 := do
   let result ← (do
     let w ← Obend.Spec.Workspace.readWorkspace spec
@@ -584,13 +561,9 @@ def packageNameOf (spec : String) : String :=
 def judgeCommand (spec old new : String) : IO UInt32 := do
   let result ← (do
     let isWs ← (do
-      try
-        if spec.endsWith ".json" then
-          let txt ← IO.FS.readFile spec
-          match Json.parse txt with
-          | .ok j => return .ok ((j.getObjValAs? String "schema").toOption == some Obend.Spec.Workspace.workspaceSchema)
-          | .error _ => return .ok false
-        else return .ok false
+      if !spec.endsWith ".json" then return .ok false
+      try return .ok (((Json.parse (← IO.FS.readFile spec)).bind (·.getObjValAs? String "schema")).toOption ==
+        some Obend.Spec.Workspace.workspaceSchema)
       catch _ => return .ok false : IO (Except Diagnostic Bool))
     let laws ← if isWs then
         let c ← Obend.Spec.Workspace.readClosed spec
@@ -636,24 +609,18 @@ def splitClaim (name : String) : Option (String × String) :=
   | claim :: spec@(_ :: _) => some (".".intercalate spec.reverse, claim)
   | _ => none
 
-def readReceiptSteps (path : String) : IO (Option (List Obend.Logic.RStep)) := do
-  if !(← System.FilePath.pathExists path) then return none
-  let j ← match Json.parse (← IO.FS.readFile path) with
-    | .ok j => pure j
-    | .error _ => return none
-  match (j.getObjVal? "certificate").toOption with
-  | none => return none
-  | some cert => return (Obend.Logic.certificateOf cert.compress).toOption
+/-- The package of `spec` and its erased selection of `entry`, or the refusal's JSON. -/
+def loadSelection (spec entry : String) : IO (Except String (Package × Obend.Core.Term.Term)) := do
+  match ← (packageOfSpec spec none).run with
+  | .error d => return .error d.json.compress
+  | .ok p => return ((selection p entry).mapError (·.json.compress)).map (p, ·)
 
 /-- `obend check --obligations`: every claim of the package, its object, and its status, the slot's
 read of the certificate in `DIR/SPEC.CLAIM.json` (when given) at this program's object. -/
 def obligationsCommand (spec entry : String) (receipts : Option String) : IO UInt32 := do
-  let p ← match ← (packageOfSpec spec none).run with
-    | .ok p => pure p
-    | .error d => IO.eprintln d.json.compress; return 2
-  let t ← match selection p entry with
-    | .ok t => pure t
-    | .error d => IO.eprintln d.json.compress; return 2
+  let (p, t) ← match ← loadSelection spec entry with
+    | .ok r => pure r
+    | .error e => IO.eprintln e; return 2
   let some root := Obend.Logic.Program.knotOf t | IO.eprintln "the selection is not a knot field"; return 2
   -- `keeps INV by LAW` lines: listed; their certifying-shape check (`Law.checkClaim`) needs the
   -- compiled law at the object's state type, which the installing kernel holds, not this listing.
@@ -671,20 +638,16 @@ def obligationsCommand (spec entry : String) (receipts : Option String) : IO UIn
       match Obend.Logic.Program.claimObj root C specKey name with
       | .error e => IO.println (Json.mkObj [("claim", toJson full), ("status", toJson "refused"), ("message", toJson e)]).compress
       | .ok o =>
-        let selected ← match receipts with
-          | some dir => readReceiptSteps (dir ++ "/" ++ full ++ ".json")
-          | none => pure none
-        -- The slot is the certified claim's (its statement), read at this program's object.
-        let certified ← match receipts with
+        let receipt : Option Json ← match receipts with
           | some dir => do
             let path := dir ++ "/" ++ full ++ ".json"
-            if !(← System.FilePath.pathExists path) then pure o else
-            match Json.parse (← IO.FS.readFile path) with
-            | .ok j => match (j.getObjVal? "statement").toOption with
-              | some st => pure ((Obend.Logic.statementOf st.compress).toOption.getD o)
-              | none => pure o
-            | .error _ => pure o
-          | none => pure o
+            if ← System.FilePath.pathExists path then pure (Json.parse (← IO.FS.readFile path)).toOption else pure none
+          | none => pure none
+        let selected := receipt.bind fun j => (j.getObjVal? "certificate").toOption.bind fun c =>
+          (Obend.Logic.certificateOf c.compress).toOption
+        -- The slot is the certified claim's (its statement), read at this program's object.
+        let certified := (receipt.bind fun j => (j.getObjVal? "statement").toOption.bind fun st =>
+          (Obend.Logic.statementOf st.compress).toOption).getD o
         let status := Obend.Logic.readStatus certified 1000000 C selected none none
         let extra : List (String × Json) := match status with
           | .blocked ms => [("blocked", toJson ms)]
@@ -694,18 +657,14 @@ def obligationsCommand (spec entry : String) (receipts : Option String) : IO UIn
         IO.println (Json.mkObj ([("claim", toJson full), ("status", toJson status.label),
           ("object", toJson layers)] ++ extra)).compress
   return 0
-
 def parseNats (s : String) : Option (List Nat) := (s.splitOn ",").mapM String.toNat?
 
 /-- `obend prove`: ground instances first (a `false` refutes and stops), then the rewriter; the
 first certificate the claim checker accepts is installed as the receipt. -/
 def proveCommand (spec name entry out : String) (ground : List Nat) : IO UInt32 := do
-  let p ← match ← (packageOfSpec spec none).run with
-    | .ok p => pure p
-    | .error d => IO.eprintln d.json.compress; return 2
-  let t ← match selection p entry with
-    | .ok t => pure t
-    | .error d => IO.eprintln d.json.compress; return 2
+  let (_, t) ← match ← loadSelection spec entry with
+    | .ok r => pure r
+    | .error e => IO.eprintln e; return 2
   let some root := Obend.Logic.Program.knotOf t | IO.eprintln "the selection is not a knot field"; return 2
   let some (specKey, claim) := splitClaim name | IO.eprintln s!"{name}: name a claim as SPEC.CLAIM"; return 64
   let some C := Obend.Logic.Program.objectFor specKey t
@@ -736,12 +695,9 @@ def proveCommand (spec name entry out : String) (ground : List Nat) : IO UInt32 
 
 /-- `obend ground`: the ground judge on `ENTRY() == EXPECTED`. -/
 def groundCommand (spec entry expected : String) : IO UInt32 := do
-  let p ← match ← (packageOfSpec spec none).run with
-    | .ok p => pure p
-    | .error d => IO.eprintln d.json.compress; return 2
-  let t ← match selection p entry with
-    | .ok t => pure t
-    | .error d => IO.eprintln d.json.compress; return 2
+  let (_, t) ← match ← loadSelection spec entry with
+    | .ok r => pure r
+    | .error e => IO.eprintln e; return 2
   let some n := expected.toNat? | IO.eprintln "EXPECTED must be a natural"; return 64
   let claim := Obend.Core.Term.Term.binary .equal t (.nat n)
   match Obend.Logic.groundCheck Obend.Logic.Receipt.groundFuel ⟨claim, []⟩ () with
@@ -807,12 +763,9 @@ where
 
 /-- The program's selection and the composition of spec layers reached from it. -/
 def leafObject (spec entry : String) : IO (Except String (Obend.Core.Term.Term × Obend.Logic.Composition)) := do
-  let p ← match ← (packageOfSpec spec none).run with
-    | .ok p => pure p
-    | .error d => return .error d.json.compress
-  let t ← match selection p entry with
-    | .ok t => pure t
-    | .error d => return .error d.json.compress
+  let (_, t) ← match ← loadSelection spec entry with
+    | .ok r => pure r
+    | .error e => return .error e
   -- the first composition of named spec layers (the package knot's own layer is unnamed)
   match Obend.Logic.Program.findObject (fun C => C.layers.all (·.name != "")) 100000 t with
   | some C => return .ok (t, C)
@@ -823,18 +776,9 @@ def machineNat (t : Obend.Core.Term.Term) : Option Nat :=
   match Obend.Core.Machine.runBounded ⟨1000000, 1000000⟩ 10000000 (Obend.Core.Machine.initial t) with
   | .finished (.natural n) _ => some n
   | _ => none
-
-def showNat : Option Nat → String
-  | some n => toString n
-  | none => "no natural"
-
-def kindName : Obend.Leaf.DefKind → String
-  | .method => "method"
-  | .cell => "cell"
-
-def cellName : Obend.Leaf.LeafCell → String
-  | .layer k => "layer " ++ k
-  | .object n => "object " ++ n
+def showNat (n : Option Nat) : String := (n.map toString).getD "no natural"
+def kindName : Obend.Leaf.DefKind → String | .method => "method" | .cell => "cell"
+def cellName : Obend.Leaf.LeafCell → String | .layer k => "layer " ++ k | .object n => "object " ++ n
 
 /-- `MEMBER(N)` read from the term `obj` and run on the demand machine. -/
 def callOn (obj : Obend.Core.Term.Term) (m : String) (n : Nat) : Option Nat :=
@@ -851,10 +795,8 @@ def emitCommand (spec entry out : String) (call : Option (String × Nat)) : IO U
     IO.println "refused: the composition is not closed, outside flatten_sound's scope"; return 3
   let B := Obend.Leaf.emit C
   IO.println s!"slots: {B.slots}"
-  for d in B.defs do
-    IO.println s!"def {d.slot} {d.member}: {kindName d.kind}, reads {d.reads}"
-  for (m, _) in B.statics do
-    IO.println s!"static {m}"
+  for d in B.defs do IO.println s!"def {d.slot} {d.member}: {kindName d.kind}, reads {d.reads}"
+  for (m, _) in B.statics do IO.println s!"static {m}"
   IO.println s!"closed: {B.closedB}"
   let defs := B.defs.map fun d => Json.mkObj [("member", toJson d.member), ("slot", toJson d.slot),
     ("kind", toJson (kindName d.kind)), ("reads", toJson d.reads), ("code", Obend.Logic.termJson d.code)]
@@ -867,7 +809,6 @@ def emitCommand (spec entry out : String) (call : Option (String × Nat)) : IO U
     IO.println s!"book: {m}({n}) = {showNat (callOn B.link m n)}"
     IO.println s!"machine: {m}({n}) = {showNat (callOn C.object m n)}; {entry}() = {showNat (machineNat t)}"
   return 0
-
 def specializeCommand (spec entry bookPath : String) (call : Option (String × Nat)) : IO UInt32 := do
   let (_, now) ← match ← leafObject spec entry with
     | .ok r => pure r
@@ -897,12 +838,10 @@ def specializeCommand (spec entry bookPath : String) (call : Option (String × N
     if let some (m, n) := call then IO.println s!"machine: {m}({n}) = {showNat (callOn now.object m n)}"
   | _ => IO.println "selected: none"
   return 0
-
 def leafCall : List String → Option (Option (String × Nat))
   | [] => some none
   | ["--call", m, n] => n.toNat?.map fun n => some (m, n)
   | _ => none
-
 def proveArgs (spec name : String) : List String → Option (IO UInt32)
   | ["--object", entry, "--out", out] => some (proveCommand spec name entry out [0, 3, 41])
   | ["--object", entry, "--out", out, "--ground", g] => (parseNats g).map (proveCommand spec name entry out ·)
@@ -911,7 +850,6 @@ def proveArgs (spec name : String) : List String → Option (IO UInt32)
 /-! JSON adapters keep decoding failures separate from semantic refusals. -/
 namespace LiveCli
 open Lean
-
 def field (j : Json) (k : String) : Except String Json := j.getObjVal? k
 def nat (j : Json) (k : String) : Except String Nat := j.getObjValAs? Nat k
 def text (j : Json) (k : String) : Except String String := j.getObjValAs? String k
@@ -929,22 +867,32 @@ def finish (args : List String) (ok : Bool) (j : Json) : IO UInt32 := do
   output args j
   if !ok then IO.eprintln "refused: verification failed"
   return if ok then 0 else 3
-
 def hex (bs : ByteArray) : String := String.ofList (bs.data.toList.flatMap fun b =>
   ["0123456789abcdef".toList[b.toNat / 16]!, "0123456789abcdef".toList[b.toNat % 16]!])
-def zk (cmd : String) (args : List String) : IO UInt32 := do
+def hex256 (n : Nat) : String := hex ⟨(Obend.Digest.HashBytes.be 32 n).toArray⟩
+def unhex256 (s : String) : Except String Nat :=
+  if s.length != 64 then throw "expected 64 hex digits" else s.toList.foldlM (fun n c =>
+    match "0123456789abcdef".toList.idxOf? c.toLower with
+    | some digit => pure (16 * n + digit) | none => throw "expected 64 hex digits") 0
+/-- `flag VALUE` taken out of an argument list, wherever it stands. -/
+def takeOpt (flag : String) : List String → Option String × List String
+  | f :: rest => match f == flag, rest with
+    | true, v :: tail => (some v, tail)
+    | _, _ => let (o, r) := takeOpt flag rest; (o, f :: r)
+  | [] => (none, [])
+/-- The Rust receipt binary; `quiet` keeps its report off stdout, which then carries one JSON value. -/
+def zk (cmd : String) (args : List String) (quiet := false) : IO UInt32 := do
   let override := (← IO.getEnv "OBEND_ZK_RECEIPT_BIN").getD ""
   let sibling := ((← IO.appPath).parent.getD ".") / "obend-zk-receipt"
   let candidates := if override.isEmpty then [sibling.toString, "./target/release/obend-zk-receipt", "../target/release/obend-zk-receipt"] else [override]
   for p in candidates do
     if ← (System.FilePath.mk p).pathExists then
       let out ← IO.Process.output { cmd := p, args := (cmd :: args).toArray }
-      (← IO.getStdout).putStr out.stdout
+      (← if quiet then IO.getStderr else IO.getStdout).putStr out.stdout
       (← IO.getStderr).putStr out.stderr
       return out.exitCode
   IO.eprintln "refused: obend-zk-receipt binary not found (set OBEND_ZK_RECEIPT_BIN)"
   return 2
-
 open Obend.Law.AmendCli Obend.Law.PointwiseRevise in
  def amend (trace : Bool) (j : Json) (args : List String) : IO UInt32 := do
   let requests ← decodeIO (if trace then field j "steps" >>= Json.getArr? else .ok #[j])
@@ -952,11 +900,8 @@ open Obend.Law.AmendCli Obend.Law.PointwiseRevise in
     let fields ← ["version", "slot", "clauses"].mapM fun key => return (key, ← field r key)
     parseAmendBundleJson (Json.mkObj fields).compress)
   let initial : LiveState := {
-    world := fun _ => ⟨6, []⟩
-    transferred := 0
-    generations := 0
-    fabric := fun k => { (default : Obend.Hardware.DprStutter.DprFabric) with
-      specSlot := k, phase := .active, activeTiles := modelTiles 6 } }
+    world := fun _ => ⟨6, []⟩, transferred := 0, generations := 0
+    fabric := fun k => { (default : Obend.Hardware.DprStutter.DprFabric) with specSlot := k, phase := .active, activeTiles := modelTiles 6 } }
   let (st, receipts) := if trace then executeTraceWithReceipts initial (turns.map (·, [])) else
     match turns with | [t] => let (s, r) := executeLiveAmendment initial t []; (s, [r]) | _ => (initial, [])
   let mut prior := ""
@@ -980,7 +925,6 @@ open Obend.Law.AmendCli Obend.Law.PointwiseRevise in
     |>.setObjVal! "receipts" (.arr rows) |>.setObjVal! "generations" (toJson st.generations)
     |>.setObjVal! "transferred" (toJson st.transferred)
   finish args ok summary
-
 def rat (j : Json) : Except String Rat := do
   if let .ok n := j.getInt? then return n
   let n ← j.getObjValAs? Int "num"
@@ -991,7 +935,6 @@ def ratJson (q : Rat) : Json := Json.mkObj [("num", toJson q.num), ("den", toJso
 def matrix (j : Json) : Except String (List (List Rat)) := do
   (← j.getArr?).toList.mapM fun r => do (← r.getArr?).toList.mapM rat
 def matrixJson (m : List (List Rat)) : Json := .arr (m.toArray.map fun r => .arr (r.toArray.map ratJson))
-
 open Obend.Analysis.HyperbolicPde Obend.Analysis.PdeSexprAndApprox in
  def pde (solve : Bool) (j : Json) (args : List String) : IO UInt32 := do
   let fmt ← decodeIO (text j "format")
@@ -1036,7 +979,6 @@ instance : FromJson ForsTreeOpening := ⟨fun j => return ⟨← j.getObjValAs? 
 instance : ToJson ForsTreeOpening := ⟨fun x => Json.mkObj [("secretVal", toJson x.secretVal), ("authPath", toJson x.authPath)]⟩
 instance : FromJson PqHashSig := ⟨fun j => return ⟨← j.getObjValAs? _ "rRand", ← j.getObjValAs? _ "msgTswCtr", ← j.getObjValAs? _ "leafGlobalIdx", ← j.getObjValAs? _ "forsOpenings", ← j.getObjValAs? _ "layerSigs"⟩⟩
 instance : ToJson PqHashSig := ⟨fun x => Json.mkObj [("rRand", toJson x.rRand), ("msgTswCtr", toJson x.msgTswCtr), ("leafGlobalIdx", toJson x.leafGlobalIdx), ("forsOpenings", toJson x.forsOpenings), ("layerSigs", toJson x.layerSigs)]⟩
-
 def mpc (sign : Bool) (j : Json) (args : List String) : IO UInt32 := do
   let params : PqHashParams ← decodeIO (j.getObjValAs? PqHashParams "params")
   let msg : List UInt8 ← decodeIO (j.getObjValAs? (List UInt8) "message")
@@ -1066,7 +1008,6 @@ def mpc (sign : Bool) (j : Json) (args : List String) : IO UInt32 := do
   let ok := verifyPqHashSig cshake256Suite params pk msg sig
   finish args ok (Json.mkObj [("params", toJson params), ("message", toJson msg),
     ("publicKey", toJson pk), ("signature", toJson sig), ("status", toJson (if ok then "accepted" else "refused"))])
-
 open Obend.Polis.Custody
 instance : ToJson ByteArray := ⟨fun b => toJson b.data⟩
 instance : FromJson ByteArray := ⟨fun j => return ⟨← fromJson? j⟩⟩
@@ -1098,14 +1039,12 @@ instance : ToJson GrainArchive := ⟨fun a => Json.mkObj [
   ("package", toJson a.package), ("entries", toJson a.entries), ("anchor", toJson a.anchor),
   ("previousHead", toJson a.previousHead), ("grainId", toJson a.frozenGrain.grain), ("extensions", .arr #[]),
   ("lease", toJson a.lease), ("settlements", toJson a.settlements), ("transitionSignature", toJson a.transitionSignature)]⟩
-
 def custodyFiles (dir : System.FilePath) : IO (Array VarEntry) := do
   let mut entries := #[]
   for e in ← (dir / "var").readDir do
     if ← e.path.isDir then throw (IO.userError "custody var entries must be regular files")
     entries := entries.push ⟨e.fileName.toUTF8.toList, ← IO.FS.readBinFile e.path⟩
   return entries
-
 def custodySave (dir : System.FilePath) (s : GrainCustodyHost) : IO Unit := do
   -- WAL first: interrupted installation leaves the authenticated one-ahead image recoverable.
   let writes := if s.wal.isSome then [("wal", toJson s.wal), ("durable", toJson s.durable), ("volatile", toJson s.volatile)]
@@ -1114,7 +1053,6 @@ def custodySave (dir : System.FilePath) (s : GrainCustodyHost) : IO Unit := do
     let path := dir / (name ++ ".json")
     IO.FS.writeFile (dir / (name ++ ".pending")) j.compress
     IO.FS.rename (dir / (name ++ ".pending")) path
-
 def custody (cmd dirName : String) (args : List String) : IO UInt32 := do
   let dir := System.FilePath.mk dirName
   let mut epoch := 0
@@ -1124,10 +1062,7 @@ def custody (cmd dirName : String) (args : List String) : IO UInt32 := do
     let mut rest := args
     while !rest.isEmpty do
       let flag :: value :: tail := rest | throw (IO.userError "custody option needs a value")
-      let parsed := if flag == "--grain-id" && value.length == 64 then
-        value.toList.foldlM (fun n c => do
-          let some digit := "0123456789abcdef".toList.idxOf? c.toLower | none
-          some (16 * n + digit)) 0 else value.toNat?
+      let parsed := if flag == "--grain-id" && value.length == 64 then (unhex256 value).toOption else value.toNat?
       let n ← decodeIO (match parsed with | some n => .ok n | none => .error "expected natural number or 64-digit grain hex")
       match flag with
       | "--epoch" => epoch := n
@@ -1171,6 +1106,8 @@ def custody (cmd dirName : String) (args : List String) : IO UInt32 := do
         ← decodeIO (fromJson? (← load (dir / "volatile.json").toString))⟩ : GrainCustodyHost)
   let candidate := s.wal.getD s.durable
   let status := reopenCustody auth verify (some {candidate with entries := entries.toList}) (some s.durable.anchor)
+  let status := if s.wal.isNone then status else
+    (match reopenCustody auth verify (some s.durable) (some s.durable.anchor) with | .ready => status | bad => bad)
   if status != .ready && status != .recoveryRequired then
     s := { s with volatile := none }
     custodySave dir s
@@ -1198,7 +1135,6 @@ def custody (cmd dirName : String) (args : List String) : IO UInt32 := do
   | _ => throw (IO.userError "custody commands: init | prepare | reopen | event")
   custodySave dir s
   finish [] true ((verdict true (reprStr status)).setObjVal! "varDataRootHex" (toJson (hex liveRoot)))
-
 open Obend.Crypto Obend.Judge Obend.Ledger
 instance : FromJson Rat := ⟨rat⟩
 instance : FromJson Side := ⟨fun j => do
@@ -1212,14 +1148,9 @@ instance {α : Type} [FromJson α] {d : Nat} : FromJson (Obend.Crypto.Fast.Sized
 instance : FromJson AjtaiParams := ⟨fun j => do
   let rows ← nat j "rows"; let cols ← nat j "cols"; let modulus ← nat j "modulus"
   let matrix : List (List Int) ← j.getObjValAs? _ "matrix"
-  if hr : 0 < rows then
-    if hm : 0 < modulus then
-      if hlen : matrix.length = rows then
-        if hc : ∀ row ∈ matrix, row.length = cols then return ⟨rows, cols, hr, modulus, hm, matrix, hlen, hc⟩
-        else throw "Ajtai column dimension"
-      else throw "Ajtai row dimension"
-    else throw "Ajtai modulus"
-  else throw "Ajtai rows"⟩
+  if h : 0 < rows ∧ 0 < modulus ∧ matrix.length = rows ∧ ∀ row ∈ matrix, row.length = cols then
+    return ⟨rows, cols, h.1, modulus, h.2.1, matrix, h.2.2.1, h.2.2.2⟩
+  else throw "Ajtai rows, modulus or matrix dimensions"⟩
 instance : FromJson GoldilocksExt2 := ⟨fun j => return ⟨← j.getObjValAs? _ "c0", ← j.getObjValAs? _ "c1"⟩⟩
 instance : FromJson Obend.Analysis.Interval := ⟨fun j => return ⟨← j.getObjValAs? _ "lo", ← j.getObjValAs? _ "hi"⟩⟩
 instance : FromJson Obend.Analysis.TaylorModel := ⟨fun j => return ⟨← j.getObjValAs? _ "coeffs", ← j.getObjValAs? _ "center", ← j.getObjValAs? _ "domain", ← j.getObjValAs? _ "rem"⟩⟩
@@ -1233,7 +1164,6 @@ instance : FromJson Certificate := ⟨fun j => return ⟨← j.getObjValAs? _ "p
 instance {d : Nat} : FromJson (SableLinearWitness d) := ⟨fun j => return ⟨← j.getObjValAs? _ "weights", ← j.getObjValAs? _ "features", ← j.getObjValAs? _ "bias"⟩⟩
 instance {d : Nat} : FromJson (RlweCiphertext d) := ⟨fun j => return ⟨← j.getObjValAs? _ "c0", ← j.getObjValAs? _ "c1"⟩⟩
 instance {d : Nat} : FromJson (PartialDecryptionShare d) := ⟨fun j => return ⟨← j.getObjValAs? _ "guardianId", ← j.getObjValAs? _ "sharePoly"⟩⟩
-
 def bazaarBatch (cfg : ThresholdDecryptConfig) (dim : Nat) (j : Json) : Except String (DarkBazaarEpochBatch dim cfg) := do
   let pp : AjtaiParams ← j.getObjValAs? _ "ajtaiParams"
   let orders ← (← field j "orders").getArr?
@@ -1247,10 +1177,11 @@ def bazaarBatch (cfg : ThresholdDecryptConfig) (dim : Nat) (j : Json) : Except S
            thresholdShares := ← j.getObjValAs? _ "thresholdShares"
            openingQuery := ⟨← j.getObjValAs? _ "market", pp, cfg.encNoiseBound, cfg.smudgeBound, cfg.secBits, specs, 0, 2^128⟩
            openingWitness := ⟨ws, ← j.getObjValAs? _ "transfers", ← j.getObjValAs? _ "kkt"⟩ }
-
 def bazaar (path : String) (args : List String) : IO UInt32 := do
-  if args.contains "--zk-receipt" then throw (IO.userError "the installed Rust receipt CLI has no DarkBazaar clearing prover")
-  if args != [] && !(args.length == 2 && args.head? == some "--out") then throw (IO.userError "usage: bazaar clear INPUT [--out FILE]")
+  let (receipt, args) := takeOpt "--zk-receipt" args
+  let (key, args) := takeOpt "--root-secret" args
+  if receipt.isSome != key.isSome || (args != [] && !(args.length == 2 && args.head? == some "--out")) then
+    throw (IO.userError "usage: bazaar clear INPUT [--zk-receipt RECEIPT.cbor --root-secret KEY.bin] [--out FILE]")
   let j ← load path
   let cfg : ThresholdDecryptConfig ← decodeIO (j.getObjValAs? _ "config")
   let dim ← decodeIO (nat j "sableDim")
@@ -1271,14 +1202,96 @@ def bazaar (path : String) (args : List String) : IO UInt32 := do
   match stepDarkBazaarEpochAuth cfg st b with
   | .error e => finish args false (verdict false (reprStr e))
   | .ok (next, out) =>
+    -- Only a clearing every Lean stage accepted reaches the Rust prover. Its receipt attests the
+    -- dark_bazaar organ's authority envelope at this epoch and nullifier, not the clearing itself.
+    let mut attested : List (String × Json) := []
+    if let (some receiptPath, some keyPath) := (receipt, key) then
+      let rc ← zk "prove" ["--target-organ", "dark_bazaar", "--root-secret", keyPath, "--epoch", toString next.base.epoch,
+        "--nonce", toString b.epochNullifier, "--out", receiptPath] true
+      if rc != 0 then
+        IO.eprintln "refused: obend-zk-receipt issued no dark_bazaar authority receipt"
+        return rc
+      attested := [("zkAuthorityReceipt", toJson receiptPath), ("zkReceiptStatement", toJson "organ-authority-envelope(dark_bazaar)")]
     IO.FS.writeFile (historyPath ++ ".pending") (Json.arr (previous.push j)).compress
     IO.FS.rename (historyPath ++ ".pending") historyPath
     let digest := deriveOrderBatchNullifier256 b.openingQuery.market b.openingQuery.committedOrders b.encryptedOrders
-    finish args true (Json.mkObj [("status", toJson "accepted"), ("epoch", toJson next.base.epoch),
+    finish args true (Json.mkObj ([("status", toJson "accepted"), ("epoch", toJson next.base.epoch),
       ("nullifierHex", toJson (hex ⟨(Obend.Digest.HashBytes.be 32 digest.toNat).toArray⟩)),
       ("decryptedBook", toJson out.decryptedBook.coeffs), ("currency", toJson out.currencySettlement.entries),
-      ("goods", toJson out.goodsSettlement.entries)])
-
+      ("goods", toJson out.goodsSettlement.entries)] ++ attested))
+section
+open Obend.Doc.WorkbookEngine (RedactedWorkbook ExportedWorkbookCell CachedWorkbookCell WorkbookSection CellVisibility
+  projectWorkbookForViewer verifyRedactedWorkbook)
+open Obend.Doc.Reactive (Opcode)
+instance : ToJson (BitVec 256) := ⟨fun b => toJson (hex256 b.toNat)⟩
+instance : FromJson (BitVec 256) := ⟨fun j => return BitVec.ofNat 256 (← unhex256 (← j.getStr?))⟩
+def opName : Opcode → String | .literal => "literal" | .input => "input" | .add => "add" | .sub => "sub" | .mul => "mul" | .div => "div"
+/-- A cell a viewer is cleared for, whole: what `verifyRedactedWorkbook` re-evaluates and re-commits. -/
+def cachedJson (c : CachedWorkbookCell) : Json :=
+  let (w, s, r) := (c.entry, c.entry.structured, c.entry.reactive)
+  Json.mkObj [("cellKey", toJson w.cellKey), ("citedKeys", toJson w.citedKeys), ("values", toJson c.result.values),
+    ("receiptHex", toJson c.result.receipt), ("visibility", match w.visibility with
+      | .publicCell => toJson "public"
+      | .sealedPrivate tag salt => Json.mkObj [("sealed", toJson tag), ("saltHex", toJson salt)]),
+    ("structured", Json.mkObj [("id", toJson s.id), ("kind", toJson s.kind.toLabel), ("ast", Obend.Spec.DataWire.dataJson s.ast),
+      ("pins", toJson s.pins), ("receipt", toJson s.receipt)]),
+    ("reactive", Json.mkObj [("id", toJson r.id), ("kind", toJson r.kind.toLabel), ("reads", toJson r.reads), ("defs", toJson r.defs),
+      ("note", toJson r.note), ("body", toJson (r.body.map (·.map fun i => Json.mkObj [("op", toJson (opName i.op)), ("arg", toJson i.arg)])))])]
+def cachedOf (j : Json) : Except String CachedWorkbookCell := do
+  let kind := fun (o : Json) => do
+    match Obend.Doc.ProjectionKind.ofLabel (← text o "kind") with | some k => pure k | none => throw "unknown projection kind"
+  let s ← field j "structured"
+  let r ← field j "reactive"
+  let visibility ← match ← field j "visibility" with
+    | .str "public" => pure CellVisibility.publicCell
+    | v => pure (.sealedPrivate (← text v "sealed") (← v.getObjValAs? _ "saltHex"))
+  let body ← (← r.getObjValAs? (List (List Json)) "body").mapM (·.mapM fun i => do
+    let name ← text i "op"
+    match [Opcode.literal, .input, .add, .sub, .mul, .div].find? (opName · == name) with
+    | some op => pure (⟨op, ← i.getObjValAs? Int "arg"⟩ : Obend.Doc.Reactive.Instruction) | none => throw "unknown opcode")
+  return ⟨⟨← text j "cellKey", ⟨← text s "id", ← kind s, ← field s "ast" >>= Obend.Spec.DataWire.decodeData 64,
+      ← s.getObjValAs? _ "pins", ← s.getObjValAs? _ "receipt"⟩,
+    ⟨← nat r "id", ← kind r, ← r.getObjValAs? _ "reads", ← r.getObjValAs? _ "defs", body, ← text r "note"⟩,
+    ← j.getObjValAs? _ "citedKeys", visibility⟩, ⟨← j.getObjValAs? _ "values", ← j.getObjValAs? _ "receiptHex"⟩⟩
+def redactedSchema := "obend.cli.workbook_redacted.v1"
+/-- The proof-carrying export. A redacted entry carries its id, key, kind label and exported names,
+its commitment and its opening: no cached cell, value, AST, body or salt. -/
+def redactedJson (rwb : RedactedWorkbook) : Json := Json.mkObj [("schema", toJson redactedSchema), ("title", toJson rwb.title),
+  ("sections", toJson (rwb.sections.map fun s => Json.mkObj [("sectionKey", toJson s.sectionKey), ("markdown", toJson s.markdown),
+    ("blocks", toJson s.blocks)])), ("merkleRootHex", toJson (hex256 rwb.merkleRoot)),
+  ("entries", toJson (rwb.entries.map fun e => Json.mkObj ((match e with
+    | .visible c _ _ => [("mode", toJson "visible"), ("cached", cachedJson c)]
+    | .redacted cid ck kind defs _ _ => [("mode", toJson "redacted"), ("cellId", toJson cid), ("cellKey", toJson ck),
+        ("kind", toJson kind.toLabel), ("exportedDefs", toJson defs)]) ++
+    [("commitmentHex", toJson e.commitmentOf), ("opening", Json.mkObj [("size", toJson e.openingOf.size),
+      ("index", toJson e.openingOf.index), ("valueHex", toJson (hex256 e.openingOf.value)),
+      ("pathHex", toJson (e.openingOf.path.map hex256))])])))]
+def redactedOf (j : Json) : Except String RedactedWorkbook := do
+  if (← text j "schema") != redactedSchema then throw "unknown redacted workbook schema"
+  let sections ← (← j.getObjValAs? (List Json) "sections").mapM fun s =>
+    return (⟨← text s "sectionKey", ← text s "markdown", ← s.getObjValAs? _ "blocks"⟩ : WorkbookSection)
+  let entries ← (← j.getObjValAs? (List Json) "entries").mapM fun e => do
+    let cm : BitVec 256 ← e.getObjValAs? _ "commitmentHex"
+    let o ← field e "opening"
+    let op : Obend.Receipt.Merkle.Opening := ⟨← nat o "size", ← nat o "index", ← text o "valueHex" >>= unhex256,
+      ← (← o.getObjValAs? (List String) "pathHex").mapM unhex256⟩
+    match ← text e "mode" with
+    | "visible" => pure (ExportedWorkbookCell.visible (← field e "cached" >>= cachedOf) cm op)
+    | "redacted" => match Obend.Doc.ProjectionKind.ofLabel (← text e "kind") with
+      | some kind => pure (.redacted (← nat e "cellId") (← text e "cellKey") kind (← e.getObjValAs? _ "exportedDefs") cm op)
+      | none => throw "unknown projection kind"
+    | _ => throw "entry mode must be visible or redacted"
+  return ⟨← text j "title", sections, ← text j "merkleRootHex" >>= unhex256, entries⟩
+/-- `notebook verify`: the entries' commitments must be exactly the leaves of the stated root (an
+export with entries left out is refused), and the engine's verifier must accept the schedule. -/
+def notebookVerify (j : Json) (args : List String) : IO UInt32 := do
+  let rwb ← decodeIO (redactedOf j)
+  let H := Obend.Core.Digest.deployed
+  let covered := Obend.Receipt.Merkle.mapRoot H (rwb.entries.map (·.commitmentOf.toNat)) == rwb.merkleRoot
+  let ok := covered && verifyRedactedWorkbook Obend.Doc.Reactive.scientificKernel H rwb
+  finish args ok ((verdict ok (if ok then "openings, commitments and visible cells verified" else if covered then
+    "an opening, commitment or visible cell does not verify" else "the entries are not the leaves of the Merkle root"))
+    |>.setObjVal! "merkleRootHex" (toJson (hex256 rwb.merkleRoot)) |>.setObjVal! "entries" (toJson rwb.entries.length))
 def notebook (cmd : String) (j : Json) (args : List String) : IO UInt32 := do
   let mut wb := Obend.FFI.defaultSessionWorkbook
   let mut response := Json.null
@@ -1294,21 +1307,17 @@ def notebook (cmd : String) (j : Json) (args : List String) : IO UInt32 := do
       wb := next
       response ← decodeIO (Json.parse (String.fromUTF8! bytes))
   if cmd == "eval" then return ← finish args true (response.setObjVal! "requests" (.arr requests))
-  let "--viewer" :: viewer :: opts := args | throw (IO.userError "project requires --viewer NAT [--out FILE]")
-  let some clearance := viewer.toNat? | throw (IO.userError "viewer must be a natural number")
-  let (salt, opts) ← match opts with
-    | "--salt" :: value :: rest => do
-      let some salt := value.toNat? | throw (IO.userError "salt must be a natural number")
-      pure (some salt, rest)
-    | rest => pure (none, rest)
-  if let some salt := salt then
+  let (viewer, opts) := takeOpt "--viewer" args
+  let (salt, opts) := takeOpt "--salt" opts
+  let some clearance := viewer.bind String.toNat? | throw (IO.userError "project requires --viewer NAT [--salt NAT] [--out FILE]")
+  if let some value := salt then
+    let some salt := value.toNat? | throw (IO.userError "salt must be a natural number")
     wb := { wb with cells := wb.cells.map fun c => { c with entry := { c.entry with visibility :=
       match c.entry.visibility with | .publicCell => .publicCell | .sealedPrivate tag _ => .sealedPrivate tag (BitVec.ofNat 256 salt) } } }
-  let request := Json.mkObj [("op", toJson "exportRedacted"),
-    ("clearances", toJson ((List.range clearance).map fun n => toString (n + 1)))]
-  match Obend.FFI.stepWorkbookJsonBytes wb request.compress.toUTF8 with
-  | .error (_, e) => finish opts false (verdict false e)
-  | .ok (_, bytes) => output opts (← decodeIO (Json.parse (String.fromUTF8! bytes))); return 0
+  output opts (redactedJson (projectWorkbookForViewer Obend.Core.Digest.deployed
+    ((List.range clearance).map fun n => toString (n + 1)) wb))
+  return 0
+end
 
 end LiveCli
 
@@ -1316,16 +1325,19 @@ def subUsage (cmd : String) : String := "usage: obend " ++ cmd ++ " " ++ match c
   | "amend" => "live|trace INPUT [--out FILE] | zk-prove|zk-verify|zk-bench|zk-tamper-test ARGS"
   | "custody" => "init DIR [--grain-id N] [--epoch N] | prepare DIR [--next-epoch N] | reopen DIR | event DIR crash|restart|settle [PERIOD]"
   | "mpc" => "sign INPUT [--out FILE] | verify SIGNATURE"
-  | "bazaar" => "clear INPUT [--out FILE] (replay state: INPUT.state.json)"
+  | "bazaar" => "clear INPUT [--zk-receipt RECEIPT.cbor --root-secret KEY.bin] [--out FILE] (replay state: INPUT.state.json)"
   | "pde" => "check INPUT | solve INPUT [--out CERT]"
-  | "notebook" => "eval INPUT [--out STATE] | project STATE --viewer N [--salt N] [--out REDACTED]"
+  | "notebook" => "eval INPUT [--out STATE] | project STATE --viewer N [--salt N] [--out REDACTED] | verify REDACTED [--out VERDICT]"
   | "run" | "run-core" => "FILE [ENTRY] [--jit|--jit=cc] [--emit-c99 FILE]"
   | _ => "(see obend --help)"
+def refuseUsage (cmd : String) : IO UInt32 := do IO.eprintln ("refused: " ++ subUsage cmd); return 2
 
 /-! ## Dispatch -/
 
 def dispatch (args : List String) : IO UInt32 :=
   let args := match args with
+    | "check" :: "--obligations" :: "--package" :: rest => "check" :: "--obligations" :: rest
+    | cmd :: "--package" :: rest => if ["check", "prove", "ground", "emit", "specialize"].contains cmd then cmd :: rest else args
     | cmd :: "--emit-c99" :: out :: path :: rest =>
       if cmd == "run" || cmd == "run-core" then cmd :: path :: (rest ++ ["--emit-c99", out]) else args
     | cmd :: flag :: path :: rest =>
@@ -1339,17 +1351,18 @@ def dispatch (args : List String) : IO UInt32 :=
     match cmd, rest with
     | "live", p :: opts => do LiveCli.amend false (← LiveCli.load p) opts
     | "trace", p :: opts => do LiveCli.amend true (← LiveCli.load p) opts
-    | _, _ => do IO.eprintln "usage: obend amend live|trace INPUT [--out FILE] | zk-prove|zk-verify|zk-bench|zk-tamper-test ARGS"; return 2
+    | _, _ => refuseUsage "amend"
   | "notebook" :: cmd :: p :: opts => do
-    if cmd != "eval" && cmd != "project" then throw (IO.userError "notebook standalone verification needs the unavailable redacted-workbook decoder")
+    if cmd == "verify" then return ← LiveCli.notebookVerify (← LiveCli.load p) opts
+    if cmd != "eval" && cmd != "project" then return ← refuseUsage "notebook"
     LiveCli.notebook cmd (← LiveCli.load p) opts
   | "bazaar" :: "clear" :: p :: opts => LiveCli.bazaar p opts
   | "custody" :: cmd :: dir :: opts => LiveCli.custody cmd dir opts
   | "mpc" :: cmd :: p :: opts => do
-    if cmd != "sign" && cmd != "verify" then IO.eprintln "usage: obend mpc sign|verify INPUT [--out FILE]"; return 2
+    if cmd != "sign" && cmd != "verify" then return ← refuseUsage "mpc"
     LiveCli.mpc (cmd == "sign") (← LiveCli.load p) opts
   | "pde" :: cmd :: p :: opts => do
-    if cmd != "check" && cmd != "solve" then IO.eprintln "usage: obend pde check|solve INPUT [--out FILE]"; return 2
+    if cmd != "check" && cmd != "solve" then return ← refuseUsage "pde"
     LiveCli.pde (cmd == "solve") (← LiveCli.load p) opts
   | ["identity"] => do IO.println identityJson.compress; return 0
   | ["parse", path] => parseCommand path
@@ -1368,66 +1381,34 @@ def dispatch (args : List String) : IO UInt32 :=
   | "run-core" :: path :: rest =>
     match parseOptions rest {} with
     | .ok options => runPacket path options
-    | .error message => do IO.eprintln message; return 1
-  | ["check", "--obligations", "--package", spec, "--object", entry] => obligationsCommand spec entry none
-  | ["check", "--obligations", "--package", spec, "--object", entry, "--receipts", dir] =>
-    obligationsCommand spec entry (some dir)
+    | .error message => do IO.eprintln message; return (if message.startsWith "refused" then 2 else 1)
   | ["check", "--obligations", spec, "--object", entry] => obligationsCommand spec entry none
-  | ["check", "--obligations", spec, "--object", entry, "--receipts", dir] =>
-    obligationsCommand spec entry (some dir)
-  | "prove" :: "--package" :: spec :: name :: rest => (proveArgs spec name rest).getD (do IO.eprintln usage; return 64)
-  | "prove" :: spec :: name :: rest => (proveArgs spec name rest).getD (do IO.eprintln usage; return 64)
-  | ["ground", "--package", spec, entry, expected] => groundCommand spec entry expected
+  | ["check", "--obligations", spec, "--object", entry, "--receipts", dir] => obligationsCommand spec entry (some dir)
+  | "prove" :: spec :: name :: rest => (proveArgs spec name rest).getD usage64
   | ["ground", spec, entry, expected] => groundCommand spec entry expected
-  | "emit" :: "--package" :: spec :: "--object" :: entry :: "--out" :: out :: rest =>
-    match leafCall rest with
-    | some call => emitCommand spec entry out call
-    | none => do IO.eprintln usage; return 64
-  | "emit" :: spec :: "--object" :: entry :: "--out" :: out :: rest =>
-    match leafCall rest with
-    | some call => emitCommand spec entry out call
-    | none => do IO.eprintln usage; return 64
-  | "specialize" :: "--package" :: spec :: "--object" :: entry :: "--book" :: book :: rest =>
-    match leafCall rest with
-    | some call => specializeCommand spec entry book call
-    | none => do IO.eprintln usage; return 64
+  | "emit" :: spec :: "--object" :: entry :: "--out" :: out :: rest => ((leafCall rest).map (emitCommand spec entry out)).getD usage64
   | "specialize" :: spec :: "--object" :: entry :: "--book" :: book :: rest =>
-    match leafCall rest with
-    | some call => specializeCommand spec entry book call
-    | none => do IO.eprintln usage; return 64
-  | ["check", "--package", spec] => checkSource (packageOfSpec spec none)
-  | ["check", "--package", spec, entry] => checkSource (packageOfSpec spec (some entry))
-  | ["check", file] => checkSource (packageOfFile file none)
-  | ["check", file, entry] => checkSource (packageOfFile file (some entry))
+    ((leafCall rest).map (specializeCommand spec entry book)).getD usage64
+  | ["check", file] => checkSource (packageOfSpec file none)
+  | ["check", file, entry] => checkSource (packageOfSpec file (some entry))
   | "run" :: "--package" :: spec :: rest => runSource (packageOfSpec spec none) rest
   | ["admit", "--package", spec, turn] => admitCommand spec turn
   | ["judge", "--package", spec, old, new] => judgeCommand spec old new
-  | "run" :: file :: "--entry" :: entry :: rest => runSource (packageOfFile file (some entry)) rest
-  | "run" :: file :: entry :: rest => runSource (packageOfFile file (some entry)) rest
-  | ["run", file] => runSource (packageOfFile file none) []
+  | "run" :: file :: "--entry" :: entry :: rest => runSource (packageOfSpec file (some entry)) rest
+  | "run" :: file :: entry :: rest => runSource (packageOfSpec file (some entry)) rest
+  | ["run", file] => runSource (packageOfSpec file none) []
   | "verify" :: path :: rest =>
     Obend.Ledger.Cli.verifyOr path rest <|
       Obend.Analysis.Cli.verifyOr path <|
         Obend.Hardware.Cli.verifyOr path
-          ((Obend.Receipt.Cli.main? ("verify" :: path :: rest)).getD (do IO.eprintln usage; return 64))
-  | "analyze" :: _ => (Obend.Analysis.Cli.main? args).getD (do IO.eprintln usage; return 64)
-  | "lower" :: _ => (Obend.Lower.Cli.main? args).getD (do IO.eprintln usage; return 64)
+          ((Obend.Receipt.Cli.main? ("verify" :: path :: rest)).getD usage64)
+  | "analyze" :: _ => (Obend.Analysis.Cli.main? args).getD usage64
+  | "lower" :: _ => (Obend.Lower.Cli.main? args).getD usage64
   | "tapeout" :: rest => Obend.Hardware.Cli.cmdTapeout rest
-  | _ => if ["amend", "custody", "bazaar", "mpc", "pde", "notebook"].contains (args.headD "") then
-      (do IO.eprintln ("refused: " ++ subUsage (args.headD "")); return 2)
-    else match Obend.Receipt.Cli.main? args with
-    | some act => act
-    | none => match Obend.Ledger.Cli.main? args with
-    | some act => act
-    | none => match Obend.Hardware.Cli.main? args with
-    | some act => act
-    | none => match Obend.Judge.GenealogyCli.main? args with
-    | some act => act
-    | none => match Obend.Vault.BranchCli.main? args with
-    | some act => act
-    | none => match Obend.Vault.Cli.main? args with
-      | some act => act
-      | none => do IO.eprintln usage; return 64
+  | _ => if ["amend", "custody", "bazaar", "mpc", "pde", "notebook"].contains (args.headD "") then refuseUsage (args.headD "")
+    else ((Obend.Receipt.Cli.main? args).orElse fun _ => (Obend.Ledger.Cli.main? args).orElse fun _ =>
+      (Obend.Hardware.Cli.main? args).orElse fun _ => (Obend.Judge.GenealogyCli.main? args).orElse fun _ =>
+      (Obend.Vault.BranchCli.main? args).orElse fun _ => Obend.Vault.Cli.main? args).getD usage64
 
 def safeDispatch (args : List String) : IO UInt32 := do
   try dispatch args

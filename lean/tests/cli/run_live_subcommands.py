@@ -83,7 +83,22 @@ def main():
         run('amend', 'trace', write('broken.json', {'steps': [good, second]}), code=3)
         malformed = root / 'malformed.json'
         malformed.write_text('{')
-        run('amend', 'live', malformed, code=2)
+        truncated = root / 'truncated.json'
+        truncated.write_text(req.read_text()[:-9])
+        empty = write('empty.json', {})
+        # Decode failures are exit 2 and say "refused"; none is an uncaught panic.
+        for cmd, sub in (('amend', 'live'), ('amend', 'trace'), ('mpc', 'sign'), ('mpc', 'verify'), ('pde', 'check'),
+                         ('pde', 'solve'), ('bazaar', 'clear'), ('notebook', 'eval'), ('notebook', 'project'), ('notebook', 'verify')):
+            for broken in (malformed, truncated, root / 'missing.json'):
+                run(cmd, sub, broken, code=2)
+            if cmd != 'notebook' or sub == 'verify':
+                run(cmd, sub, empty, code=2)
+            run(cmd, 'no-such-subcommand', req, code=2)
+        run('amend', 'live', req, '--no-such-flag', code=2)
+        run('amend', 'live', req, '--out', code=2)
+        for flags in (['--emit-c99'], ['--jit=no-such-mode']):
+            run('run', source, 'main', *flags, code=2)
+            run('run-core', core, *flags, code=2)
 
         key = root / 'root.key'
         key.write_bytes(bytes(range(32)))
@@ -101,15 +116,35 @@ def main():
         (custody / 'var').mkdir(parents=True)
         payload = custody / 'var/payload.bin'
         payload.write_bytes(b'custody payload')
+        run('custody', 'prepare', custody, code=2)
         run('custody', 'init', custody)
-        run('custody', 'prepare', custody)
+        run('custody', 'init', custody, code=3)
+        run('custody', 'prepare', custody, '--next-epoch', '2', code=3)
+        run('custody', 'prepare', custody, '--next-epoch', '1')
         run('custody', 'prepare', custody, code=3)
         run('custody', 'reopen', custody)
         run('custody', 'event', custody, 'crash')
         run('custody', 'prepare', custody, code=3)
         run('custody', 'reopen', custody)
+        for bad in (['prepare', custody, '--no-such-flag', '1'], ['prepare', custody, '--next-epoch'],
+                    ['event', custody, 'no-such-event'], ['no-such-subcommand', custody], ['init']):
+            run('custody', *bad, code=2)
         payload.write_bytes(b'Custody payload')
         run('custody', 'reopen', custody, code=3)
+        payload.write_bytes(b'custody payload')
+        run('custody', 'reopen', custody)
+        # A damaged durable signature is refused, alone and behind a pending WAL.
+        durable = custody / 'durable.json'
+        for pending in (False, True):
+            if pending:
+                run('custody', 'prepare', custody)
+            sealed = durable.read_text()
+            forged = json.loads(sealed)
+            forged['transitionSignature'][len(forged['transitionSignature']) // 2] ^= 1
+            durable.write_text(json.dumps(forged))
+            run('custody', 'reopen', custody, code=3)
+            durable.write_text(sealed)
+            run('custody', 'reopen', custody)
 
         params = dict(w=4, ell1=8, subtreeHeight=2, numLayers=2, forsTrees=4, forsHeight=2, maxSigsLog2=4, statefulLeanSig=False)
         shares = [dict(skSeed=[i + 1] * 32, skPrf=[i + 4] * 32, pkSeed=[7] * 32) for i in range(3)]
@@ -147,6 +182,30 @@ def main():
         bad = copy.deepcopy(bazaar)
         bad['orders'][0]['utility']['submittedTotal'] = 999
         run('bazaar', 'clear', write('utility-bad.json', bad), code=3)
+        run('bazaar', 'clear', auction, '--no-such-flag', code=2)
+        # The Rust authority receipt is issued only after every Lean stage accepts.
+        organ_receipt = root / 'bazaar-receipt.cbor'
+        run('bazaar', 'clear', write('kkt-bad-zk.json', bad), '--zk-receipt', organ_receipt, '--root-secret', key, code=3)
+        assert not organ_receipt.exists()
+        attested = write('bazaar-zk.json', bazaar)
+        run('bazaar', 'clear', attested, '--zk-receipt', organ_receipt, code=2)
+        assert not organ_receipt.exists() and not Path(str(attested) + '.state.json').exists()
+        cleared = root / 'cleared.json'
+        run('bazaar', 'clear', attested, '--zk-receipt', organ_receipt, '--root-secret', key, '--out', cleared)
+        cleared = json.loads(cleared.read_text())
+        assert cleared['zkAuthorityReceipt'] == str(organ_receipt)
+        assert cleared['zkReceiptStatement'] == 'organ-authority-envelope(dark_bazaar)'
+        verify = ['amend', 'zk-verify', '--root-secret', key, '--current-epoch', cleared['epoch']]
+        damaged = bytearray(organ_receipt.read_bytes())
+        damaged[len(damaged) // 2] ^= 1
+        (root / 'bazaar-damaged.cbor').write_bytes(damaged)
+        # Refused: flipped bytes, and the same receipt presented to another organ's verifier.
+        for n, extra in enumerate((['--target-organ', 'dark_bazaar', '--in', root / 'bazaar-damaged.cbor'], ['--in', organ_receipt])):
+            p = subprocess.run([str(BIN), *map(str, verify + extra + ['--nullifier-log', root / f'bazaar-nullifiers-{n}'])], capture_output=True, text=True)
+            assert p.returncode != 0, (extra, p.stdout, p.stderr)
+        run(*verify, '--target-organ', 'dark_bazaar', '--in', organ_receipt, '--nullifier-log', root / 'bazaar-nullifiers')
+        run('bazaar', 'clear', attested, '--zk-receipt', root / 'replayed.cbor', '--root-secret', key, code=3)
+        assert not (root / 'replayed.cbor').exists()
 
         request = dict(op='init', cells=[dict(cellKey='public', id=1, defs=['x'], literalValue=7), dict(cellKey='secret', id=2, defs=['secret'], literalValue=8675309, visibility={'sealed': '1', 'salt': 12345})])
         state = root / 'notebook.json'
@@ -158,13 +217,56 @@ def main():
         run('notebook', 'project', state, '--viewer', '0', '--salt', '54321', '--out', salted)
         assert json.loads(salted.read_text())['merkleRootHex'] != json.loads(redacted.read_text())['merkleRootHex']
         assert '8675309' not in salted.read_text()
+        exported = json.loads(redacted.read_text())
+        assert exported['schema'] == 'obend.cli.workbook_redacted.v1'
+        shown, hidden = exported['entries']
+        assert shown['mode'] == 'visible' and shown['cached']['values'][0] == 7
+        assert set(hidden) == {'mode', 'cellId', 'cellKey', 'kind', 'exportedDefs', 'commitmentHex', 'opening'}
+        assert hidden['mode'] == 'redacted' and 'secret' in hidden['exportedDefs']
+        for entry in exported['entries']:
+            assert len(entry['commitmentHex']) == 64 and entry['opening']['valueHex'] == entry['commitmentHex']
         run('notebook', 'verify', redacted)
-        damaged = json.loads(redacted.read_text())
-        damaged['merkleRootHex'] = '00' * 32
-        run('notebook', 'verify', write('notebook-root-tampered.json', damaged), code=3)
-        damaged = json.loads(redacted.read_text())
-        damaged['entries'][0]['commitmentHex'] = '00' * 32
-        run('notebook', 'verify', write('notebook-cell-tampered.json', damaged), code=3)
+        run('notebook', 'verify', salted)
+        cleared_view = root / 'cleared-view.json'
+        run('notebook', 'project', state, '--viewer', '1', '--out', cleared_view)
+        assert [e['mode'] for e in json.loads(cleared_view.read_text())['entries']] == ['visible', 'visible']
+        assert '8675309' in cleared_view.read_text()
+        assert json.loads(run('notebook', 'verify', cleared_view))['status'] == 'accepted'
+
+        def tampered(name, change, code=3, base=redacted):
+            damaged = json.loads(base.read_text())
+            change(damaged)
+            run('notebook', 'verify', write(name, damaged), code=code)
+
+        def set_path(path, value):
+            def change(doc):
+                for key in path[:-1]:
+                    doc = doc[key]
+                doc[path[-1]] = value
+            return change
+
+        flipped = lambda h: ('1' if h[0] == '0' else '0') + h[1:]
+        tampered('notebook-root.json', set_path(['merkleRootHex'], '00' * 32))
+        tampered('notebook-visible-commitment.json', set_path(['entries', 0, 'commitmentHex'], '00' * 32))
+        tampered('notebook-redacted-commitment.json', set_path(['entries', 1, 'commitmentHex'], '00' * 32))
+        tampered('notebook-visible-values.json', set_path(['entries', 0, 'cached', 'values', 0], 8))
+        tampered('notebook-visible-body.json', set_path(['entries', 0, 'cached', 'reactive', 'body', 0, 0, 'arg'], 8))
+        tampered('notebook-opening-path.json', set_path(['entries', 1, 'opening', 'pathHex', 0], flipped(hidden['opening']['pathHex'][0])))
+        tampered('notebook-opening-index.json', set_path(['entries', 1, 'opening', 'index'], 0))
+        tampered('notebook-truncated-entries.json', lambda doc: doc['entries'].pop())
+        tampered('notebook-no-entries.json', set_path(['entries'], []))
+        tampered('notebook-sealed-value.json', set_path(['entries', 1, 'cached', 'values', 0], 1), base=cleared_view)
+        tampered('notebook-sealed-salt.json', set_path(['entries', 1, 'cached', 'visibility', 'saltHex'], '00' * 32), base=cleared_view)
+        # Malformed exports are decode refusals (2), not verification refusals (3).
+        tampered('notebook-schema.json', set_path(['schema'], 'obend.ffi.workbook_redacted.v1'), code=2)
+        tampered('notebook-short-hex.json', set_path(['entries', 0, 'commitmentHex'], 'abcd'), code=2)
+        tampered('notebook-bad-hex.json', set_path(['merkleRootHex'], 'zz' * 32), code=2)
+        tampered('notebook-mode.json', set_path(['entries', 1, 'mode'], 'hidden'), code=2)
+        tampered('notebook-no-opening.json', lambda doc: doc['entries'][1].pop('opening'), code=2)
+        run('notebook', 'verify', redacted, '--no-such-flag', code=2)
+        run('notebook', 'project', state, code=2)
+        run('notebook', 'project', state, '--viewer', 'everyone', code=2)
+        run('notebook', 'project', state, '--viewer', '0', '--salt', 'pepper', code=2)
     print(f'{checks} CLI checks passed')
 
 

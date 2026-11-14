@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LEAN = os.path.dirname(os.path.dirname(HERE))
@@ -73,11 +74,20 @@ def mutate(src, which):
 
 
 def clone(dst):
+    """Copy lean/ with its build directory. `cp` fails when a file vanishes under it, which is a build
+    writing the source tree at that moment: the partial copy is discarded and the copy taken again."""
     flags = ["-c", "-R"] if sys.platform == "darwin" else ["-R", "--reflink=auto"]
-    subprocess.run(["cp", *flags, LEAN, dst], check=True)
+    for attempt in range(4):
+        c = subprocess.run(["cp", *flags, LEAN, dst], capture_output=True, text=True)
+        if c.returncode == 0:
+            return
+        shutil.rmtree(dst, ignore_errors=True)
+        time.sleep(15 * (attempt + 1))
+    sys.exit("planted: lean/ could not be copied while it was being built:\n" + c.stderr[-1000:])
 
 
 def main():
+    sys.stdout.reconfigure(line_buffering=True)  # a mutant's verdict is on record when it is reached
     failures = 0
     for which in sys.argv[1:] or ["page-gate", "chain-gate", "kept-any"]:
         tmp = tempfile.mkdtemp(prefix="obend-s2d-forms-planted-")
