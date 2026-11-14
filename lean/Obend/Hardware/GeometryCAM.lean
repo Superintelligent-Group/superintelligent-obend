@@ -48,7 +48,7 @@ in-silico evolutionary physical design** within `Obend.Hardware`:
 public import Obend.Hardware.Accelerators
 public import Obend.Tactic.Tooth
 public import Obend.Judge.Class
-@[expose] public section
+public section
 
 namespace Obend.Hardware.GeometryCAM
 open Obend.Hardware.Accelerators
@@ -75,7 +75,7 @@ inductive FRepExpr where
   deriving DecidableEq, Repr
 
 /-- Exact point evaluation of an `FRepExpr` at 3D coordinate $(x, y, z) \in \mathbb{Z}^3$. -/
-def evalFRepPoint (x y z : Int) : FRepExpr → Int
+@[expose] def evalFRepPoint (x y z : Int) : FRepExpr → Int
   | .const c      => c
   | .varX         => x
   | .varY         => y
@@ -129,7 +129,7 @@ structure Box3D where
   deriving DecidableEq, Repr
 
 /-- Predicate stating that 3D point $(x, y, z)$ lies inside bounding box `B`. -/
-def Box3D.contains (B : Box3D) (x y z : Int) : Prop :=
+@[expose] def Box3D.contains (B : Box3D) (x y z : Int) : Prop :=
   B.xIv.contains x ∧ B.yIv.contains y ∧ B.zIv.contains z
 
 /-- Interval addition `[a.lo + b.lo, a.hi + b.hi]`. -/
@@ -165,17 +165,17 @@ def ivSq (a : FloatInterval) : FloatInterval :=
     { lo := 0, hi := max (a.lo * a.lo) (a.hi * a.hi) }
 
 /-- Interval minimum (CSG union enclosure). -/
-def ivMin (a b : FloatInterval) : FloatInterval where
+@[expose] def ivMin (a b : FloatInterval) : FloatInterval where
   lo := min a.lo b.lo
   hi := min a.hi b.hi
 
 /-- Interval maximum (CSG intersection enclosure). -/
-def ivMax (a b : FloatInterval) : FloatInterval where
+@[expose] def ivMax (a b : FloatInterval) : FloatInterval where
   lo := max a.lo b.lo
   hi := max a.hi b.hi
 
 /-- Evaluate an `FRepExpr` over a 3D bounding box `B : Box3D` via interval arithmetic. -/
-def evalFRepInterval (B : Box3D) : FRepExpr → FloatInterval
+@[expose] def evalFRepInterval (B : Box3D) : FRepExpr → FloatInterval
   | .const c      => { lo := c, hi := c }
   | .varX         => B.xIv
   | .varY         => B.yIv
@@ -378,7 +378,7 @@ theorem fidgetChoice_join_laws (a b c : FidgetChoice) :
 * Returns `.left` when `a.hi ≤ b.lo` ($a \le b$ everywhere in the box),
 * Returns `.right` when `b.hi ≤ a.lo` ($b \le a$ everywhere in the box),
 * Returns `.both` when the intervals overlap. -/
-def ivMinChoice (a b : FloatInterval) : FidgetChoice :=
+@[expose] def ivMinChoice (a b : FloatInterval) : FidgetChoice :=
   if decide (a.hi ≤ b.lo) then .left
   else if decide (b.hi ≤ a.lo) then .right
   else .both
@@ -682,7 +682,7 @@ theorem frepIntAbs_bounds (z : Int) :
   omega
 
 theorem frep_abs_mul_bound (x y r1 r2 : Int)
-    (_hr1 : 0 ≤ r1) (hr2 : 0 ≤ r2)
+    (hr2 : 0 ≤ r2)
     (hx : -r1 ≤ x ∧ x ≤ r1) (hy : -r2 ≤ y ∧ y ≤ r2) :
     -(r1 * r2) ≤ x * y ∧ x * y ≤ r1 * r2 := by
   by_cases hxPos : 0 ≤ x
@@ -721,7 +721,7 @@ theorem ivMulSym_contains (a b : FloatInterval) (va vb : Int)
   have hrb : 0 ≤ max (frepIntAbs b.lo) (frepIntAbs b.hi) := by omega
   have hva : -max (frepIntAbs a.lo) (frepIntAbs a.hi) ≤ va ∧ va ≤ max (frepIntAbs a.lo) (frepIntAbs a.hi) := by omega
   have hvb : -max (frepIntAbs b.lo) (frepIntAbs b.hi) ≤ vb ∧ vb ≤ max (frepIntAbs b.lo) (frepIntAbs b.hi) := by omega
-  exact frep_abs_mul_bound va vb _ _ hra hrb hva hvb
+  exact frep_abs_mul_bound va vb _ _ hrb hva hvb
 
 /-- Evaluate a single `SsaTapeOp` at 3D point `(x, y, z)` given the current SSA register file `regs`. -/
 def evalSsaOpPoint (x y z : Int) (regs : List Int) : SsaTapeOp → Int
@@ -755,7 +755,7 @@ def evalSsaOpInterval (B : Box3D) (ivRegs : List FloatInterval) : SsaTapeOp → 
   | .maxInter r1 r2 => ivMax (ivRegs.getD r1 defaultSsaIv) (ivRegs.getD r2 defaultSsaIv)
 
 /-- Stepwise execution of a linear SSA tape `List SsaTapeOp` from an initial register prefix `regs`. -/
-def evalSsaTapeRegsAux (x y z : Int) : List Int → List SsaTapeOp → List Int
+@[expose] def evalSsaTapeRegsAux (x y z : Int) : List Int → List SsaTapeOp → List Int
   | regs, [] => regs
   | regs, op :: rest =>
     let v := evalSsaOpPoint x y z regs op
@@ -1643,7 +1643,8 @@ mounting lug + 1 `minUnion` + 5 ops for cooling bore + 1 `maxInter`):
    dominates `reg 13`) eliminates both the dead stator core and dead mounting lug branches,
    compacting from `20` down to `10` instructions! -/
 -- fixture kept (2026-11-04): would delete (a literal tape pruned and compared to its literal result) but cited by tests/metasystem/OpenUsdAndSsaTapeTest.lean:250
-theorem golden_ssa_tape_prune_and_compact_verified :
+theorem golden_ssa_tape_prune_and_compact_verified {x y z : Int}
+    (hBox : (⟨⟨-2,2⟩,⟨-2,2⟩,⟨-2,2⟩⟩ : Box3D).contains x y z := by unfold Obend.Hardware.GeometryCAM.Box3D.contains Obend.Hardware.Accelerators.FloatInterval.contains; decide) :
     let box : Box3D :=
       { xIv := { lo := -2, hi := 2 }
       , yIv := { lo := -2, hi := 2 }
@@ -1666,11 +1667,14 @@ theorem golden_ssa_tape_prune_and_compact_verified :
     ssaStatorTape.length = 20 ∧
     compacted.length = 7 ∧
     fullCompacted.length = 7 ∧
-    evalSsaTape 1 1 0 compacted (compacted.length - 1) = evalSsaTape 1 1 0 ssaStatorTape 19 := by
-  decide +kernel
+    evalSsaTape x y z compacted (compacted.length - 1) = evalSsaTape x y z ssaStatorTape 19 := by
+  refine ⟨by decide +kernel, by decide +kernel, by decide +kernel, ?_⟩
+  exact (prune_and_compact_ssa_tape_sound _ x y z _ 19 hBox (by decide)).1
 
 -- fixture kept (2026-11-04): would delete (a literal tape compacted and compared to its literal result) but cited by tests/metasystem/OpenUsdAndSsaTapeTest.lean:279, tests/metasystem/OpenUsdAndSsaTapeTest.lean:452
-theorem golden_ssa_tape_right_branch_compaction_verified :
+theorem golden_ssa_tape_right_branch_compaction_verified {xL yL zL xB yB zB : Int}
+    (hL : (⟨⟨14,16⟩,⟨-1,1⟩,⟨-1,1⟩⟩ : Box3D).contains xL yL zL := by unfold Obend.Hardware.GeometryCAM.Box3D.contains Obend.Hardware.Accelerators.FloatInterval.contains; decide)
+    (hB : (⟨⟨-16,-14⟩,⟨-1,1⟩,⟨-1,1⟩⟩ : Box3D).contains xB yB zB := by unfold Obend.Hardware.GeometryCAM.Box3D.contains Obend.Hardware.Accelerators.FloatInterval.contains; decide) :
     let boxLug : Box3D :=
       { xIv := { lo := 14, hi := 16 }
       , yIv := { lo := -1, hi := 1 }
@@ -1695,9 +1699,11 @@ theorem golden_ssa_tape_right_branch_compaction_verified :
     let compactedBore := compactSsaTape (pruneSsaTapeForBox boxBore ssaBoreTape) 19
     compactedLug.length = 9 ∧
     compactedBore.length = 10 ∧
-    evalSsaTape 15 0 0 compactedLug (compactedLug.length - 1) = evalSsaTape 15 0 0 ssaStatorTape 19 ∧
-    evalSsaTape (-15) 0 0 compactedBore (compactedBore.length - 1) = evalSsaTape (-15) 0 0 ssaBoreTape 19 := by
-  decide +kernel
+    evalSsaTape xL yL zL compactedLug (compactedLug.length - 1) = evalSsaTape xL yL zL ssaStatorTape 19 ∧
+    evalSsaTape xB yB zB compactedBore (compactedBore.length - 1) = evalSsaTape xB yB zB ssaBoreTape 19 := by
+  refine ⟨by decide +kernel, by decide +kernel, ?_, ?_⟩
+  · exact (prune_and_compact_ssa_tape_sound _ xL yL zL _ 19 hL (by decide)).1
+  · exact (prune_and_compact_ssa_tape_sound _ xB yB zB _ 19 hB (by decide)).1
 
 /-! ## 3. Implicit Swept-Volume CAM Material Removal & Zero-Gouge Certification -/
 
@@ -2019,7 +2025,7 @@ theorem ivMulSym_secant_encloses
     have := int_mul_le_mul_of_nonneg_right 0 (ivAbsBound ga) dx (ivAbsBound_nonneg ga) hDx
     omega
   have hProd := frep_abs_mul_bound (v1 + v2) (v1 - v2)
-    (ivAbsBound (ivScalePos 2 ivA)) (ivAbsBound ga * dx) hR1 hR2 hSumBnd hDiffBnd
+    (ivAbsBound (ivScalePos 2 ivA)) (ivAbsBound ga * dx) hR2 hSumBnd hDiffBnd
   rw [← int_sq_sub_sq v1 v2, ← Int.mul_assoc, ← Int.neg_mul] at hProd
   exact hProd
 
@@ -2934,7 +2940,7 @@ def frepShank (cx cy cz : Int) (u : ToolAxis) (r len : Nat) : FRepExpr :=
 /-- Ball end mill of radius `r` with its tip at `(tx, ty, tz)` on axis `u` (ball centre `tip + r·u/n`,
 which is an integer point when `n ∣ r·u`), with a straight shank of radius `r` and length `len`
 above the centre; holder not modelled. -/
-def frepBallEndMill (tx ty tz : Int) (u : ToolAxis) (r len : Nat) : FRepExpr :=
+@[expose] def frepBallEndMill (tx ty tz : Int) (u : ToolAxis) (r len : Nat) : FRepExpr :=
   let cx := tx + (r : Int) * u.ux / u.n
   let cy := ty + (r : Int) * u.uy / u.n
   let cz := tz + (r : Int) * u.uz / u.n
@@ -2980,7 +2986,7 @@ structure QIv where
   hi : Rat
   deriving Repr
 
-def QIv.contains (iv : QIv) (v : Rat) : Prop := iv.lo ≤ v ∧ v ≤ iv.hi
+abbrev QIv.contains (iv : QIv) (v : Rat) : Prop := iv.lo ≤ v ∧ v ≤ iv.hi
 
 structure QBox where
   x : QIv
@@ -2988,11 +2994,11 @@ structure QBox where
   z : QIv
   deriving Repr
 
-def QBox.contains (B : QBox) (x y z : Rat) : Prop :=
+abbrev QBox.contains (B : QBox) (x y z : Rat) : Prop :=
   B.x.contains x ∧ B.y.contains y ∧ B.z.contains z
 
 /-- The solid at a rational point. -/
-def evalFRepQ (x y z : Rat) : FRepExpr → Rat
+@[expose] def evalFRepQ (x y z : Rat) : FRepExpr → Rat
   | .const c      => (c : Rat)
   | .varX         => x
   | .varY         => y
@@ -3187,7 +3193,7 @@ theorem segment_in_hull (p q : Int × Int × Int) (t : Rat) (h0 : 0 ≤ t) (h1 :
    segment_coord_in_hull _ _ _ h0 h1⟩
 
 /-- A lattice box as a rational box. -/
-def Box3D.toQ (B : Box3D) : QBox :=
+@[expose] def Box3D.toQ (B : Box3D) : QBox :=
   ⟨⟨B.xIv.lo, B.xIv.hi⟩, ⟨B.yIv.lo, B.yIv.hi⟩, ⟨B.zIv.lo, B.zIv.hi⟩⟩
 
 /-! ## 10. The motion certificate, checked rather than searched (`cam-gouge@1`)
@@ -3205,7 +3211,7 @@ inductive KdCert where
   | tool
   | splitB (l r : KdCert)
   | splitH (l r : KdCert)
-  deriving Repr, Inhabited
+  deriving Repr, Inhabited, DecidableEq
 
 /-! ### Replaying in integers
 
@@ -3333,6 +3339,67 @@ def checkKdZ (part tool0 : FRepExpr) : KdCert → Box3D → Box3D → Bool
   | .splitB l r, B, H => checkKdZ part tool0 l B.halvesO.1 H && checkKdZ part tool0 r B.halvesO.2 H
   | .splitH l r, B, H => checkKdZ part tool0 l B H.halvesO.1 && checkKdZ part tool0 r B H.halvesO.2
 
+/-- Replay cuts carry normalized child boxes; the kernel checks each local cut once. -/
+theorem checkKdZ_splitB (part tool : FRepExpr) (l r : KdCert) (B H L R : Box3D)
+    (h : B.halvesO = (L,R)) (hl : checkKdZ part tool l L H = true)
+    (hr : checkKdZ part tool r R H = true) :
+    checkKdZ part tool (.splitB l r) B H = true := by
+  simp only [checkKdZ,h,Bool.and_eq_true]; exact ⟨hl,hr⟩
+theorem checkKdZ_splitH (part tool : FRepExpr) (l r : KdCert) (B H L R : Box3D)
+    (h : H.halvesO = (L,R)) (hl : checkKdZ part tool l B L = true)
+    (hr : checkKdZ part tool r B R = true) :
+    checkKdZ part tool (.splitH l r) B H = true := by
+  simp only [checkKdZ,h,Bool.and_eq_true]; exact ⟨hl,hr⟩
+theorem checkKdZ_tool_box (part tool : FRepExpr) (B H R : Box3D)
+    (h : B.minus H = R) (hp : checkKdZ tool tool .part R R = true) :
+    checkKdZ part tool .tool B H = true := by
+  simpa only [checkKdZ,h] using hp
+
+
+/-- Radial clearance is independent of height for an upright ball end mill. -/
+def radialClear (x y : FloatInterval) (r : Nat) : Bool :=
+  decide (x.lo ≤ x.hi) && decide (0 < (ivSq x).lo + (ivSq y).lo - (r : Int)*r)
+
+private theorem ivSq_lo_nonnegative (a : FloatInterval) : 0 ≤ (ivSq a).lo := by
+  unfold ivSq
+  split
+  · simpa [Int.pow_succ] using Int.sq_nonneg a.lo
+  · split
+    · simpa [Int.pow_succ] using Int.sq_nonneg a.hi
+    · exact Int.le_refl _
+private theorem ivSq_neg_lo (a : FloatInterval) (h : a.lo ≤ a.hi) :
+    (ivSq (ivNeg a)).lo = (ivSq a).lo := by
+  by_cases hl : 0 ≤ a.lo
+  · by_cases hh : a.hi ≤ 0
+    · have hlo : a.lo = 0 := by omega
+      have hhi : a.hi = 0 := by omega
+      simp [ivSq,ivNeg,hlo,hhi]
+    · simp [ivSq,ivNeg,hl,hh,Int.neg_nonpos_iff,Int.neg_mul_neg]
+  · by_cases hh : a.hi ≤ 0
+    · simp [ivSq,ivNeg,hl,hh,Int.neg_mul_neg]
+    · have hp : ¬ -a.lo ≤ 0 := by omega
+      simp [ivSq,ivNeg,hl,hh,hp]
+
+theorem checkKdZ_vertical_radial (B : Box3D) (r len : Nat)
+    (hclear : radialClear B.xIv B.yIv r = true) :
+    checkKdZ (frepBallEndMill 0 0 0 ⟨0,0,1,1⟩ r len)
+      (frepBallEndMill 0 0 0 ⟨0,0,1,1⟩ r len) .part B B = true := by
+  have ⟨hx,h⟩ := (show B.xIv.lo ≤ B.xIv.hi ∧
+      0 < (ivSq B.xIv).lo + (ivSq B.yIv).lo - (r : Int)*r by
+    simpa only [radialClear,Bool.and_eq_true,decide_eq_true_eq] using hclear)
+  simp only [checkKdZ, decide_eq_true_eq]
+  simp [frepBallEndMill,frepBall,frepShank,frepAxial,frepAxb,frepScaleInt,
+    evalFRepInterval,ivAdd,ivSub,ivScalePos,ivMin,ivMax]
+  change 0 < min ((ivSq B.xIv).lo + (ivSq B.yIv).lo +
+      (ivSq ⟨B.zIv.lo-r,B.zIv.hi-r⟩).lo - (r:Int)*r)
+    (max ((ivSq B.yIv).lo + (ivSq (ivNeg B.xIv)).lo + (ivSq ⟨0,0⟩).lo - (r:Int)*r)
+      (max (-(B.zIv.hi-r)) (B.zIv.lo-r-len)))
+  rw [ivSq_neg_lo B.xIv hx]
+  have hz := ivSq_lo_nonnegative (⟨B.zIv.lo-r,B.zIv.hi-r⟩ : FloatInterval)
+  have hzero : (ivSq ⟨0,0⟩).lo = 0 := rfl
+  rw [hzero]
+  omega
+
 /-- **`checkKdZ_sound`**: a tree replayed in integers clears every rational point of `B` from the
 cutter at every rational position in `H`. -/
 theorem checkKdZ_sound (part tool0 : FRepExpr) :
@@ -3453,7 +3520,7 @@ theorem move_in_box (ms : List (Pt3 × Pt3)) (m : Pt3 × Pt3) (hm : m ∈ ms) (t
 structure CamChunk where
   axis  : ToolAxis
   moves : List (Pt3 × Pt3)
-  deriving Repr
+  deriving DecidableEq, Repr
 
 /-- The object: a part, a box holding it, a cutter (ball radius, shank length), and the moves of
 each pass. -/
@@ -3463,7 +3530,7 @@ structure CamGougeObj where
   toolR    : Nat
   shankLen : Nat
   chunks   : List CamChunk
-  deriving Repr
+  deriving DecidableEq, Repr
 
 /-- The certificate of one pass: consecutive groups of moves (`k` moves each, in order), each with
 the k-d tree for the box of its end points. How the moves are grouped is the producer's choice. -/
@@ -3475,6 +3542,38 @@ def checkGroups (part tool0 : FRepExpr) (box : Box3D) : List (Pt3 × Pt3) → Ca
   | ms@(_ :: _), (k, t) :: rest =>
     checkKdZ part tool0 t box (movesBoxZ (ms.take k)) && checkGroups part tool0 box (ms.drop k) rest
 
+theorem checkGroups_unit_cons (part tool : FRepExpr) (box : Box3D)
+    (m : Pt3 × Pt3) (ms : List (Pt3 × Pt3)) (t : KdCert) (gs : CamPassCert)
+    (h : checkKdZ part tool t box (movesBoxZ [m]) = true)
+    (hs : checkGroups part tool box ms gs = true) :
+    checkGroups part tool box (m::ms) ((1,t)::gs) = true := by
+  simp only [checkGroups,List.take_succ_cons,List.take_zero,List.drop_succ_cons,
+    List.drop_zero,Bool.and_eq_true]
+  exact ⟨h,hs⟩
+
+/-- Unit-sized move certificates compose without losing or duplicating a move. -/
+theorem checkGroups_unit_append (part tool : FRepExpr) (box : Box3D)
+    (ms ns : List (Pt3 × Pt3)) (gs hs : CamPassCert)
+    (hlen : ms.length = gs.length) (hunit : ∀ g ∈ gs, g.1 = 1)
+    (hg : checkGroups part tool box ms gs = true) (hh : checkGroups part tool box ns hs = true) :
+    checkGroups part tool box (ms++ns) (gs++hs) = true := by
+  induction gs generalizing ms with
+  | nil =>
+    have hm : ms=[] := by cases ms <;> simp_all
+    simpa [hm] using hh
+  | cons g gs ih =>
+    cases ms with
+    | nil => simp at hlen
+    | cons m ms =>
+      have hk := hunit g (by simp)
+      rcases g with ⟨k,t⟩
+      dsimp at hk
+      subst k
+      simp only [checkGroups,List.take_succ_cons,List.take_zero,List.drop_succ_cons,List.drop_zero,
+        Bool.and_eq_true] at hg
+      simp only [List.cons_append,checkGroups,List.take_succ_cons,List.take_zero,List.drop_succ_cons,
+        List.drop_zero,Bool.and_eq_true]
+      exact ⟨hg.1,ih ms (by simpa using hlen) (fun g hm => hunit g (by simp [hm])) hg.2⟩
 theorem checkGroups_mem (part tool0 : FRepExpr) (box : Box3D) :
     ∀ (gs : CamPassCert) (ms : List (Pt3 × Pt3)), checkGroups part tool0 box ms gs = true →
       ∀ m ∈ ms, ∃ g : List (Pt3 × Pt3), ∃ t : KdCert,
@@ -3493,13 +3592,28 @@ theorem checkGroups_mem (part tool0 : FRepExpr) (box : Box3D) :
       · exact ⟨_, t, h.1, hm⟩
       · exact checkGroups_mem part tool0 box rest _ h.2 m hm
 
+/-- Integer evaluation and rational evaluation agree on all integer points. -/
+theorem evalFRepQ_ofInt (x y z : Int) (e : FRepExpr) :
+    evalFRepQ (x : Rat) (y : Rat) (z : Rat) e = (evalFRepPoint x y z e : Rat) := by
+  induction e <;> simp_all [evalFRepQ,evalFRepPoint,intCast_min',intCast_max'] <;> rfl
+def endpointGougeB (o : CamGougeObj) (ch : CamChunk) (m : Pt3 × Pt3) : Bool :=
+  decide (o.box.xIv.lo ≤ m.1.1 ∧ m.1.1 ≤ o.box.xIv.hi ∧
+    o.box.yIv.lo ≤ m.1.2.1 ∧ m.1.2.1 ≤ o.box.yIv.hi ∧
+    o.box.zIv.lo ≤ m.1.2.2 ∧ m.1.2.2 ≤ o.box.zIv.hi) && decide (evalFRepPoint m.1.1 m.1.2.1 m.1.2.2 o.part ≤ 0 ∧
+    evalFRepPoint 0 0 0 (frepBallEndMill 0 0 0 ch.axis o.toolR o.shankLen) ≤ 0)
+def endpointCandidates (o : CamGougeObj) : List (Nat × Nat × CamChunk × (Pt3 × Pt3)) :=
+  o.chunks.zipIdx.flatMap fun (ch,i) => ch.moves.zipIdx.map fun (m,j) => (i,j,ch,m)
+def findEndpointGouge? (o : CamGougeObj) : Option (Nat × Nat × Pt3) :=
+  ((endpointCandidates o).find? fun (_,_,ch,m) => endpointGougeB o ch m).map fun (i,j,_,m) => (i,j,m.1)
 inductive CamGougeClause where
+  | pointGouge (chunkIdx moveIdx : Nat) (pt : Pt3)
   | chunkCount (expected got : Nat)
   | notCleared (chunk : Nat)
   deriving Repr, DecidableEq
 
 def checkCamGouge (o : CamGougeObj) (c : List CamPassCert) : Judge.Verdict CamGougeClause :=
-  if c.length != o.chunks.length then .refused (.chunkCount o.chunks.length c.length) []
+  if let some (i,j,pt) := findEndpointGouge? o then .refused (.pointGouge i j pt) []
+  else if c.length != o.chunks.length then .refused (.chunkCount o.chunks.length c.length) []
   else
     match ((o.chunks.zip c).zipIdx.find? fun ((ch, gs), _) =>
         !checkGroups o.part (frepBallEndMill 0 0 0 ch.axis o.toolR o.shankLen) o.box ch.moves gs) with
@@ -3516,36 +3630,209 @@ def CamGougeMeaning (o : CamGougeObj) : Prop :=
       (z - ((m.1.2.2 : Rat) + t * ((m.2.2.2 : Rat) - m.1.2.2)))
       (frepBallEndMill 0 0 0 ch.axis o.toolR o.shankLen)
 
+theorem pointGouge_refutes_meaning (o : CamGougeObj) {i j : Nat} {pt : Pt3}
+    (h : findEndpointGouge? o = some (i,j,pt)) : ¬CamGougeMeaning o := by
+  unfold findEndpointGouge? at h
+  cases hf : (endpointCandidates o).find? (fun (_,_,ch,m) => endpointGougeB o ch m) with
+  | none => simp [hf] at h
+  | some w =>
+    obtain ⟨i',j',ch,m⟩ := w
+    have hp := List.find?_some hf
+    have hm := List.mem_of_find?_eq_some hf
+    simp only [endpointCandidates,List.mem_flatMap,List.mem_map] at hm
+    obtain ⟨⟨ch',ci⟩,hc,⟨⟨m',mi⟩,hm,he⟩⟩ := hm
+    cases he
+    have hc' : ch' ∈ o.chunks := by
+      exact List.mem_of_getElem? (List.mem_zipIdx_iff_getElem?.mp hc)
+    have hm' : m' ∈ ch'.moves := by
+      exact List.mem_of_getElem? (List.mem_zipIdx_iff_getElem?.mp hm)
+    simp only [endpointGougeB,Bool.and_eq_true,decide_eq_true_eq] at hp
+    obtain ⟨hbox,hpart,htool⟩ := hp
+    intro meaning
+    have hboxQ : o.box.toQ.contains (m'.1.1 : Rat) (m'.1.2.1 : Rat) (m'.1.2.2 : Rat) := by
+      simp only [Box3D.toQ,QBox.contains,QIv.contains]
+      refine ⟨⟨?_,?_⟩,⟨?_,?_⟩,⟨?_,?_⟩⟩
+      · exact_mod_cast hbox.1
+      · exact_mod_cast hbox.2.1
+      · exact_mod_cast hbox.2.2.1
+      · exact_mod_cast hbox.2.2.2.1
+      · exact_mod_cast hbox.2.2.2.2.1
+      · exact_mod_cast hbox.2.2.2.2.2
+    have hpartQ : evalFRepQ (m'.1.1 : Rat) (m'.1.2.1 : Rat) (m'.1.2.2 : Rat) o.part ≤ 0 := by
+      rw [evalFRepQ_ofInt]; exact_mod_cast hpart
+    have hz := meaning ch' hc' m' hm' 0 (by decide) (by decide) _ _ _ hboxQ hpartQ
+    simp only [Rat.zero_mul,Rat.add_zero,Rat.sub_self] at hz
+    have ht : evalFRepQ 0 0 0 (frepBallEndMill 0 0 0 ch'.axis o.toolR o.shankLen) ≤ 0 := by
+      rw [show (0 : Rat) = ((0 : Int) : Rat) from rfl,evalFRepQ_ofInt]
+      exact_mod_cast htool
+    exact (Rat.not_lt.mpr ht) hz
+theorem camGroups_meaning (o : CamGougeObj) (c : List CamPassCert)
+    (hl : c.length = o.chunks.length)
+    (hall : (o.chunks.zip c).all (fun (ch,gs) =>
+      checkGroups o.part (frepBallEndMill 0 0 0 ch.axis o.toolR o.shankLen) o.box ch.moves gs) = true) :
+    CamGougeMeaning o := by
+  intro ch hch m hm t h0 h1 x y z hB hP
+  obtain ⟨i,hi,rfl⟩ := List.getElem_of_mem hch
+  have hi' : i < c.length := by omega
+  have hz : (o.chunks[i],c[i]) ∈ o.chunks.zip c := by
+    apply List.mem_of_getElem? (i := i)
+    simp [List.getElem?_zip_eq_some,hi,hi']
+  have hk := List.all_eq_true.mp hall _ hz
+  obtain ⟨g,kt,hck,hmg⟩ := checkGroups_mem _ _ _ _ _ hk m hm
+  exact checkKdZ_sound _ _ _ _ _ hck x y z _ _ _ hB (move_in_box _ m hmg t h0 h1) hP
+/-- Assemble kernel-checked slices through the same public checker, including its gouge refusal. -/
+theorem checkCamGouge_of_groups (o : CamGougeObj) (c : List CamPassCert)
+    (hl : c.length = o.chunks.length)
+    (hall : (o.chunks.zip c).all (fun (ch,gs) =>
+      checkGroups o.part (frepBallEndMill 0 0 0 ch.axis o.toolR o.shankLen) o.box ch.moves gs) = true) :
+    checkCamGouge o c = .ok := by
+  have hnone : findEndpointGouge? o = none := by
+    cases he : findEndpointGouge? o with
+    | none => rfl
+    | some v => exact False.elim (pointGouge_refutes_meaning o he (camGroups_meaning o c hl hall))
+  have hn : ((o.chunks.zip c).zipIdx.find? fun ((ch,gs),_) =>
+      !checkGroups o.part (frepBallEndMill 0 0 0 ch.axis o.toolR o.shankLen) o.box ch.moves gs) = none := by
+    apply List.find?_eq_none.mpr
+    intro x hx
+    have hm := (List.mem_zipIdx_iff_getElem?.mp hx)
+    have hm' := List.mem_of_getElem? hm
+    have hh := List.all_eq_true.mp hall _ hm'
+    simp [hh]
+  simp [checkCamGouge,hnone,hl,hn]
 theorem checkCamGouge_sound (o : CamGougeObj) (c : List CamPassCert) (h : checkCamGouge o c = .ok) :
     CamGougeMeaning o := by
   unfold checkCamGouge at h
+  split at h
+  · cases h
   split at h
   · cases h
   · rename_i hlen
     split at h
     · cases h
     · rename_i hnone
-      intro ch hch m hm t h0 h1 x y z hB hP
-      have hl : c.length = o.chunks.length := by simpa using hlen
-      obtain ⟨i, hi, rfl⟩ := List.getElem_of_mem hch
-      have hi' : i < c.length := by omega
-      have hz : ((o.chunks[i], c[i]), i) ∈ (o.chunks.zip c).zipIdx := by
+      apply camGroups_meaning o c (by simpa using hlen)
+      apply List.all_eq_true.mpr
+      intro p hp
+      obtain ⟨i,hi,he⟩ := List.getElem_of_mem hp
+      have hz : (p,i) ∈ (o.chunks.zip c).zipIdx := by
         rw [List.mem_zipIdx_iff_getElem?]
-        simp [List.getElem?_zip_eq_some, hi, hi']
+        simp [List.getElem?_eq_getElem hi,he]
       have hk := List.find?_eq_none.mp hnone _ hz
-      simp only [Bool.not_eq_true', Bool.not_eq_false] at hk
-      obtain ⟨g, kt, hck, hmg⟩ := checkGroups_mem _ _ _ _ _ (by simpa using hk) m hm
-      exact checkKdZ_sound _ _ _ _ _ hck x y z _ _ _ hB (move_in_box _ m hmg t h0 h1) hP
+      simpa using hk
+
+/-- Point boxes and stationary moves form a decidable, inhabited completeness fragment. -/
+@[expose] def CamGougeUnitFragment (o : CamGougeObj) : Prop :=
+  o.box.xIv.lo = o.box.xIv.hi ∧ o.box.yIv.lo = o.box.yIv.hi ∧ o.box.zIv.lo = o.box.zIv.hi ∧
+  (o.chunks.all fun ch => ch.moves.all fun m => decide (m.1=m.2)) = true
+instance (o : CamGougeObj) : Decidable (CamGougeUnitFragment o) :=
+  by unfold CamGougeUnitFragment; infer_instance
+private def pointBox (p : Pt3) : Box3D := ⟨⟨p.1,p.1⟩,⟨p.2.1,p.2.1⟩,⟨p.2.2,p.2.2⟩⟩
+private theorem pointBox_eval (p : Pt3) (e : FRepExpr) :
+    evalFRepInterval (pointBox p) e = ⟨evalFRepPoint p.1 p.2.1 p.2.2 e,evalFRepPoint p.1 p.2.1 p.2.2 e⟩ := by
+  induction e <;> simp_all [evalFRepInterval,evalFRepPoint,pointBox,ivAdd,ivSub,ivNeg,ivScalePos,ivMin,ivMax]
+  unfold ivSq; split <;> try rfl
+  split <;> try rfl
+  rename_i h1 h2
+  simp only [decide_eq_true_eq] at h1 h2
+  omega
+private theorem movesBoxZ_stationary (p : Pt3) : movesBoxZ [(p,p)] = pointBox p := by
+  simp [movesBoxZ,intBounds,pointBox]
+def unitCamPass (o : CamGougeObj) (ch : CamChunk) : CamPassCert :=
+  ch.moves.map fun _ => (1,if 0 < evalFRepPoint o.box.xIv.lo o.box.yIv.lo o.box.zIv.lo o.part then .part else .tool)
+private theorem unitCamPass_accepts (o : CamGougeObj) (hf : CamGougeUnitFragment o) (hm : CamGougeMeaning o)
+    (ch : CamChunk) (hc : ch ∈ o.chunks) :
+    checkGroups o.part (frepBallEndMill 0 0 0 ch.axis o.toolR o.shankLen) o.box ch.moves (unitCamPass o ch) = true := by
+  let p : Pt3 := (o.box.xIv.lo,o.box.yIv.lo,o.box.zIv.lo)
+  have hb : o.box = pointBox p := by
+    rcases o with ⟨part,⟨⟨xl,xh⟩,⟨yl,yh⟩,⟨zl,zh⟩⟩,r,len,chs⟩
+    obtain ⟨hx,hy,hz,_⟩ := hf
+    simp only at hx hy hz
+    subst xh; subst yh; subst zh; rfl
+  have hs : ∀ m ∈ ch.moves, m.1=m.2 := by
+    have hh := List.all_eq_true.mp (List.all_eq_true.mp hf.2.2.2 ch hc)
+    intro m hm; exact of_decide_eq_true (hh m hm)
+  have leaf (m : Pt3 × Pt3) (hmem : m ∈ ch.moves) :
+      checkKdZ o.part (frepBallEndMill 0 0 0 ch.axis o.toolR o.shankLen)
+        (if 0 < evalFRepPoint p.1 p.2.1 p.2.2 o.part then .part else .tool) o.box (movesBoxZ [m]) = true := by
+    obtain ⟨a,b⟩ := m
+    have hab := hs (a,b) hmem
+    simp only at hab; subst b
+    rw [movesBoxZ_stationary,hb]
+    split
+    · rename_i hp; simpa [checkKdZ,pointBox_eval] using hp
+    · rename_i hp
+      have hpQ : evalFRepQ (p.1 : Rat) (p.2.1 : Rat) (p.2.2 : Rat) o.part ≤ 0 := by
+        rw [evalFRepQ_ofInt]; exact_mod_cast (show evalFRepPoint p.1 p.2.1 p.2.2 o.part ≤ 0 by omega)
+      have hbox : o.box.toQ.contains (p.1 : Rat) (p.2.1 : Rat) (p.2.2 : Rat) := by
+        rw [hb]; simp [Box3D.toQ,pointBox,QBox.contains,QIv.contains]
+      have ht := hm ch hc (a,a) hmem 0 (by decide) (by decide) _ _ _ hbox hpQ
+      simp only [Rat.zero_mul,Rat.add_zero,← Rat.intCast_sub] at ht
+      rw [evalFRepQ_ofInt] at ht
+      have htZ : 0 < evalFRepPoint (p.1-a.1) (p.2.1-a.2.1) (p.2.2-a.2.2)
+          (frepBallEndMill 0 0 0 ch.axis o.toolR o.shankLen) := by exact_mod_cast ht
+      have hbsub : (pointBox p).minus (pointBox a) = pointBox (p.1-a.1,p.2.1-a.2.1,p.2.2-a.2.2) := rfl
+      simpa [checkKdZ,hbsub,pointBox_eval] using htZ
+  unfold unitCamPass
+  have aux (ms : List (Pt3 × Pt3)) (hms : ∀ m ∈ ms, m ∈ ch.moves) :
+      checkGroups o.part (frepBallEndMill 0 0 0 ch.axis o.toolR o.shankLen) o.box ms
+        (ms.map fun _ => (1,if 0 < evalFRepPoint p.1 p.2.1 p.2.2 o.part then .part else .tool)) = true := by
+    induction ms with
+    | nil => rfl
+    | cons m ms ih =>
+      simp only [List.map_cons,checkGroups,List.take_succ_cons,List.take_zero,List.drop_succ_cons,List.drop_zero]
+      rw [leaf m (hms m List.mem_cons_self)]
+      exact Bool.true_and _ ▸ ih (fun m hm => hms m (List.mem_cons_of_mem _ hm))
+  exact aux ch.moves (fun _ h => h)
+theorem camGougeUnit_complete (o : CamGougeObj) (hf : CamGougeUnitFragment o) (hm : CamGougeMeaning o) :
+    checkCamGouge o (o.chunks.map (unitCamPass o)) = .ok := by
+  have hn : findEndpointGouge? o = none := by
+    cases h : findEndpointGouge? o with
+    | none => rfl
+    | some p => exact False.elim (pointGouge_refutes_meaning o h hm)
+  unfold checkCamGouge
+  rw [hn]
+  simp only [List.length_map,bne_self_eq_false,Bool.false_eq_true,↓reduceIte]
+  have hnone : ((o.chunks.zip (o.chunks.map (unitCamPass o))).zipIdx.find?
+      (fun ((ch,gs),_) => !checkGroups o.part (frepBallEndMill 0 0 0 ch.axis o.toolR o.shankLen) o.box ch.moves gs)) = none := by
+    apply List.find?_eq_none.mpr
+    intro w hw
+    have hz := List.mem_of_getElem? (List.mem_zipIdx_iff_getElem?.mp hw)
+    have hp : w.1.2 = unitCamPass o w.1.1 ∧ w.1.1 ∈ o.chunks := by
+      have aux (xs : List CamChunk) (a : CamChunk) (b : CamPassCert)
+          (h : (a,b) ∈ xs.zip (xs.map (unitCamPass o))) : b = unitCamPass o a ∧ a ∈ xs := by
+        induction xs with
+        | nil => simp at h
+        | cons x xs ih =>
+          simp only [List.map_cons,List.zip_cons_cons,List.mem_cons] at h
+          rcases h with he | he
+          · cases he; exact ⟨rfl,List.mem_cons_self⟩
+          · exact ⟨(ih he).1,List.mem_cons_of_mem _ (ih he).2⟩
+      exact aux _ _ _ hz
+    simp [hp.1,unitCamPass_accepts o hf hm w.1.1 hp.2]
+  rw [hnone]
+/-- One real stationary cut at a point outside the part is accepted. -/
+def camUnitSafe : CamGougeObj :=
+  ⟨.varX,⟨⟨2,2⟩,⟨0,0⟩,⟨0,0⟩⟩,1,2,[⟨⟨0,0,1,1⟩,[((0,0,0),(0,0,0))]⟩]⟩
+example : CamGougeUnitFragment camUnitSafe := by decide
+example : checkCamGouge camUnitSafe [[(1,.part)]] = .ok := by decide +kernel
 
 instance camGougeJudge : Obend.Judge CamGougeObj (List CamPassCert) where
   Clause := CamGougeClause
   Meaning o _ := CamGougeMeaning o
   check _ := checkCamGouge
   sound := fun {_ o c} h => checkCamGouge_sound o c h
-  refutes _ := false
-  refuted := by intro _ _ _ _ _ _ hRef; cases hRef
-  Fragment _ := False
-  complete := by intro _ h; exact h.elim
+  refutes k := match k with | .pointGouge .. => true | _ => false
+  refuted := by
+    intro _ o c k p h hk c' hm
+    unfold checkCamGouge at h
+    split at h
+    · rename_i i j pt hf
+      exact pointGouge_refutes_meaning o hf hm
+    · split at h
+      · cases h; cases hk
+      · split at h <;> cases h <;> cases hk
+  Fragment := CamGougeUnitFragment
+  complete := by intro o hf ⟨_,hm⟩; exact ⟨_,0,camGougeUnit_complete o hf hm⟩
   mono := by intro _ _ _ _ _ _; rfl
 
 /-! ### Wire format: whitespace-separated tokens -/
@@ -3622,6 +3909,47 @@ def decodeCamGroup (tok : String) : Except String (Nat × KdCert) :=
 def decodeCamCert (s : String) : Except String (List CamPassCert) :=
   ((s.splitOn "\n").filter (· ≠ "")).mapM fun l => ((l.splitOn " ").filter (· ≠ "")).mapM decodeCamGroup
 
+/-- A pending prefix-tree node stores its branch kind and, once read, its left child. -/
+private def attachCamTree (t : KdCert) : List (Bool × Option KdCert) → Sum (List (Bool × Option KdCert)) KdCert
+  | [] => .inr t
+  | (k,none)::rest => .inl ((k,some t)::rest)
+  | (k,some l)::rest => attachCamTree (if k then .splitB l t else .splitH l t) rest
+/-- Linear byte scanner. Modes are whitespace, decimal count, prefix tree, and group end.
+The prefix stack avoids rescanning trees or building intermediate strings and character lists. -/
+private def scanCamCert (bs : ByteArray) : Nat → Nat → Nat → Nat →
+    List (Bool × Option KdCert) → CamPassCert → List CamPassCert → Option (List CamPassCert)
+  | 0,_,_,_,_,_,_ => none
+  | fuel+1,i,mode,n,stack,pass,passes =>
+    if hi : i < bs.size then
+      let b := bs[i]'hi
+      if mode = 0 then
+        if b = 32 then scanCamCert bs fuel (i+1) 0 0 [] pass passes
+        else if b = 10 then scanCamCert bs fuel (i+1) 0 0 [] [] (if pass.isEmpty then passes else pass.reverse::passes)
+        else if 48 ≤ b && b ≤ 57 then scanCamCert bs fuel (i+1) 1 (b.toNat-48) [] pass passes
+        else none
+      else if mode = 1 then
+        if 48 ≤ b && b ≤ 57 then scanCamCert bs fuel (i+1) 1 (n*10+b.toNat-48) [] pass passes
+        else if b = 58 then scanCamCert bs fuel (i+1) 2 n [] pass passes
+        else none
+      else if mode = 2 then
+        if b = 66 || b = 72 then scanCamCert bs fuel (i+1) 2 n ((b==66,none)::stack) pass passes
+        else if b = 80 || b = 84 then
+          match attachCamTree (if b=80 then .part else .tool) stack with
+          | .inl rest => scanCamCert bs fuel (i+1) 2 n rest pass passes
+          | .inr tree => scanCamCert bs fuel (i+1) 3 0 [] ((n,tree)::pass) passes
+        else none
+      else
+        if b = 32 then scanCamCert bs fuel (i+1) 0 0 [] pass passes
+        else if b = 10 then scanCamCert bs fuel (i+1) 0 0 [] [] (pass.reverse::passes)
+        else none
+    else if mode = 0 || mode = 3 then
+      some ((if pass.isEmpty then passes else pass.reverse::passes).reverse)
+    else none
+def decodeCamCertBytes (bs : ByteArray) : Option (List CamPassCert) :=
+  scanCamCert bs (bs.size+1) 0 0 0 [] [] []
+example : decodeCamCertBytes ⟨#[49,58,66,80,84,10]⟩ = some [[(1,.splitB .part .tool)]] := by decide
+example : decodeCamCertBytes ⟨#[49,58,66,80,10]⟩ = none := by decide
+
 def pt3Tokens (p : Pt3) : List String := [toString p.1, toString p.2.1, toString p.2.2]
 
 /-- Object wire: `part …`, `box …`, `tool r len`, then one `chunk ux uy uz n` line and its move
@@ -3669,7 +3997,7 @@ def camGougeBad : CamGougeObj × List CamPassCert :=
      box := ⟨⟨0, 4⟩, ⟨0, 4⟩, ⟨0, 4⟩⟩, toolR := 1, shankLen := 2
      chunks := [{ axis := ⟨0, 0, 1, 1⟩, moves := [((2, 2, 1), (2, 2, 1))] }] }, [[(1, .tool)]])
 
-theorem camGougeBad_refused : checkCamGouge camGougeBad.1 camGougeBad.2 = .refused (.notCleared 0) [] := by
+theorem camGougeBad_refused : checkCamGouge camGougeBad.1 camGougeBad.2 = .refused (.pointGouge 0 0 (2,2,1)) [] := by
   decide +kernel
 
 def camGougeFormat : Obend.Judge.Format where
@@ -3686,5 +4014,14 @@ def camGougeFormat : Obend.Judge.Format where
   badGrade    := 0
   bad_refused := ⟨_, _, camGougeBad_refused⟩
 
+example (x y z : Int) : inSolid x y z (.sub .varX .varX) := by
+  simp [inSolid,evalFRepPoint]
+example (B : Box3D) : checkVoxelNoGouge B (.const 1) = true := by
+  simp [checkVoxelNoGouge,evalFRepInterval]
+example (B : Box3D) : kdAll (disjointLeaf (.const 1) (.const (-1))) 0 B = true := by
+  simp [kdAll,disjointLeaf,evalFRepInterval]
+example : tryAliasSsaOp [some 0] (.minUnion 0 0) = some 0 := by decide
+example : tryRemapSsaOp [some 0,some 1] (.add 0 1) = some (.add 0 1) := by decide
+example : WithinBox 1 1 1 0 0 0 1 1 1 := by unfold WithinBox; decide
 end Obend.Hardware.GeometryCAM
 end

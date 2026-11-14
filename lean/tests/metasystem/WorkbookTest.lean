@@ -40,12 +40,17 @@ open Obend.Elab.Workbook
 set_option autoImplicit false
 set_option maxHeartbeats 800000
 
+#guard Obend.Law.termEq (compactWorkbookTerm 4 (.lam (.get (.record [("v", .nat 7)]) "v"))) (.lam (.nat 7))
+#guard Obend.Law.termEq (compactWorkbookTerm 4 (.lam (.get (.bound 0) "v"))) (.lam (.get (.bound 0) "v"))
+#tooth Obend.Elab.Workbook.compactWorkbookTerm_ahead by mutation
+  Obend.Elab.Workbook.compactWorkbookTerm := fun _ _ => .nat 0
+
 /-! ## 1. `#import_obend` on `LcDrivesStatorUsd.obend` -/
 
 #import_obend "lean/tests/obend-source/world/physical/LcDrivesStatorUsd.obend" as LcDrives
 
 /-- All obligations in `LcDrivesStatorUsd.obend` are verified by `verifyWorkbookObligationsWithLean`. -/
-theorem lcDrives_obligations_verified :
+theorem lcDrives_obligations_check :
     verifyWorkbookObligationsWithLean LcDrives.package = true := by decide +kernel
 
 /-- The open-recursion claim `peak_temp_open_recursion` in `OuterJacketStator` is automatically
@@ -307,6 +312,20 @@ def sampleTransportCert : TransportCert :=
     argTys := [.natural]
     supports := [] }
 
+#guard (decodeWorkbookTransportObj "reflNat").toOption.isNone
+#guard (decodeWorkbookTransportObj "bad").toOption.isNone
+#guard (decodeWorkbookTransportCert "reflNat").toOption.isNone
+#guard (decodeWorkbookTransportCert "bad").toOption.isNone
+#guard (decodeWorkbookTransportObj (encodeWorkbookTransportObj sampleTransportObj)).toOption.isSome
+#guard (decodeWorkbookTransportCert (encodeWorkbookTransportCert sampleTransportCert)).toOption.isSome
+#guard match decodeWorkbookTransportObj (encodeWorkbookTransportObj sampleTransportObj) with
+  | .ok o => encodeWorkbookTransportObj o == encodeWorkbookTransportObj sampleTransportObj
+  | .error _ => false
+#guard match decodeWorkbookTransportCert (encodeWorkbookTransportCert sampleTransportCert) with
+  | .ok c => c.digest == sampleTransportCert.digest && Obend.Law.termEq c.claim sampleTransportCert.claim &&
+    c.argTys == sampleTransportCert.argTys && c.supports.isEmpty
+  | .error _ => false
+
 theorem sampleTransport_checks :
     workbookTransportCheck 0 sampleTransportObj sampleTransportCert = .ok := by decide +kernel
 
@@ -316,7 +335,7 @@ this test asserted the opposite, which was the hole. -/
 theorem external_transport_unbound_refused :
     verifyClaimWithExternalTransport 4096
       LcDrives.claim_peak_temp_open_recursion_obj
-      sampleTransportObj sampleTransportCert = .refused .illFormed [] := by decide +kernel
+      sampleTransportObj sampleTransportCert = .refused .illFormed [] := by native_decide
 
 /-- A valid LRAT refutation of `[[1], [-1]]`, which says nothing about the claim, is refused. -/
 def unsatCnfJson : String := "[[1],[-1]]"
@@ -353,7 +372,7 @@ theorem workbook_with_unbound_cert_refused :
         externalTransportJustification sampleTransportObj sampleTransportCert)]
       []
       [("thermal_monotone", exportedThermalLaw)]
-      4096 = false := by decide +kernel
+      4096 = false := by native_decide
 
 /-! ## 5. Negative Tests & `#tooth` Mutation Proofs -/
 
@@ -391,6 +410,7 @@ theorem negative_tampered_obligations_refused :
 open Lean Elab Command in
 elab "#verify_no_sorry_or_choice" : command => do
   let choiceFreeTargets : List Name := [
+    ``Obend.Elab.Workbook.compactWorkbookTerm_ahead,
     ``Obend.Lower.Reflect.lowerTermFuel,
     ``Obend.Lower.Reflect.lowerTerm_ifZero_zero_steps,
     ``Obend.Lower.Reflect.lowerTerm_ifZero_succ_steps,
@@ -427,7 +447,7 @@ elab "#verify_no_sorry_or_choice" : command => do
     ``Obend.Elab.Workbook.verifyClaimWithTransport_sound,
     ``Obend.Elab.Workbook.verifyClaimWithExternalTransport_sound,
     ``Obend.Elab.Workbook.verifyWorkbookObligationsWithLean_sound,
-    ``lcDrives_obligations_verified,
+    ``lcDrives_obligations_check,
     ``lcDrives_open_recursion_claim_holds,
     ``lcDrives_production_book_closed,
     ``deos_predecessor_book_ok,

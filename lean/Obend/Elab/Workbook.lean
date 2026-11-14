@@ -47,6 +47,7 @@ public meta import Obend.Lower.Reflect
 public import Obend.Elab.AutoCert
 public meta import Obend.Elab.AutoCert
 public import Obend.AssertCompiled
+public meta import Obend.Hardware.GeometryCAM
 public meta import Obend.AssertCompiled
 import all Obend.Judge.Class
 import all Obend.Logic.Obligation
@@ -76,7 +77,7 @@ without manual de Bruijn transcription:
    an `.obend` `WorkbookPackage`'s obligation checker.
 -/
 
-@[expose] public section
+public section
 
 namespace Obend.Elab.Workbook
 
@@ -97,7 +98,7 @@ set_option autoImplicit false
 /-! ## 1. Workbook Data Structures -/
 
 /-- Default empty layout environment for `lowerTerm` and `reflectComposition`. -/
-def emptyLayoutEnv : LayoutEnv :=
+@[expose] def emptyLayoutEnv : LayoutEnv :=
   { fields := [], selfIndex := 0, arity := 0 }
 
 /-- One elaborated definition in an `.obend` workbook package, with its Core4 term,
@@ -264,19 +265,50 @@ def selectCallableDecls (m : Obend.Spec.Syntax.Module) : List Obend.Spec.Syntax.
     | _ => false
 
 
+/-- Resolve terminating field reads before quoting composition bodies. Open self/super reads remain open. -/
+def compactWorkbookTerm : Nat → Term → Term
+  | 0, t => t
+  | n+1, .lam b => .lam (compactWorkbookTerm n b)
+  | n+1, .app f a => .app (compactWorkbookTerm n f) (compactWorkbookTerm n a)
+  | n+1, .binary op a b => .binary op (compactWorkbookTerm n a) (compactWorkbookTerm n b)
+  | n+1, .get target field =>
+    match Obend.Law.run 50000 (.get target field) with
+    | some v => v
+    | none => .get (compactWorkbookTerm n target) field
+  | _+1, t => t
+
+theorem compactWorkbookTerm_ahead (fuel : Nat) (t : Term) :
+    Obend.Equiv.Ahead t (compactWorkbookTerm fuel t) := by
+  induction fuel generalizing t with
+  | zero => exact .refl t
+  | succ n ih =>
+    cases t <;> simp only [compactWorkbookTerm]
+    all_goals first
+      | exact .refl _
+      | exact .lam (ih _)
+      | exact .app (ih _) (ih _)
+      | exact .binary _ (ih _) (ih _)
+      | skip
+    split
+    · rename_i v hv
+      exact .run (Obend.Law.run_sound _ hv).1 (.refl _)
+    · exact .get _ (ih _)
+
 /-- Strip layer metadata and `#kind` fields so the emitted `Composition` reduces in the kernel
 (`decide +kernel` over `_comp`/`_book` constants). The flattened behaviour is unchanged. -/
 def compactLayerForKernel (L : Layer) : Layer :=
   { L with
     metadata := .record [("name", .label L.name)]
-    fields := L.fields.filter (fun kv => kv.1 != "#kind")
+    fields := (L.fields.filter (fun kv => kv.1 != "#kind")).map
+      (fun (name, body) => (name, compactWorkbookTerm 16 body))
     composeMeta := .record [] }
 
 def compactCompositionForKernel (C : Composition) : Composition :=
   { C with
     top := compactLayerForKernel C.top
     below := C.below.map compactLayerForKernel
-    seed := C.seed.filter (fun kv => kv.1 != "#kind") }
+    seed := (C.seed.filter (fun kv => kv.1 != "#kind")).map
+      (fun (name, body) => (name, compactWorkbookTerm 16 body)) }
 
 /-- Format a `FrontEnd.Diagnostic` into a readable error string. -/
 def formatDiagnostic (d : Obend.Spec.FrontEnd.Diagnostic) : String :=
@@ -650,7 +682,7 @@ def loadObendWorkbookFile (path : System.FilePath) : IO (Except String WorkbookP
 
 /-- Fast structural digest on `LExpr` so `transport@1` certificates can be checked in the Lean kernel
     without evaluating `Obend.Core.Digest.deployed` (Keccak-f[1600]). -/
-def workbookSourceDigest : LExpr → Nat
+@[expose] def workbookSourceDigest : LExpr → Nat
   | .bvar i => i + 1
   | .erased => 2
   | .lit n => n * 3 + 3
@@ -664,7 +696,7 @@ def workbookSourceDigest : LExpr → Nat
   | _ => 97
 
 /-- Kernel-reducible `transport@1` checker using `workbookSourceDigest`. -/
-def workbookTransportCheck (_ : Nat) (o : TransportObj) (c : TransportCert) :
+@[expose] def workbookTransportCheck (_ : Nat) (o : TransportObj) (c : TransportCert) :
     Obend.Judge.Verdict Obend.Lower.TransportClause :=
   if c.digest != workbookSourceDigest o.decideExpr then .refused .otherSource []
   else if !Obend.Law.termEq (Obend.Lower.lowerProp o.decideExpr) c.claim then .refused .notTheLowering []
@@ -738,8 +770,23 @@ instance workbookTransportJudge : Obend.Judge TransportObj TransportCert where
     intro th ds hcons hlen hfrag hred hprov
     rw [ht]
     exact Obend.Lower.transport_ltyped_holds th htyped hs hlen hfrag hred hcons hprov
-  refutes _ := false
-  refuted := by intro _ _ _ _ _ _ h; cases h
+  refutes
+    | .emptySplit => true
+    | _ => false
+  refuted := by
+    intro r o c clause path hcheck href c' hmeaning
+    cases clause <;> simp only at href
+    all_goals try contradiction
+    have hs := hmeaning.2.2.2.2.1
+    unfold workbookTransportCheck at hcheck
+    split at hcheck
+    · cases hcheck
+    · split at hcheck
+      · cases hcheck
+      · split at hcheck
+        · cases hcheck
+        · simp [hs] at hcheck
+          split at hcheck <;> cases hcheck
   Fragment o :=
     Obend.Lower.nonEmptySplits o.decideExpr = true ∧
     Obend.Lower.checkL [] o.decideExpr (Obend.Lower.curry o.argTys .boolean) = true
@@ -765,32 +812,16 @@ theorem badWorkbookTransport_refused :
     workbookTransportCheck 0 Obend.Lower.badTransportObj Obend.Lower.badTransportCert =
       .refused .otherSource [] := rfl
 
-def decodeWorkbookTransportObj (s : String) : Except String TransportObj :=
-  match s with
-  | "reflNat" => .ok reflNatTransportObj
-  | "bad" => .ok Obend.Lower.badTransportObj
-  | _ => Obend.Lower.transportObjOf s
+def decodeWorkbookTransportObj (s : String) : Except String TransportObj := Obend.Lower.transportObjOf s
 
-def decodeWorkbookTransportCert (s : String) : Except String TransportCert :=
-  match s with
-  | "reflNat" => .ok reflNatTransportCert
-  | "bad" => .ok Obend.Lower.badTransportCert
-  | _ => Obend.Lower.transportCertOf s
+def decodeWorkbookTransportCert (s : String) : Except String TransportCert := Obend.Lower.transportCertOf s
 
-def encodeWorkbookTransportObj (o : TransportObj) : String :=
-  if workbookSourceDigest o.decideExpr == workbookSourceDigest reflNatDecideExpr && o.argTys == [.natural] then
-    "reflNat"
-  else
-    (Obend.Lower.transportObjJson o).compress
+def encodeWorkbookTransportObj (o : TransportObj) : String := (Obend.Lower.transportObjJson o).compress
 
-def encodeWorkbookTransportCert (c : TransportCert) : String :=
-  if c.digest == workbookSourceDigest reflNatDecideExpr && c.argTys == [.natural] then
-    "reflNat"
-  else
-    (Obend.Lower.transportCertJson c).compress
+def encodeWorkbookTransportCert (c : TransportCert) : String := (Obend.Lower.transportCertJson c).compress
 
 /-- Kernel-reducible `transport@1` format registered in `workbookFormats`. -/
-def workbookTransportFormat : Obend.Judge.Format where
+@[expose] def workbookTransportFormat : Obend.Judge.Format where
   name := "transport"
   version := "1"
   Obj := TransportObj
@@ -803,11 +834,15 @@ def workbookTransportFormat : Obend.Judge.Format where
   bad := (Obend.Lower.badTransportObj, Obend.Lower.badTransportCert)
   badGrade := 0
   bad_refused := ⟨.otherSource, [], badWorkbookTransport_refused⟩
+  bindsClaim claim arity wire :=
+    match decodeWorkbookTransportObj wire with
+    | .ok o => o.argTys.length == arity + 2 && Obend.Law.termEq (Obend.Lower.lowerProp o.decideExpr) claim
+    | .error _ => false
 
 /-- Registered judge formats for workbook obligation verification (`transport@1`, `rewrite@1`,
     `lrat@1`, `clearing@1`, `interval@1`, `taylor-model@1`, `sos-lyapunov-cbf@1`, `groebner@1`,
     `rtl-synth@1`, `hw-rtl-synth@1`). -/
-def workbookFormats : List Obend.Judge.Format :=
+@[expose] def workbookFormats : List Obend.Judge.Format :=
   workbookTransportFormat :: Obend.Elab.AutoCert.autoCertFormats
 
 /-- Convert a Lean `TransportCert` into an `.obend` `.byLoweredLean` obligation justification. -/
@@ -816,7 +851,7 @@ def justificationOfTransportCert (cert : TransportCert) (receipt : ByteArray := 
   .byLoweredLean cert.claim cert.supports receipt
 
 /-- Convert a Lean `(TransportObj, TransportCert)` pair into an external `transport@1` justification. -/
-def externalTransportJustification (obj : TransportObj) (cert : TransportCert) : Justification :=
+@[expose] def externalTransportJustification (obj : TransportObj) (cert : TransportCert) : Justification :=
   .byExternalJudge "transport@1"
     (Obend.Logic.mkExternalJudgePayload
       (encodeWorkbookTransportObj obj)
@@ -832,12 +867,12 @@ def verifyClaimWithTransport (k : Nat) (claim : ClaimObj) (cert : TransportCert)
     `obligationMeaningWithJudges workbookFormats`. -/
 theorem verifyClaimWithTransport_sound {k : Nat} {claim : ClaimObj} {cert : TransportCert}
     {receipt : ByteArray} (h : verifyClaimWithTransport k claim cert receipt = .ok) :
-    Obend.Logic.obligationMeaningWithJudges workbookFormats claim
-      (justificationOfTransportCert cert receipt) :=
-  Obend.Logic.obligationWithJudges_sound workbookFormats h
+    Obend.Logic.obligationCheckWithJudges workbookFormats k claim (justificationOfTransportCert cert receipt) = .ok ∧
+    Obend.Logic.obligationMeaningWithJudges workbookFormats claim (justificationOfTransportCert cert receipt) :=
+  ⟨h, Obend.Logic.obligationWithJudges_sound workbookFormats h⟩
 
 /-- Verify an `.obend` `ClaimObj` using an external `transport@1` certificate payload. -/
-def verifyClaimWithExternalTransport (k : Nat) (claim : ClaimObj) (obj : TransportObj)
+@[expose] def verifyClaimWithExternalTransport (k : Nat) (claim : ClaimObj) (obj : TransportObj)
     (cert : TransportCert) : Obend.Judge.Verdict ClaimClause :=
   Obend.Logic.obligationCheckWithJudges workbookFormats k claim
     (externalTransportJustification obj cert)
@@ -847,9 +882,9 @@ def verifyClaimWithExternalTransport (k : Nat) (claim : ClaimObj) (obj : Transpo
 theorem verifyClaimWithExternalTransport_sound {k : Nat} {claim : ClaimObj}
     {obj : TransportObj} {cert : TransportCert}
     (h : verifyClaimWithExternalTransport k claim obj cert = .ok) :
-    Obend.Logic.obligationMeaningWithJudges workbookFormats claim
-      (externalTransportJustification obj cert) :=
-  Obend.Logic.obligationWithJudges_sound workbookFormats h
+    Obend.Logic.obligationCheckWithJudges workbookFormats k claim (externalTransportJustification obj cert) = .ok ∧
+    Obend.Logic.obligationMeaningWithJudges workbookFormats claim (externalTransportJustification obj cert) :=
+  ⟨h, Obend.Logic.obligationWithJudges_sound workbookFormats h⟩
 
 /-- Select the justification for a `WorkbookClaim` from provided Lean justifications,
     Lean `TransportCert`s, or the package's auto-synthesized rewrite derivation. -/
@@ -866,7 +901,7 @@ def selectClaimJustification (wc : WorkbookClaim)
 
 /-- Check all claims and exported `LawExpr` invariants in a `WorkbookPackage` using Lean
     justifications, `TransportCert`s, and `LawCompile`. -/
-def verifyWorkbookObligationsWithLean (pkg : WorkbookPackage)
+@[expose] def verifyWorkbookObligationsWithLean (pkg : WorkbookPackage)
     (leanJustifications : List (String × Justification) := [])
     (leanTransportCerts : List (String × TransportCert) := [])
     (leanLaws : List (String × LawExpr) := [])
@@ -878,6 +913,22 @@ def verifyWorkbookObligationsWithLean (pkg : WorkbookPackage)
   let lawsOk := (pkg.laws ++ leanLaws).all fun (lawName, lawExpr) =>
     Obend.Law.closedB (Obend.Spec.LawCompile.compile .emptyRow pkg.moduleName lawName lawExpr)
   pkg.accepted && claimsOk && lawsOk
+
+/-- A closed reflexive transport exercises both registration and claim binding. -/
+def transportWitnessObj : TransportObj :=
+  ⟨.lam .natural (.lam .natural (.natBin .beq (.lit 0) (.lit 0))),[.natural,.natural]⟩
+def transportWitnessCert : TransportCert :=
+  ⟨workbookSourceDigest transportWitnessObj.decideExpr,Obend.Lower.lowerProp transportWitnessObj.decideExpr,
+    transportWitnessObj.argTys,[]⟩
+def transportWitnessPackage : WorkbookPackage :=
+  { (default : WorkbookPackage) with
+    accepted := true
+    moduleName := "TransportWitness"
+    claims := [⟨"TransportWitness","reflexive","reflexive",Obend.Logic.reflexiveClaimObj,none,
+      some (justificationOfTransportCert transportWitnessCert),true⟩] }
+#guard verifyClaimWithTransport 4096 Obend.Logic.reflexiveClaimObj transportWitnessCert == .ok
+#guard verifyClaimWithExternalTransport 4096 Obend.Logic.reflexiveClaimObj transportWitnessObj transportWitnessCert == .ok
+#guard verifyWorkbookObligationsWithLean transportWitnessPackage
 
 /-- **Soundness of `verifyWorkbookObligationsWithLean`**: if `verifyWorkbookObligationsWithLean`
     returns `true`, then every claim `wc ∈ pkg.claims` has a selected `Justification` `j` whose
@@ -891,7 +942,10 @@ theorem verifyWorkbookObligationsWithLean_sound
     (h : verifyWorkbookObligationsWithLean pkg leanJustifications leanTransportCerts leanLaws grade = true)
     {wc : WorkbookClaim} (hwc : wc ∈ pkg.claims) :
     ∃ j, selectClaimJustification wc leanJustifications leanTransportCerts = some j ∧
-      Obend.Logic.obligationMeaningWithJudges workbookFormats wc.claimObj j := by
+      Obend.Logic.obligationMeaningWithJudges workbookFormats wc.claimObj j ∧
+      Obend.Logic.obligationCheckWithJudges workbookFormats grade wc.claimObj j = .ok ∧
+      (∀ lawPair ∈ pkg.laws ++ leanLaws,
+        Obend.Law.closedB (Obend.Spec.LawCompile.compile .emptyRow pkg.moduleName lawPair.1 lawPair.2) = true) := by
   unfold verifyWorkbookObligationsWithLean at h
   simp only [Bool.and_eq_true] at h
   have hclaims : (pkg.claims.all fun wc =>
@@ -905,7 +959,8 @@ theorem verifyWorkbookObligationsWithLean_sound
     rw [hj] at hwcOk
     have hcheck : Obend.Logic.obligationCheckWithJudges workbookFormats grade wc.claimObj j = .ok :=
       beq_iff_eq.1 hwcOk
-    exact ⟨j, rfl, Obend.Logic.obligationWithJudges_sound workbookFormats hcheck⟩
+    exact ⟨j, rfl, Obend.Logic.obligationWithJudges_sound workbookFormats hcheck, hcheck,
+      List.all_eq_true.1 h.2⟩
 
 /-! ## 4. Persistent Environment Extension `obendWorkbookExt` -/
 
@@ -927,7 +982,7 @@ meta def getRegisteredWorkbook? (env : Environment) (ns : Name) : Option Workboo
 
 /-- Helper constructor for `ReflectedObject` used by `ToExpr ReflectedObject` so the proof field
     `pins_eq` is discharged definitionally by `rfl`. -/
-def mkReflectedObject (name : String) (C : Composition) (defs : List (String × LExpr)) :
+@[expose] def mkReflectedObject (name : String) (C : Composition) (defs : List (String × LExpr)) :
     ReflectedObject :=
   { name := name
     composition := C
@@ -936,7 +991,7 @@ def mkReflectedObject (name : String) (C : Composition) (defs : List (String × 
     pins_eq := rfl }
 
 /-- Helper constructor for `ByteArray` used by `ToExpr ByteArray`. -/
-def mkByteArrayOfList (bs : List UInt8) : ByteArray :=
+@[expose] def mkByteArrayOfList (bs : List UInt8) : ByteArray :=
   ByteArray.mk bs.toArray
 
 def toExprPrimitive : Primitive → Expr
@@ -1368,17 +1423,30 @@ private meta def metaProposeWorkbookDerivation (o : ClaimObj) : Option (List RSt
 
 /-- Strip layer metadata and `#kind` fields so the emitted `Composition` reduces in the kernel
 (`decide +kernel` over `_comp`/`_book` constants). The flattened behaviour is unchanged. -/
+private meta def metaCompactWorkbookTerm : Nat → Term → Term
+  | 0, t => t
+  | n+1, .lam b => .lam (metaCompactWorkbookTerm n b)
+  | n+1, .app f a => .app (metaCompactWorkbookTerm n f) (metaCompactWorkbookTerm n a)
+  | n+1, .binary op a b => .binary op (metaCompactWorkbookTerm n a) (metaCompactWorkbookTerm n b)
+  | n+1, .get target field =>
+    match Obend.Law.run 50000 (.get target field) with
+    | some v => v
+    | none => .get (metaCompactWorkbookTerm n target) field
+  | _+1, t => t
+
 private meta def metaCompactLayerForKernel (L : Layer) : Layer :=
   { L with
     metadata := .record [("name", .label L.name)]
-    fields := L.fields.filter (fun kv => kv.1 != "#kind")
+    fields := (L.fields.filter (fun kv => kv.1 != "#kind")).map
+      (fun (name, body) => (name, metaCompactWorkbookTerm 16 body))
     composeMeta := .record [] }
 
 private meta def metaCompactCompositionForKernel (C : Composition) : Composition :=
   { C with
     top := metaCompactLayerForKernel C.top
     below := C.below.map metaCompactLayerForKernel
-    seed := C.seed.filter (fun kv => kv.1 != "#kind") }
+    seed := (C.seed.filter (fun kv => kv.1 != "#kind")).map
+      (fun (name, body) => (name, metaCompactWorkbookTerm 16 body)) }
 
 private meta def metaSanitizeModuleName (stem : String) : String :=
   let chars := stem.toList.map fun c => if c.isAlphanum || c == '_' then c else '_'
@@ -1797,6 +1865,274 @@ elab "#obend_decl " nsId:ident " named " modLit:str srcLit:str : command => do
     Lean.throwError m!"#obend_decl failed in {nsId.getId}: {err}"
   | .ok pkg =>
     registerAndEmitWorkbook nsId.getId pkg
+
+/-! CAM constructor quotation supports bounded kernel replay of the committed certificate. -/
+private meta def frepExpr : Obend.Hardware.GeometryCAM.FRepExpr → Expr
+  | .varX => mkConst ``Obend.Hardware.GeometryCAM.FRepExpr.varX
+  | .varY => mkConst ``Obend.Hardware.GeometryCAM.FRepExpr.varY
+  | .varZ => mkConst ``Obend.Hardware.GeometryCAM.FRepExpr.varZ
+  | .const n => mkApp (mkConst ``Obend.Hardware.GeometryCAM.FRepExpr.const) (toExpr n)
+  | .add a b => mkApp2 (mkConst ``Obend.Hardware.GeometryCAM.FRepExpr.add) (frepExpr a) (frepExpr b)
+  | .sub a b => mkApp2 (mkConst ``Obend.Hardware.GeometryCAM.FRepExpr.sub) (frepExpr a) (frepExpr b)
+  | .csgUnion a b => mkApp2 (mkConst ``Obend.Hardware.GeometryCAM.FRepExpr.csgUnion) (frepExpr a) (frepExpr b)
+  | .csgInter a b => mkApp2 (mkConst ``Obend.Hardware.GeometryCAM.FRepExpr.csgInter) (frepExpr a) (frepExpr b)
+  | .csgDiff a b => mkApp2 (mkConst ``Obend.Hardware.GeometryCAM.FRepExpr.csgDiff) (frepExpr a) (frepExpr b)
+  | .offset n a => mkApp2 (mkConst ``Obend.Hardware.GeometryCAM.FRepExpr.offset) (toExpr n) (frepExpr a)
+  | .scalePos n a => mkApp2 (mkConst ``Obend.Hardware.GeometryCAM.FRepExpr.scalePos) (toExpr n) (frepExpr a)
+  | .sq a => mkApp (mkConst ``Obend.Hardware.GeometryCAM.FRepExpr.sq) (frepExpr a)
+private meta instance : ToExpr Obend.Hardware.GeometryCAM.FRepExpr where
+  toTypeExpr := mkConst ``Obend.Hardware.GeometryCAM.FRepExpr
+  toExpr := frepExpr
+private meta def camBoxExpr (b : Obend.Hardware.GeometryCAM.Box3D) : Expr :=
+  let iv (v : Obend.Hardware.Accelerators.FloatInterval) := mkApp2 (mkConst ``Obend.Hardware.Accelerators.FloatInterval.mk) (toExpr v.lo) (toExpr v.hi)
+  mkApp3 (mkConst ``Obend.Hardware.GeometryCAM.Box3D.mk) (iv b.xIv) (iv b.yIv) (iv b.zIv)
+private meta instance : ToExpr Obend.Hardware.GeometryCAM.Box3D where
+  toTypeExpr := mkConst ``Obend.Hardware.GeometryCAM.Box3D
+  toExpr := camBoxExpr
+private meta def camAxisExpr (a : Obend.Hardware.GeometryCAM.ToolAxis) : Expr :=
+  mkApp4 (mkConst ``Obend.Hardware.GeometryCAM.ToolAxis.mk) (toExpr a.ux) (toExpr a.uy) (toExpr a.uz) (toExpr a.n)
+private meta instance : ToExpr Obend.Hardware.GeometryCAM.CamChunk where
+  toTypeExpr := mkConst ``Obend.Hardware.GeometryCAM.CamChunk
+  toExpr ch := mkApp2 (mkConst ``Obend.Hardware.GeometryCAM.CamChunk.mk) (camAxisExpr ch.axis) (toExpr ch.moves)
+private meta instance : ToExpr Obend.Hardware.GeometryCAM.CamGougeObj where
+  toTypeExpr := mkConst ``Obend.Hardware.GeometryCAM.CamGougeObj
+  toExpr o := mkApp5 (mkConst ``Obend.Hardware.GeometryCAM.CamGougeObj.mk)
+    (frepExpr o.part) (camBoxExpr o.box) (toExpr o.toolR) (toExpr o.shankLen) (toExpr o.chunks)
+/-- Evaluate a CAM object into constructor data. Equality with the source is a separate kernel obligation. -/
+syntax (name := freezeCamObj) "#freeze_cam_obj " term " as " ident : command
+@[command_elab freezeCamObj] meta unsafe def elabFreezeCamObj : Lean.Elab.Command.CommandElab := fun stx => do
+  let `(#freeze_cam_obj $obj:term as $name:ident) := stx | Lean.Elab.throwUnsupportedSyntax
+  let o ← Lean.Elab.Command.liftTermElabM do
+    let e ← Lean.Elab.Term.elabTerm obj (some (mkConst ``Obend.Hardware.GeometryCAM.CamGougeObj))
+    let e ← Lean.instantiateMVars e
+    Lean.Meta.evalExpr Obend.Hardware.GeometryCAM.CamGougeObj (mkConst ``Obend.Hardware.GeometryCAM.CamGougeObj) e
+  defineWorkbookConst ((← Lean.getCurrNamespace) ++ name.getId) o
+/-- Emit small independent kernel replays and compose them with the unit-group theorem.
+Evaluation supplies only data; every emitted acceptance theorem is checked by Lean's kernel. -/
+syntax (name := replayCamCert) "#replay_cam_cert " term " from " str " as " ident : command
+@[command_elab replayCamCert] meta unsafe def elabReplayCamCert : Lean.Elab.Command.CommandElab := fun stx => do
+  let `(#replay_cam_cert $obj:term from $pathLit:str as $name:ident) := stx | Lean.Elab.throwUnsupportedSyntax
+  let profiling := (← IO.getEnv "OBEND_CAM_PROFILE").isSome
+  let profilePath ← IO.getEnv "OBEND_CAM_PROFILE_LOG"
+  let started ← IO.monoMsNow
+  let profile (phase : String) : CommandElabM Unit := do
+    let line := s!"CAM {phase}: {(← IO.monoMsNow)-started} ms"
+    if profiling then IO.eprintln line
+    if let some path := profilePath then
+      IO.FS.withFile path .append fun out => out.putStrLn line
+  profile "start"
+  let o ← Lean.Elab.Command.liftTermElabM do
+    let e ← Lean.Elab.Term.elabTerm obj (some (mkConst ``Obend.Hardware.GeometryCAM.CamGougeObj))
+    Lean.Meta.evalExpr Obend.Hardware.GeometryCAM.CamGougeObj
+      (mkConst ``Obend.Hardware.GeometryCAM.CamGougeObj) (← Lean.instantiateMVars e)
+  let path ← metaResolveObendPath (System.FilePath.mk pathLit.getString)
+  let some passes := Obend.Hardware.GeometryCAM.decodeCamCertBytes (← IO.FS.readBinFile path)
+    | throwError "malformed CAM certificate"
+  unless passes.length == o.chunks.length do throwError "CAM pass count mismatch"
+  let ns := (← Lean.getCurrNamespace) ++ name.getId
+  let ident (n : Name) : Lean.Ident := Lean.mkIdent (Name.str .anonymous "_root_" ++ n)
+  let partName := ns ++ `part
+  let boxName := ns ++ `box
+  defineWorkbookConst partName o.part
+  defineWorkbookConst boxName o.box
+  let partId := ident partName
+  let boxId := ident boxName
+  let partEqId := ident (ns ++ `part_eq)
+  let boxEqId := ident (ns ++ `box_eq)
+  Lean.Elab.Command.elabCommand (← `(command| theorem $partEqId:ident : $partId = ($obj).part := by rfl))
+  Lean.Elab.Command.elabCommand (← `(command| theorem $boxEqId:ident : $boxId = ($obj).box := by rfl))
+  -- Share repeated k-d subtrees across passes before compiling constructor data.
+  let treesSeen ← IO.mkRef ({} : Std.HashMap (Bool × Name × Name) Name)
+  let toCompile ← IO.mkRef (#[] : Array Name)
+  let emit (n : Name) (ty val : Expr) : CommandElabM Unit := do
+    liftCoreM <| Lean.withExporting (isExporting := true) <| addDecl (.defnDecl {
+      name := n, levelParams := [], type := ty, value := val, hints := .regular 0, safety := .safe })
+    toCompile.modify (·.push n)
+  let treeTy := mkConst ``Obend.Hardware.GeometryCAM.KdCert
+  let rec intern (t : Obend.Hardware.GeometryCAM.KdCert) : CommandElabM Expr := do
+    match t with
+    | .part => return mkConst ``Obend.Hardware.GeometryCAM.KdCert.part
+    | .tool => return mkConst ``Obend.Hardware.GeometryCAM.KdCert.tool
+    | .splitB l r | .splitH l r =>
+      let l ← intern l
+      let r ← intern r
+      let isB := match t with | .splitB .. => true | _ => false
+      let key := (isB,l.constName!,r.constName!)
+      let cache ← treesSeen.get
+      if let some n := cache[key]? then return mkConst n
+      let n := ns ++ Name.mkSimple s!"tree{cache.size}"
+      let ctor := if isB then ``Obend.Hardware.GeometryCAM.KdCert.splitB else ``Obend.Hardware.GeometryCAM.KdCert.splitH
+      emit n treeTy (mkApp2 (mkConst ctor) l r)
+      treesSeen.set (cache.insert key n)
+      return mkConst n
+  let boxesSeen ← IO.mkRef ({} : Std.HashMap (List Int) Expr)
+  let boxKey (b : Obend.Hardware.GeometryCAM.Box3D) :=
+    [b.xIv.lo,b.xIv.hi,b.yIv.lo,b.yIv.hi,b.zIv.lo,b.zIv.hi]
+  let internBox (b : Obend.Hardware.GeometryCAM.Box3D) : CommandElabM Expr := do
+    let cache ← boxesSeen.get
+    let key := boxKey b
+    if let some e := cache[key]? then return e
+    let e := camBoxExpr b
+    boxesSeen.set (cache.insert key e)
+    return e
+  let boundsSeen ← IO.mkRef ({} : Std.HashMap (Nat × List Int) Expr)
+  let radialSeen ← IO.mkRef ({} : Std.HashMap (List Int) Expr)
+  let verticalTags ← IO.mkRef ({} : Std.HashSet Nat)
+  let boolTrue := mkConst ``Bool.true
+  let trueProof := mkApp2 (mkConst ``Eq.refl [1]) (mkConst ``Bool) boolTrue
+  let eqTrue (e : Expr) := mkApp3 (mkConst ``Eq [1]) (mkConst ``Bool) e boolTrue
+  let kd (p t c b h : Expr) := Lean.mkAppN (mkConst ``Obend.Hardware.GeometryCAM.checkKdZ) #[p,t,c,b,h]
+  let boxTy := mkConst ``Obend.Hardware.GeometryCAM.Box3D
+  let boxRefl (b : Expr) := mkApp2 (mkConst ``Eq.refl [1]) boxTy b
+  let pairBoxTy := mkApp2 (mkConst ``Prod [0,0]) boxTy boxTy
+  let bound (tag : Nat) (part : Expr) (b : Obend.Hardware.GeometryCAM.Box3D) : CommandElabM Expr := do
+    let key := (tag,boxKey b)
+    let cache ← boundsSeen.get
+    if let some proof := cache[key]? then return proof
+    let be ← internBox b
+    let proof ← if (← verticalTags.get).contains tag &&
+        Obend.Hardware.GeometryCAM.radialClear b.xIv b.yIv o.toolR then do
+      let radialKey := [b.xIv.lo,b.xIv.hi,b.yIv.lo,b.yIv.hi]
+      let radialCache ← radialSeen.get
+      let hp ← match radialCache[radialKey]? with
+        | some hp => pure hp
+        | none => do
+          let iv (x : Obend.Hardware.Accelerators.FloatInterval) :=
+            mkApp2 (mkConst ``Obend.Hardware.Accelerators.FloatInterval.mk) (toExpr x.lo) (toExpr x.hi)
+          let n := ns ++ Name.mkSimple s!"radial{radialCache.size}"
+          defineWorkbookThm n (eqTrue (mkApp3 (mkConst ``Obend.Hardware.GeometryCAM.radialClear)
+            (iv b.xIv) (iv b.yIv) (toExpr o.toolR))) trueProof
+          let hp := mkConst n
+          radialSeen.set (radialCache.insert radialKey hp)
+          pure hp
+      pure <| Lean.mkAppN (mkConst ``Obend.Hardware.GeometryCAM.checkKdZ_vertical_radial)
+        #[be,toExpr o.toolR,toExpr o.shankLen,hp]
+    else do
+      let n := ns ++ Name.mkSimple s!"bound{cache.size}"
+      defineWorkbookThm n (eqTrue (kd part part (mkConst ``Obend.Hardware.GeometryCAM.KdCert.part) be be)) trueProof
+      pure (mkConst n)
+    boundsSeen.set (cache.insert key proof)
+    return proof
+  let rec replay (tag : Nat) (part tool : Expr) (c : Obend.Hardware.GeometryCAM.KdCert)
+      (b h : Obend.Hardware.GeometryCAM.Box3D) : CommandElabM Expr := do
+    let be ← internBox b
+    let he ← internBox h
+    match c with
+    | .part => return ← bound 0 part b
+    | .tool =>
+      let r := b.minus h
+      let re ← internBox r
+      return Lean.mkAppN (mkConst ``Obend.Hardware.GeometryCAM.checkKdZ_tool_box)
+        #[part,tool,be,he,re,boxRefl re,← bound tag tool r]
+    | .splitB l r | .splitH l r =>
+      let isB := match c with | .splitB .. => true | _ => false
+      let (bl,br) := if isB then b.halvesO else h.halvesO
+      let le ← internBox bl
+      let re ← internBox br
+      let pair := mkApp4 (mkConst ``Prod.mk [0,0]) boxTy boxTy le re
+      let cut := mkApp2 (mkConst ``Eq.refl [1]) pairBoxTy pair
+      let lp ← if isB then replay tag part tool l bl h else replay tag part tool l b bl
+      let rp ← if isB then replay tag part tool r br h else replay tag part tool r b br
+      pure <| Lean.mkAppN (mkConst (if isB then ``Obend.Hardware.GeometryCAM.checkKdZ_splitB else ``Obend.Hardware.GeometryCAM.checkKdZ_splitH))
+        #[part,tool,← intern l,← intern r,be,he,le,re,cut,lp,rp]
+  let toolsSeen ← IO.mkRef ({} : Std.HashMap String (Nat × Name))
+  let mut passIds : Array (Lean.TSyntax `term) := #[]
+  let mut chunkIds : Array (Lean.TSyntax `term) := #[]
+  for ((ch,gs),i) in (o.chunks.zip passes).zipIdx do
+    unless ch.moves.length == gs.length && gs.all (fun g => g.1 == 1) do
+      throwError "kernel slice replay requires one certificate group per move"
+    profile s!"pass {i} data"
+    let chName := ns ++ Name.mkSimple s!"chunk{i}"
+    defineWorkbookConst chName ch
+    let chId := ident chName
+    chunkIds := chunkIds.push (← `($chId))
+    let tool := Obend.Hardware.GeometryCAM.frepBallEndMill 0 0 0 ch.axis o.toolR o.shankLen
+    let toolKey := reprStr tool
+    let tools ← toolsSeen.get
+    let (toolTag,toolName) ← match tools[toolKey]? with
+      | some pair => pure pair
+      | none => do
+        let toolName := ns ++ Name.mkSimple s!"tool{i}"
+        defineWorkbookConst toolName tool
+        let pair := (tools.size+1,toolName)
+        toolsSeen.set (tools.insert toolKey pair)
+        pure pair
+    if ch.axis == ({ux:=0,uy:=0,uz:=1,n:=1} : Obend.Hardware.GeometryCAM.ToolAxis) then
+      verticalTags.modify (·.insert toolTag)
+    let toolId := ident toolName
+    let toolEqId := ident (ns ++ Name.mkSimple s!"tool_eq{i}")
+    Lean.Elab.Command.elabCommand (← `(command| theorem $toolEqId:ident : $toolId =
+      Obend.Hardware.GeometryCAM.frepBallEndMill 0 0 0 ($chId).axis ($obj).toolR ($obj).shankLen := by rfl))
+    let mut slices : Array (Lean.TSyntax `term × Lean.TSyntax `term × Lean.TSyntax `term) := #[]
+    for j in [: (gs.length + 7) / 8] do
+      if j % 8 == 0 then profile s!"pass {i} slice {j} ({(← boxesSeen.get).size} boxes, {(← boundsSeen.get).size} bounds)"
+      let msName := ns ++ Name.mkSimple s!"moves{i}_{j}"
+      let gsName := ns ++ Name.mkSimple s!"trees{i}_{j}"
+      let prName := ns ++ Name.mkSimple s!"slice{i}_{j}"
+      defineWorkbookConst msName ((ch.moves.drop (8*j)).take 8)
+      let pairTy := mkApp2 (mkConst ``Prod [0,0]) (mkConst ``Nat) treeTy
+      let pairs ← ((gs.drop (8*j)).take 8).mapM fun (n,t) => do
+        return mkApp4 (mkConst ``Prod.mk [0,0]) (mkConst ``Nat) treeTy (toExpr n) (← intern t)
+      emit gsName (mkApp (mkConst ``List [0]) pairTy) (pairs.foldr (fun e tail => mkApp3 (mkConst ``List.cons [0]) pairTy e tail)
+        (mkApp (mkConst ``List.nil [0]) pairTy))
+      let msId := ident msName
+      let gsId := ident gsName
+      let prId := ident prName
+      let moveSlice := ((ch.moves.drop (8*j)).take 8)
+      let treeSlice := ((gs.drop (8*j)).take 8)
+      let partE := mkConst partName
+      let toolE := mkConst toolName
+      let boxE := mkConst boxName
+      let mut tailMoves := mkApp (mkConst ``List.nil [0]) (toTypeExpr (Obend.Hardware.GeometryCAM.Pt3 × Obend.Hardware.GeometryCAM.Pt3))
+      let mut tailTrees := mkApp (mkConst ``List.nil [0]) pairTy
+      let mut proof := trueProof
+      for (m,(_,t)) in (moveSlice.zip treeSlice).reverse do
+        let me := toExpr m
+        let te ← intern t
+        let hp ← replay toolTag partE toolE t o.box (Obend.Hardware.GeometryCAM.movesBoxZ [m])
+        proof := Lean.mkAppN (mkConst ``Obend.Hardware.GeometryCAM.checkGroups_unit_cons)
+          #[partE,toolE,boxE,me,tailMoves,te,tailTrees,hp,proof]
+        tailMoves := mkApp3 (mkConst ``List.cons [0]) (toTypeExpr (Obend.Hardware.GeometryCAM.Pt3 × Obend.Hardware.GeometryCAM.Pt3)) me tailMoves
+        tailTrees := mkApp3 (mkConst ``List.cons [0]) pairTy
+          (mkApp4 (mkConst ``Prod.mk [0,0]) (mkConst ``Nat) treeTy (toExpr (1 : Nat)) te) tailTrees
+      defineWorkbookThm prName (eqTrue (Lean.mkAppN (mkConst ``Obend.Hardware.GeometryCAM.checkGroups)
+        #[partE,toolE,boxE,mkConst msName,mkConst gsName])) proof
+      slices := slices.push (← `($msId),← `($gsId),← `($prId))
+    profile s!"pass {i} compile data ({(← boxesSeen.get).size} boxes, {(← boundsSeen.get).size} bounds)"
+    liftCoreM <| Lean.compileDecls (← toCompile.get)
+    profile s!"pass {i} prove slices"
+    toCompile.set #[]
+    let mut ms : Lean.TSyntax `term ← `([])
+    let mut trees : Lean.TSyntax `term ← `([])
+    let mut proof : Lean.TSyntax `term ← `(by rfl)
+    for (m,g,p) in slices.reverse do
+      proof ← `(Obend.Hardware.GeometryCAM.checkGroups_unit_append $partId $toolId $boxId $m $ms $g $trees (by decide +kernel) (by decide +kernel) $p $proof)
+      ms ← `($m ++ $ms)
+      trees ← `($g ++ $trees)
+    let passId := ident (ns ++ Name.mkSimple s!"pass{i}")
+    let proofId := ident (ns ++ Name.mkSimple s!"verified{i}")
+    let passEqId := ident (ns ++ Name.mkSimple s!"pass_eq{i}")
+    let movesEqId := ident (ns ++ Name.mkSimple s!"moves_eq{i}")
+    Lean.Elab.Command.elabCommand (← `(command| theorem $movesEqId:ident : ($chId).moves = $ms := by rfl))
+    Lean.Elab.Command.elabCommand (← `(command| def $passId:ident : Obend.Hardware.GeometryCAM.CamPassCert := $trees))
+    Lean.Elab.Command.elabCommand (← `(command| theorem $passEqId:ident : $passId = $trees := by rfl))
+    Lean.Elab.Command.elabCommand (← `(command| theorem $proofId:ident :
+      Obend.Hardware.GeometryCAM.checkGroups ($obj).part
+        (Obend.Hardware.GeometryCAM.frepBallEndMill 0 0 0 ($chId).axis ($obj).toolR ($obj).shankLen)
+        ($obj).box ($chId).moves $passId = true := by
+        rw [← ($partEqId),← ($toolEqId),← ($boxEqId),($movesEqId),($passEqId)]; exact $proof))
+    passIds := passIds.push (← `($passId))
+    profile s!"pass {i} done"
+  let mut allPasses : Lean.TSyntax `term ← `([])
+  for p in passIds.reverse do allPasses ← `($p :: $allPasses)
+  let allId := ident (ns ++ `passes)
+  Lean.Elab.Command.elabCommand (← `(command| def $allId:ident : List Obend.Hardware.GeometryCAM.CamPassCert := $allPasses))
+  let allEqId := ident (ns ++ `passes_eq)
+  Lean.Elab.Command.elabCommand (← `(command| theorem $allEqId:ident : $allId = $allPasses := by rfl))
+  let mut allChunks : Lean.TSyntax `term ← `([])
+  for ch in chunkIds.reverse do allChunks ← `($ch :: $allChunks)
+  let chunksEqId := ident (ns ++ `chunks_eq)
+  Lean.Elab.Command.elabCommand (← `(command| theorem $chunksEqId:ident : ($obj).chunks = $allChunks := by rfl))
 
 end Obend.Elab.Workbook
 

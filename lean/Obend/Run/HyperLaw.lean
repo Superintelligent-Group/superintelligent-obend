@@ -31,6 +31,8 @@ Implements `G5` Effect Laws Designs C and D from `review/DECISIONS-LEDGER.md` an
 -/
 public import Lean.Data.Json
 public import Obend.Run.Shared
+public import Obend.Core.Machine
+public import Obend.Paco.GPaco
 public import Obend.Judge.Class
 public import Obend.Reasons
 public import Obend.Tactic.Tooth
@@ -156,6 +158,204 @@ example :
 theorem leaking_trace_refused :
     checkHyperLaw2NonInterference secLowView leakingTracePair = false := by
   rfl
+
+/-! Operational, termination-sensitive two-run safety, including every reactive resume. -/
+open Obend.Core
+open Obend.Core.Term (Term)
+open Obend.Paco
+structure MachineLowSpec (Obs PlanObs Reply : Type) where
+  limits : Machine.Limits
+  obsValue : Machine.State → Machine.RuntimeValue → Obs
+  obsYield : Machine.State → Machine.Address → PlanObs
+  lowEquivReply : Reply → Reply → Prop
+  toResumeTerm : Reply → Term
+/-- Tick and capacity suspensions are distinct; yielded continuations quantify over all low replies. -/
+def OutcomeLowEquiv {Obs PlanObs Reply : Type} (spec : MachineLowSpec Obs PlanObs Reply)
+    (R : Rel Machine.State) : Machine.Outcome → Machine.Outcome → Prop
+  | .finished v₁ s₁, .finished v₂ s₂ => spec.obsValue s₁ v₁ = spec.obsValue s₂ v₂
+  | .yielded p₁ s₁, .yielded p₂ s₂ =>
+    spec.obsYield s₁ p₁ = spec.obsYield s₂ p₂ ∧
+    ∀ r₁ r₂, spec.lowEquivReply r₁ r₂ → ∃ t₁ t₂,
+      Machine.resume (spec.toResumeTerm r₁) s₁ = some t₁ ∧
+      Machine.resume (spec.toResumeTerm r₂) s₂ = some t₂ ∧ R t₁ t₂
+  | .refused r₁ _, .refused r₂ _ => r₁ = r₂
+  | .divergent _ _, .divergent _ _ => True
+  | .suspended k₁ s₁, .suspended k₂ s₂ => k₁ = k₂ ∧ R s₁ s₂
+  | _, _ => False
+theorem outcomeLowEquiv_mono {Obs PlanObs Reply : Type} (spec : MachineLowSpec Obs PlanObs Reply)
+    (R S : Rel Machine.State) (hRS : R ≤ S) (a b : Machine.Outcome)
+    (h : OutcomeLowEquiv spec R a b) : OutcomeLowEquiv spec S a b := by
+  cases a <;> cases b
+  all_goals simp only [OutcomeLowEquiv] at h ⊢
+  all_goals try contradiction
+  all_goals try exact h
+  · exact ⟨h.1,hRS _ _ h.2⟩
+  · refine ⟨h.1, fun r₁ r₂ he => ?_⟩
+    obtain ⟨t₁,t₂,h₁,h₂,ht⟩ := h.2 r₁ r₂ he
+    exact ⟨t₁,t₂,h₁,h₂,hRS _ _ ht⟩
+
+def Machine2StepF {Obs PlanObs Reply : Type} (spec : MachineLowSpec Obs PlanObs Reply)
+    (R : Rel Machine.State) : Rel Machine.State :=
+  fun s₁ s₂ => OutcomeLowEquiv spec R (Machine.step spec.limits s₁) (Machine.step spec.limits s₂)
+theorem Machine2StepF_monotone {Obs PlanObs Reply : Type} (spec : MachineLowSpec Obs PlanObs Reply) :
+    Monotone2 (Machine2StepF spec) := fun R S h s₁ s₂ hs => outcomeLowEquiv_mono spec R S h _ _ hs
+def machine2Mono {Obs PlanObs Reply : Type} (spec : MachineLowSpec Obs PlanObs Reply) : MonoRel Machine.State :=
+  ⟨Machine2StepF spec, Machine2StepF_monotone spec⟩
+def Hyper2Safe {Obs PlanObs Reply : Type} (spec : MachineLowSpec Obs PlanObs Reply) : Rel Machine.State :=
+  gpaco (machine2Mono spec) Rel.bot Rel.bot
+theorem hyper2Safe_unfold {Obs PlanObs Reply : Type} (spec : MachineLowSpec Obs PlanObs Reply)
+    {s₁ s₂ : Machine.State} (h : Hyper2Safe spec s₁ s₂) : Machine2StepF spec (Hyper2Safe spec) s₁ s₂ := by
+  simpa only [Hyper2Safe, gpaco_init, machine2Mono] using (MonoRel.gfp_unfold (machine2Mono spec) _ _ (by
+    simpa only [Hyper2Safe, gpaco_init] using h))
+theorem hyper2Safe_coind {Obs PlanObs Reply : Type} (spec : MachineLowSpec Obs PlanObs Reply)
+    (R : Rel Machine.State) (hpost : R ≤ Machine2StepF spec R) : R ≤ Hyper2Safe spec := by
+  simpa only [Hyper2Safe, gpaco_init] using MonoRel.le_gfp (machine2Mono spec) hpost
+private theorem outcomeLowEquiv_zero {Obs PlanObs Reply : Type} (spec : MachineLowSpec Obs PlanObs Reply)
+    {s₁ s₂ : Machine.State} (h : Hyper2Safe spec s₁ s₂) :
+    OutcomeLowEquiv spec (Hyper2Safe spec) (Machine.runBounded spec.limits 0 s₁) (Machine.runBounded spec.limits 0 s₂) := by
+  have hs := hyper2Safe_unfold spec h
+  unfold Machine2StepF at hs
+  cases h₁ : s₁.control <;> cases h₂ : s₂.control <;>
+    simp only [Machine.step, h₁, h₂] at hs <;>
+    simp only [Machine.runBounded, h₁, h₂, OutcomeLowEquiv] <;>
+    first | exact ⟨rfl,h⟩ | exact hs | (split at hs <;> simp_all [OutcomeLowEquiv])
+theorem hyper2Safe_runBounded_lowEquiv {Obs PlanObs Reply : Type} (spec : MachineLowSpec Obs PlanObs Reply)
+    (fuel : Nat) {s₁ s₂ : Machine.State} (h : Hyper2Safe spec s₁ s₂) :
+    OutcomeLowEquiv spec (Hyper2Safe spec) (Machine.runBounded spec.limits fuel s₁) (Machine.runBounded spec.limits fuel s₂) := by
+  induction fuel generalizing s₁ s₂ with
+  | zero => exact outcomeLowEquiv_zero spec h
+  | succ n ih =>
+    have hs := hyper2Safe_unfold spec h
+    unfold Machine2StepF at hs
+    simp only [Machine.runBounded]
+    cases h₁ : Machine.step spec.limits s₁ <;> cases h₂ : Machine.step spec.limits s₂ <;>
+      simp only [h₁,h₂] at hs ⊢
+    all_goals try exact hs
+    all_goals try exact False.elim hs
+    rename_i k₁ t₁ k₂ t₂
+    cases k₁ <;> cases k₂ <;> simp only [OutcomeLowEquiv] at hs
+    · exact ih hs.2
+    · cases hs.1
+    · cases hs.1
+    · exact ⟨rfl,hs.2⟩
+/-- Low observations retain the outcome tag, so termination, refusal, and yielding cannot stutter. -/
+inductive MachineObservation (Obs PlanObs : Type) where
+  | finished (value : Obs) | yielded (plan : PlanObs) | refused (reason : Machine.Refusal)
+  | ticks | capacity | divergent
+def observeOutcome {Obs PlanObs Reply : Type} (spec : MachineLowSpec Obs PlanObs Reply) :
+    Machine.Outcome → MachineObservation Obs PlanObs
+  | .finished v s => .finished (spec.obsValue s v)
+  | .yielded p s => .yielded (spec.obsYield s p)
+  | .refused r _ => .refused r | .divergent _ _ => .divergent
+  | .suspended .ticks _ => .ticks | .suspended .capacity _ => .capacity
+theorem outcomeLowEquiv_observe {Obs PlanObs Reply : Type} (spec : MachineLowSpec Obs PlanObs Reply)
+    {R : Rel Machine.State} {a b : Machine.Outcome} (h : OutcomeLowEquiv spec R a b) :
+    observeOutcome spec a = observeOutcome spec b := by
+  cases a <;> cases b <;> simp_all [OutcomeLowEquiv, observeOutcome]
+  all_goals rename_i r₁ s₁ r₂ s₂; cases r₁ <;> cases r₂ <;> simp_all [OutcomeLowEquiv, observeOutcome]
+/-- Each scheduled turn executes its fuel budget; yielded machines resume, others retain their state. -/
+def nextTurn {Obs PlanObs Reply : Type} (spec : MachineLowSpec Obs PlanObs Reply)
+    (r : Reply) : Machine.Outcome → Option Machine.State
+  | .yielded _ s => Machine.resume (spec.toResumeTerm r) s
+  | .suspended _ s => some s
+  | _ => none
+def multiTurnTrace {Obs PlanObs Reply : Type} (spec : MachineLowSpec Obs PlanObs Reply) :
+    List (Nat × Reply × Reply) → Machine.State → Machine.State →
+      List (MachineObservation Obs PlanObs × MachineObservation Obs PlanObs)
+  | [], _, _ => []
+  | (fuel,r₁,r₂)::turns, s₁,s₂ =>
+    let a := Machine.runBounded spec.limits fuel s₁
+    let b := Machine.runBounded spec.limits fuel s₂
+    (observeOutcome spec a,observeOutcome spec b)::
+      match nextTurn spec r₁ a, nextTurn spec r₂ b with
+      | some t₁,some t₂ => multiTurnTrace spec turns t₁ t₂
+      | _,_ => []
+private theorem nextTurn_safe {Obs PlanObs Reply : Type} (spec : MachineLowSpec Obs PlanObs Reply)
+    {a b : Machine.Outcome} {r₁ r₂ : Reply} (hr : spec.lowEquivReply r₁ r₂)
+    (h : OutcomeLowEquiv spec (Hyper2Safe spec) a b) {t₁ t₂ : Machine.State}
+    (h₁ : nextTurn spec r₁ a = some t₁) (h₂ : nextTurn spec r₂ b = some t₂) : Hyper2Safe spec t₁ t₂ := by
+  cases a <;> cases b <;> simp only [nextTurn] at h₁ h₂ <;> try contradiction
+  all_goals simp only [OutcomeLowEquiv] at h
+  all_goals try contradiction
+  · cases h₁; cases h₂; exact h.2
+  · obtain ⟨_,_,he₁,he₂,hs⟩ := h.2 r₁ r₂ hr
+    simp_all
+
+theorem hyper2Safe_multiTurn_equal {Obs PlanObs Reply : Type} (spec : MachineLowSpec Obs PlanObs Reply)
+    (turns : List (Nat × Reply × Reply)) (hreplies : ∀ turn ∈ turns, spec.lowEquivReply turn.2.1 turn.2.2)
+    {s₁ s₂ : Machine.State} (h : Hyper2Safe spec s₁ s₂) :
+    ∀ p ∈ multiTurnTrace spec turns s₁ s₂, p.1 = p.2 := by
+  induction turns generalizing s₁ s₂ with
+  | nil => simp [multiTurnTrace]
+  | cons turn turns ih =>
+    have hs := hyper2Safe_runBounded_lowEquiv spec turn.1 h
+    intro p hp
+    simp only [multiTurnTrace, List.mem_cons] at hp
+    rcases hp with rfl | hp
+    · exact outcomeLowEquiv_observe spec hs
+    · split at hp
+      · rename_i t₁ t₂ h₁ h₂
+        exact ih (fun turn ht => hreplies turn (by simp [ht]))
+          (nextTurn_safe spec (hreplies _ (by simp)) hs h₁ h₂) p hp
+      · cases hp
+theorem hyper2Safe_multiTurn_nonInterference {Obs PlanObs Reply : Type} (spec : MachineLowSpec Obs PlanObs Reply)
+    (turns : List (Nat × Reply × Reply)) (hreplies : ∀ turn ∈ turns, spec.lowEquivReply turn.2.1 turn.2.2)
+    {s₁ s₂ : Machine.State} (h : Hyper2Safe spec s₁ s₂) :
+    HyperLaw2NonInterference ⟨id⟩ (multiTurnTrace spec turns s₁ s₂) := by
+  have hall := hyper2Safe_multiTurn_equal spec turns hreplies h
+  cases ht : multiTurnTrace spec turns s₁ s₂ with
+  | nil => trivial
+  | cons hd tl =>
+    intro _ p hp; exact hall p (by rw [ht]; exact List.mem_cons_of_mem _ hp)
+
+/-- A public plan and scalar reply observer; the unrelated lazy argument remains high. -/
+@[expose] def scalarLowSpec : MachineLowSpec Nat (Option Nat) Nat where
+  limits := ⟨2,1⟩
+  obsValue _ v := match v with | .natural n => n | _ => 0
+  obsYield s p := match s.heap[p]? with
+    | some (.suspended ⟨.nat n,_⟩) => some n | _ => none
+  lowEquivReply := Eq
+  toResumeTerm := .nat
+@[expose] def secretRunState (secret reply : Nat) (phase : Fin 8) : Machine.State :=
+  let high : Machine.Cell := .suspended ⟨.nat secret,[]⟩
+  let plan : Machine.Cell := .suspended ⟨.nat 7,[0]⟩
+  match phase.val with
+  | 0 => Machine.initial (.app (.lam (.perform (.nat 7))) (.nat secret))
+  | 1 => ⟨#[],.evaluate (.lam (.perform (.nat 7))) [],[.argument (.nat secret) []]⟩
+  | 2 => ⟨#[],.returned (.closure (.perform (.nat 7)) []),[.argument (.nat secret) []]⟩
+  | 3 => ⟨#[high],.evaluate (.perform (.nat 7)) [0],[]⟩
+  | 4 => ⟨#[high,plan],.yielded 1,[]⟩
+  | 5 => ⟨#[high,plan],.evaluate (.nat reply) [],[]⟩
+  | 6 => ⟨#[high,plan],.returned (.natural reply),[]⟩
+  | _ => ⟨#[high,plan],.complete (.natural reply),[]⟩
+theorem secretRunState_hyper2Safe (secret₁ secret₂ reply : Nat) (phase : Fin 8) :
+    Hyper2Safe scalarLowSpec (secretRunState secret₁ reply phase) (secretRunState secret₂ reply phase) := by
+  let R : Rel Machine.State := fun s₁ s₂ => ∃ a b r p, s₁ = secretRunState a r p ∧ s₂ = secretRunState b r p
+  apply hyper2Safe_coind scalarLowSpec R _ _ _ ⟨secret₁,secret₂,reply,phase,rfl,rfl⟩
+  rintro s₁ s₂ ⟨a,b,r,⟨p,hp⟩,rfl,rfl⟩
+  rcases (show p=0 ∨ p=1 ∨ p=2 ∨ p=3 ∨ p=4 ∨ p=5 ∨ p=6 ∨ p=7 from by omega) with
+    rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+  · exact ⟨rfl,a,b,r,1,rfl,rfl⟩
+  · exact ⟨rfl,a,b,r,2,rfl,rfl⟩
+  · exact ⟨rfl,a,b,r,3,rfl,rfl⟩
+  · exact ⟨rfl,a,b,r,4,rfl,rfl⟩
+  · refine ⟨rfl, fun r₁ r₂ he => ?_⟩
+    cases he
+    exact ⟨secretRunState a r₁ 5,secretRunState b r₁ 5,rfl,rfl,a,b,r₁,5,rfl,rfl⟩
+  · exact ⟨rfl,a,b,r,6,rfl,rfl⟩
+  · exact ⟨rfl,a,b,r,7,rfl,rfl⟩
+  · rfl
+theorem distinct_secrets_same_public_run (a b : Nat) :
+    Hyper2Safe scalarLowSpec (Machine.initial (.app (.lam (.perform (.nat 7))) (.nat a)))
+      (Machine.initial (.app (.lam (.perform (.nat 7))) (.nat b))) := secretRunState_hyper2Safe a b 0 0
+/-- Negative observer: exposing heap cell zero reveals the otherwise unused secret. -/
+def highCellObserver (s : Machine.State) (_ : Machine.Address) : Option Nat :=
+  match s.heap.toList.head? with
+  | some (.suspended ⟨.nat n,_⟩) => some n
+  | _ => none
+#tooth distinct_secrets_same_public_run by mutation
+  scalarLowSpec := (⟨⟨2,1⟩, (fun _ v => match v with | .natural n => n | _ => 0),
+    highCellObserver, Eq, Term.nat⟩ : MachineLowSpec Nat (Option Nat) Nat)
 
 /-! ## Part II — Design D (`glEquilibriumJudge`): Gelfond–Lifschitz Modal `□` Epistemic Equilibrium Judge -/
 

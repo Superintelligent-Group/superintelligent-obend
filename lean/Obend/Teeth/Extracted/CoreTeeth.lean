@@ -2,7 +2,7 @@ module
 /-
 # `Obend.Teeth.Extracted.CoreTeeth` — Core, Equiv, FFI, Ledger, Logic, Reasons, Kind, Law & Spec Mutation Teeth
 
-On-demand Tier-2B `#tooth` mutation suite (21 mutation witnesses) extracted from
+On-demand Tier-2B `#tooth` mutation suite (31 mutation witnesses) extracted from
 Tier-1 `Obend` modules so `lake build Obend` elaborates pure definitions and proofs without
 mutation replay overhead. Uses `import all` to preserve `LAW-M1` `.olean.private` encapsulation.
 -/
@@ -223,16 +223,11 @@ open Lean (Json toJson)
 private def withLhsBroken (o : ClaimObj) (lhs' : Term) : ClaimObj :=
   { o with claim := lhs' }
 
-/-- Mutated `verifyByBisimRefinement` that unconditionally accepts without running `claimCheck`. -/
-private def verifyByBisimRefinementBroken (_k : Nat) (_baseObj : ClaimObj) (_baseSteps : List RStep) (_lhs' : Term) :
-    Judge.Verdict ClaimClause :=
-  .ok
-
 #tooth Obend.Logic.claimMeaning_of_bEquiv by mutation
   Obend.Logic.ClaimObj.withLhs := withLhsBroken
 
 #tooth Obend.Logic.verifyByBisimRefinement_sound by mutation
-  Obend.Logic.verifyByBisimRefinement := verifyByBisimRefinementBroken
+  Obend.Logic.verifyByBisimRefinement := fun _ _ _ _ => .ok
 
 #tooth Obend.Logic.obligationCheck_refuses_false_external_claim by mutation
   Obend.Logic.externalClaimBound := fun _ _ _ => true
@@ -334,3 +329,31 @@ open Obend.Core.Data (Data)
 
 end Obend_Spec_Proofs_PackageLaw
 end Obend.Teeth.Extracted.CoreTeeth
+
+section FixedWidthCommitments
+open Obend.Core.Digest
+open Obend.Receipt.Merkle
+#tooth Obend.Core.Digest.preimage256_injective by mutation
+  Obend.Core.Digest.preimage256 := fun a _ => pair256DomainTag ++ bytes32OfDigest256 a
+#tooth Obend.Core.Digest.binds256_or_collides by mutation
+  Obend.Core.Digest.preimage256 := fun a _ => pair256DomainTag ++ bytes32OfDigest256 a
+#tooth Obend.Receipt.Merkle.climb256_path256 by mutation
+  Obend.Receipt.Merkle.climb256 := fun _ _ _ x _ => some x
+#tooth Obend.Receipt.Merkle.opens256_binds_or_collides by mutation
+  Obend.Receipt.Merkle.climb256 := fun _ _ _ _ _ => some 0
+end FixedWidthCommitments
+
+section SignedSimplexAndCam
+open Obend.Consensus.SimplexTrace
+#tooth encodeMsgBytes_injective by mutation
+  encodeMsgBytes := fun tag m => Obend.Receipt.Merkle.encodeFields [tag,Obend.Receipt.Merkle.leb128 m.sender]
+#tooth checkSignedSimplex_sound by mutation checkSignedSimplex := fun _ _ => .ok
+#tooth checkTraceExec_eq_checkTrace by mutation checkTraceExec := fun _ _ => .ok ()
+#tooth QuorumIndex.lookupVotes_ofSent_eq_votesFor by mutation QuorumIndex.lookupVotes := fun _ _ _ => 0
+#tooth Obend.Hardware.GeometryCAM.checkCamGouge_sound by mutation
+  Obend.Hardware.GeometryCAM.checkCamGouge := fun _ _ => .ok
+example : Obend.Hardware.GeometryCAM.radialClear ⟨2,3⟩ ⟨0,1⟩ 1 = true := by decide
+example : Obend.Hardware.GeometryCAM.radialClear ⟨0,0⟩ ⟨0,0⟩ 1 = false := by decide
+#tooth Obend.Hardware.GeometryCAM.checkKdZ_vertical_radial by mutation
+  Obend.Hardware.GeometryCAM.radialClear := fun _ _ _ => true
+end SignedSimplexAndCam
