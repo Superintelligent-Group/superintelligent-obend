@@ -135,7 +135,7 @@ A decision resting on a theorem the environment does not have (the report's `sug
 which was cited in THESIS.md and did not exist): the name is not in the census's list, the kind's
 `cited` refuses naming it, and the decision is not born.
 
-```sh
+```sh refused
 cd ledger
 cat > decisions/D-0005.md <<'MD'
 ---
@@ -145,18 +145,26 @@ decider: integrator
 ---
 Constructive repair is proved: `suggestMultiField_admits`.
 MD
-obend open && obend status decisions/D-0005
+obend open
 ```
 
 ```text
 decisions/D-0005: not born: refused by decisions/_kind: cited (the kind of decisions/, an ancestor of decisions/D-0005): `new.unresolvedInserted == 0` does not hold; unresolvedInserted = 0 would pass (this write has unresolvedInserted = 1); names the environment lacks: suggestMultiField_admits
+```
+
+```sh
+cd ledger
+obend status decisions/D-0005
+```
+
+```text
 decisions/D-0005 v0; its last write was refused by decisions/_kind: cited (the kind of decisions/, an ancestor of decisions/D-0005): `new.unresolvedInserted == 0` does not hold; unresolvedInserted = 0 would pass (this write has unresolvedInserted = 1); names the environment lacks: suggestMultiField_admits
 ```
 
 A decider that is none of the three, and a decision without a date: refused by the kind, the line
 that would pass named.
 
-```sh
+```sh refused
 cd ledger
 rm decisions/D-0005.md
 printf -- '---\nkind: decisions\ndate: 20261104\ndecider: committee\n---\nTaken by nobody in particular.\n' > decisions/D-0006.md
@@ -174,36 +182,44 @@ A decision rewritten in place at the same length (one character of a commit hash
 and words are unchanged, so every count law would admit it; `appendOnly` refuses it, because the
 line was deleted and written again.
 
-```sh
+```sh refused
 cd ledger
 sed -i.bak 's/393eb2b/393eb2c/' decisions/D-0001.md && rm decisions/D-0001.md.bak
 obend open
 ```
 
 ```text
-decisions/D-0001: refused by decisions/_kind: appendOnly (the kind of decisions/, an ancestor of decisions/D-0001): `new.deletions == 0` does not hold; deletions = 0 would pass (this write has deletions = 1)
 decisions/D-0006: still not born: refused by decisions/_kind: decider (the kind of decisions/, an ancestor of decisions/D-0006): `new.decider in ["ember", "integrator", "lane"]` does not hold; the line `decider: ember` would pass (the page has `decider: committee`)
 decisions/D-0007: still not born: refused by decisions/_kind: dated (the kind of decisions/, an ancestor of decisions/D-0007): `not (new.date == 0)` does not hold; date = 1 would pass (this write has date = 0)
+decisions/D-0001: refused by decisions/_kind: appendOnly (the kind of decisions/, an ancestor of decisions/D-0001): `new.deletions == 0` does not hold; deletions = 0 would pass (this write has deletions = 1)
 ```
 
 A decision shortened, a decision re-dated, a decider changed after the fact: each refused by the
 kind's clause, the file keeping what was typed and the world keeping the decision as it was.
 
-```sh
+```sh refused
 cd ledger
 rm decisions/D-0006.md decisions/D-0007.md
 printf -- '---\nkind: decisions\ndate: 20261031\ndecider: ember\n---\nNo per-theorem axiom lists.\n' > decisions/D-0001.md
-obend open && obend status decisions/D-0001 | head -1
+obend open
 ```
 
 ```text
 decisions/D-0006: deleted (its file is gone; v0 kept; a file decisions/D-0006.md revives it)
 decisions/D-0007: deleted (its file is gone; v0 kept; a file decisions/D-0007.md revives it)
 decisions/D-0001: refused by decisions/_kind: appendOnly (the kind of decisions/, an ancestor of decisions/D-0001): `new.deletions == 0` does not hold; deletions = 0 would pass (this write has deletions = 1)
-decisions/D-0001 v1; its last write was refused by decisions/_kind: appendOnly (the kind of decisions/, an ancestor of decisions/D-0001): `new.deletions == 0` does not hold; deletions = 0 would pass (this write has deletions = 1)
 ```
 
 ```sh
+cd ledger
+obend status decisions/D-0001 | head -1
+```
+
+```text
+decisions/D-0001 v1; its last write was refused by decisions/_kind: appendOnly (the kind of decisions/, an ancestor of decisions/D-0001): `new.deletions == 0` does not hold; deletions = 0 would pass (this write has deletions = 1)
+```
+
+```sh refused
 cd ledger
 printf -- '---\nkind: decisions\ndate: 20261031\ndecider: ember\n---\nNo per-theorem axiom lists; one crawling census. Where: `393eb2b`, memory `feedback-no-manual-axiom-lists`.\n' > decisions/D-0001.md
 obend open
@@ -219,15 +235,23 @@ decisions/D-0001: refused by decisions/_kind: deciderOnce (the kind of decisions
 
 The ledger itself cannot lose a decision: removing a link is refused by its own `appendOnly`.
 
-```sh
+```sh refused
 cd ledger
 sed -i.bak 's/^decider: lane$/decider: ember/' decisions/D-0001.md && rm decisions/D-0001.md.bak
 grep -v 'D-0002' Ledger.md > Ledger.tmp && mv Ledger.tmp Ledger.md
-obend open && obend status Ledger | head -1
+obend open
 ```
 
 ```text
 Ledger: refused by its law appendOnly: `monotone(links)` does not hold; links = 4 would pass (this write has links = 3)
+```
+
+```sh
+cd ledger
+obend status Ledger | head -1
+```
+
+```text
 Ledger v2; its last write was refused by its law appendOnly: `monotone(links)` does not hold; links = 4 would pass (this write has links = 3)
 ```
 
@@ -303,16 +327,24 @@ Ledger: v4 written
 A note outside `decisions/` (no kind dates it), undated, listed: the ledger's write is refused at
 the note, which is named with the clause and what would pass there.
 
-```sh
+```sh refused
 cd ledger
 mkdir -p notes && printf -- '---\ndate: 0\n---\nA note, not a decision.\n' > notes/Scratch.md
 printf -- '- [[notes/Scratch]]\n' >> Ledger.md
-obend open && obend status Ledger | head -1
+obend open
 ```
 
 ```text
-Ledger: refused by its law listedDated over its links, at notes/Scratch: `not (linked.date == 0)` does not hold there; the line `date: 1` would pass (the page has `date: 0`)
 notes/Scratch: new page (v1)
+Ledger: refused by its law listedDated over its links, at notes/Scratch: `not (linked.date == 0)` does not hold there; the line `date: 1` would pass (the page has `date: 0`)
+```
+
+```sh
+cd ledger
+obend status Ledger | head -1
+```
+
+```text
 Ledger v4; its last write was refused by its law listedDated over its links, at notes/Scratch: `not (linked.date == 0)` does not hold there; the line `date: 1` would pass (the page has `date: 0`)
 ```
 
@@ -320,7 +352,7 @@ Dating the note mends the ledger's write at the next open (a refused write is ju
 page it read is written; the note is one the ledger's write read, so dating it wakes that write). The note then cannot lose its date while the ledger lists it: the ledger's
 law over its links refuses the note's write, naming whose law it is.
 
-```sh
+```sh refused
 cd ledger
 sed -i.bak 's/^date: 0$/date: 20261104/' notes/Scratch.md && rm notes/Scratch.md.bak && obend open
 sed -i.bak 's/^date: 20261104$/date: 0/' notes/Scratch.md && rm notes/Scratch.md.bak && obend open
@@ -357,7 +389,7 @@ obend post decisions/D-0009 ../claim.md --as lane
 ```text
 decisions/D-0009: v1 written
 member lane may post decisions/D-0009, post decisions/D-0008
-refused: decisions/D-0009: refused by decisions/_kind: claimed (the kind of decisions/, an ancestor of decisions/D-0009): `(new.decider == "ember") implies (new.poster == "owner")` does not hold; the line `decider: lane` would pass (the page has `decider: ember`); posted by lane
+refused: decisions/D-0009: refused by decisions/_kind: claimed (the kind of decisions/, an ancestor of decisions/D-0009): `(new.decider == "ember") implies (new.poster == "owner")` does not hold; the line `poster: owner` would pass (the page has `poster: lane`); posted by lane
 ```
 
 ```sh
@@ -422,7 +454,7 @@ the value that would pass; the file keeps both. The write has `deletions = 1` th
 rewritten: a change is widened to whole lines, and a whole line inserted or removed re-writes no
 neighbour.
 
-```sh
+```sh refused
 cd ledger
 sed -i.bak 's/^Package law at adoption and relaw: adoption judged with old = new state.$/Package law at adoption only./' log/Decisions.md && rm log/Decisions.md.bak
 printf -- '\n## D-0004\nA law per row, taken by the lane. Rests on `no_toctou`.\n' >> log/Decisions.md
@@ -436,7 +468,7 @@ log/Decisions: refused by log/_kind: appendOnly per ## (the kind of log/, an anc
 The row put back as it was, the appended row stays: admitted. A row naming a theorem the
 environment lacks is refused at that row, the name said.
 
-```sh
+```sh refused
 cd ledger
 sed -i.bak 's/^Package law at adoption only.$/Package law at adoption and relaw: adoption judged with old = new state./' log/Decisions.md && rm log/Decisions.md.bak
 obend open

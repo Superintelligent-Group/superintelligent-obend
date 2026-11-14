@@ -17,6 +17,7 @@ EMIT_SV="${OBEND_EMIT_SV:-${REPO_ROOT}/lean/.lake/build/bin/obend-emit-sv}"
 VERILATOR_BIN="${VERILATOR_BIN:-$(command -v verilator || echo /opt/homebrew/bin/verilator)}"
 TMP="${TMPDIR:-/tmp}"
 REC_DIR="${SCRIPT_DIR}/../recording"
+RTL_DIR="${SCRIPT_DIR}"
 cd "${SCRIPT_DIR}"
 
 if [[ ! -x "${EMIT_SV}" ]]; then
@@ -46,8 +47,9 @@ echo "=== [2/4] LEC: each emitted .sv against Lean's model of its RtlModule ==="
 echo "=== [3/4] verilator -Wall lint + build of the receive chain ==="
 "${VERILATOR_BIN}" -Wall --lint-only --top-module sdr_ft8_rx_top sdr_ft8_rx_top.sv sdr_nco_mix.sv sdr_cic3_r64.sv sdr_ft8_disc.sv
 rm -rf obj_dir/rx
+mkdir -p obj_dir/rx
 "${VERILATOR_BIN}" -Wall --cc --exe --build -j 4 -CFLAGS "-std=c++17 -O2" --top-module sdr_ft8_rx_top \
-  --Mdir obj_dir/rx sdr_ft8_rx_top.sv sdr_nco_mix.sv sdr_cic3_r64.sv sdr_ft8_disc.sv sdr_ft8_rx_tb.cpp \
+  --Mdir obj_dir/rx "${RTL_DIR}/sdr_ft8_rx_top.sv" "${RTL_DIR}/sdr_nco_mix.sv" "${RTL_DIR}/sdr_cic3_r64.sv" "${RTL_DIR}/sdr_ft8_disc.sv" "${SCRIPT_DIR}/sdr_ft8_rx_tb.cpp" \
   -o Vsdr_ft8_rx >/dev/null
 
 echo "=== [4/4] a real FT8 recording through the RTL ==="

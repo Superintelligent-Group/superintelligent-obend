@@ -14,7 +14,7 @@ checker. It is not a persisted cache of judgment verdicts.
 -/
 public import Obend.Vault.FormCheck
 public import Std.Data.HashSet.Lemmas
-@[expose] public section
+public section
 
 namespace Obend.Vault.Form
 
