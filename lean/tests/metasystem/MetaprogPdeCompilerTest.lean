@@ -1,4 +1,18 @@
 module
+import all Obend.Hardware.ArrayBuild
+import all Obend.Hardware.ArrayTyping
+import all Obend.Hardware.Gpu.ArrayEncoding
+import all Obend.Hardware.Gpu.ArrayMember
+import all Obend.Hardware.Gpu.ArrayProduct
+import all Obend.Hardware.Gpu.ArrayPrograms
+import all Obend.Hardware.Gpu.ArrayReify
+import all Obend.Hardware.Gpu.ArraySourceCore
+import all Obend.Hardware.Gpu.FoldCore
+import all Obend.Hardware.Gpu.GoldilocksSource
+import all Obend.Hardware.Gpu.LimbsGoldilocks
+import all Obend.Hardware.Gpu.LimbsShift
+import all Obend.Hardware.Gpu.SourceElem
+import all Obend.Hardware.Gpu.SourceOps
 public import Obend.Analysis.NonlinearMultiDPde
 public import Obend.Hardware.MultiDStencilTile
 public import Obend.Tactic.SymDiffAndFlux
@@ -167,7 +181,7 @@ import all Obend.Judge.RealAnalysis
 
 End-to-end verification of `#pde_solver` (`Obend.Elab.PdeSolverElab`), `SymDiffAndFlux`,
 `NonlinearMultiDPde`, and `MultiDStencilTile` across 5 real nonlinear and multi-dimensional
-conservation-law systems, adversarial boundary/domain/CFL edge cases, 20 `#tooth` mutation-kill
+conservation-law systems, adversarial boundary/domain/CFL edge cases, 30 `#tooth` mutation-kill
 witnesses, and computational choice / axiom tree audits.
 -/
 
@@ -481,36 +495,18 @@ example (env : FluxEnv) (V : Vec) (h : Rat) :
 def sampleGrid2D : List Word := (List.range 35).map fun k => BitVec.ofNat 64 (k * 17 + 3)
 def sampleGrid3D : List Word := (List.range 60).map fun k => BitVec.ofNat 64 (k * 13 + 5)
 
-theorem idealMhd_nonmultiple_brick_gpu_sound (grid : List Word) :
-    let dims := [7, 5]
-    let bricks := [4, 4]
-    let e := multiDMinmodRusanovExpr 2 IdealMhd8Wave.spec.cfl.num IdealMhd8Wave.spec.aMax.num
-    evalFused (fun _ => grid) (IdealMhd8Wave.fusedGpuKernel .periodic dims) =
-      [evalMultiDBrickTiled bricks .periodic dims 2 (scalarStencil e) grid] ∧
-    multiDBrickHbmReads bricks 2 dims < (2 * 2 + 1) ^ 2 * gridCellCount dims := by
-  have h := IdealMhd8Wave.fusedGpuKernel_sound .periodic [7, 5] [4, 4] grid
-    (by decide) (by decide) (by decide) (fun d hd => by
-      match d with
-      | 0 => decide
-      | 1 => decide
-      | n + 2 => simp at hd; omega)
-  exact ⟨h.1, h.2.2⟩
+theorem idealMhd_nonmultiple_source_sound (grids : Nat → List Word) :
+    evalFused grids (IdealMhd8Wave.fusedGpuKernel .periodic [7,5] 1) =
+      (compileMultiDNonlinearFluxSweepSource IdealMhd8Wave.spec .periodic [7,5] 1).eval (fun c => grids (8-c)) :=
+  IdealMhd8Wave.fusedGpuKernel_sound .periodic [7,5] grids 1
 
-theorem euler3D_nonmultiple_brick_gpu_sound (grid : List Word) :
-    let dims := [5, 3, 4]
-    let bricks := [2, 2, 3]
-    let e := multiDMinmodRusanovExpr 3 EulerGas3D.spec.cfl.num EulerGas3D.spec.aMax.num
-    evalFused (fun _ => grid) (EulerGas3D.fusedGpuKernel .clamp dims) =
-      [evalMultiDBrickTiled bricks .clamp dims 2 (scalarStencil e) grid] ∧
-    multiDBrickHbmReads bricks 2 dims < (2 * 2 + 1) ^ 3 * gridCellCount dims := by
-  have h := EulerGas3D.fusedGpuKernel_sound .clamp [5, 3, 4] [2, 2, 3] grid
-    (by decide) (by decide) (by decide) (fun d hd => by
-      match d with
-      | 0 => decide
-      | 1 => decide
-      | 2 => decide
-      | n + 3 => simp at hd; omega)
-  exact ⟨h.1, h.2.2⟩
+theorem euler3D_nonmultiple_source_sound (grids : Nat → List Word) :
+    evalFused grids (EulerGas3D.fusedGpuKernel .clamp [5,3,4] 2) =
+      (compileMultiDNonlinearFluxSweepSource EulerGas3D.spec .clamp [5,3,4] 2).eval (fun c => grids (4-c)) :=
+  EulerGas3D.fusedGpuKernel_sound .clamp [5,3,4] grids 2
+
+example : multiDBrickHbmReads [4,4] 2 [7,5] < 5^2 * gridCellCount [7,5] := by decide +kernel
+example : multiDBrickHbmReads [2,2,3] 2 [5,3,4] < 5^3 * gridCellCount [5,3,4] := by decide +kernel
 
 -- Adversarial Edge Case 2: Negative slopes & negative velocities in MUSCL-`minmod` TVD:
 #guard musclReconstructLeft (4 - (-3 / 2)) 4 (4 + (-3 / 2)) == 4 - (1 / 2 : Rat) * (-3 / 2)
@@ -590,14 +586,129 @@ def vpInitState : PdeRolloutState :=
 #guard (runPdeRolloutTrace VlasovPoissonPhase.spec [4, 4] vpInitState
   [⟨1 / 6, false⟩, ⟨1 / 4, true⟩]).isSome
 
--- (g) `RangeSafe` Q32.32 magnitude bound propagation succeeds on bounded 3D Euler SSA DAG:
-def boundedQ32Box : Nat → RangeSafe.Interval := fun _ => RangeSafe.Interval.mkNat 0 (16 * 2 ^ 32)
-#guard (inferSsaDagMagnitudeIntervals boundedQ32Box
-  (getOr EulerGas3D.specializedPlan.axisFluxDags 0 ⟨[], []⟩)).isSome
+-- Signed propagation accepts physical positive-density boxes.
+#guard checkPdeQ32Intervals EulerGas3D.spec
+#guard checkPdeQ32Intervals IdealMhd8Wave.spec
 #guard checkRtlModule (EulerGas3D.systolicRtl 0) &&
        checkRtlModule (IdealMhd8Wave.systolicRtl 1) &&
        checkRtlModule (CurvedSpacetimeMaxwell.systolicRtl 2) &&
        checkRtlModule (VlasovPoissonPhase.systolicRtl 1)
+
+-- The stronger compiler gate remains inhabited for every existing solver.
+example : checkPdeSolverSpec Burgers1D.spec = true := by decide +kernel
+example : checkPdeSolverSpec EulerGas3D.spec = true := by decide +kernel
+example : checkPdeSolverSpec IdealMhd8Wave.spec = true := by decide +kernel
+example : checkPdeSolverSpec CurvedSpacetimeMaxwell.spec = true := by decide +kernel
+example : checkPdeSolverSpec VlasovPoissonPhase.spec = true := by decide +kernel
+example : checkPdeSolverSpec { Burgers1D.spec with cfl := (2 : Rat)^32 } = false := by decide +kernel
+example : checkPdeSolverSpec { Burgers1D.spec with
+    fluxes := [[.const ((2 : Rat)^32)]] } = false := by decide +kernel
+example : checkPdeSolverSpec { Burgers1D.spec with
+    aMax := (2 : Rat)^32, cfl := 0 } = false := by decide +kernel
+
+example : validatePdeSolverSexpr
+    "(conservation-law (name Overflow) (coords x) (vars u) (params) (domain) (fluxes (x 4294967296)) (wavespeed 1 1/2) (limiter minmod))" =
+    .error "Q32.32 constant outside the signed guard-bit range" := by decide +kernel
+
+-- Q32.32 quantization obstruction: at input word 3*2^58 the ideal reciprocal
+-- word is 64/3. Every integer output has relative error at least 1/64.
+example (r : Int) : 1 ≤ (3 * r - 64).natAbs := by omega
+
+-- Pre-modulo checks distinguish overflow from a legitimate zero encoding.
+example : ratToQ32Word ((2 : Rat) ^ 32) = 0#64 := by decide +kernel
+example : ratToQ32Checked ((2 : Rat) ^ 32) = none := by decide +kernel
+example : ratToQ32Checked ((2 : Rat) ^ 30) = none := by decide +kernel
+example : ratToQ32Checked (-((2 : Rat) ^ 30)) = none := by decide +kernel
+example : ratToQ32Checked (3 / 2) = some 6442450944#64 := by decide +kernel
+example : ratToQ32Checked (-5 / 4) = some (BitVec.ofInt 64 (-5368709120)) := by decide +kernel
+example : ratToQ32Checked 0 = some 0#64 := by decide +kernel
+
+def wrapBeforeRangeCheck (q : Rat) : Option (BitVec 64) :=
+  let w := ratToQ32Word q
+  if -((2 : Int) ^ 62) < w.toInt ∧ w.toInt < (2 : Int) ^ 62 then some w else none
+
+#tooth checkPdeSolverSpec_q32Constants by mutation checkPdeSolverSpec := fun _ => true
+#tooth ratToQ32Checked_refuses_overflow by mutation ratToQ32Checked := wrapBeforeRangeCheck
+#tooth ratToQ32Checked_sound by mutation ratToQ32Checked := wrapBeforeRangeCheck
+
+-- Exact NR vectors include both shifts, both signs, and the smallest admissible word.
+private theorem reciprocalTwo (d : Word) (hd : d = 8589934592#64) :
+    evalQ32Reciprocal d = 2147483647#64 := by subst d; decide +kernel
+example : evalQ32Reciprocal 16#64 = 1152921504472629248#64 := by decide +kernel
+example : evalQ32Reciprocal (ratToQ32Word (3/2)) = 2863311531#64 := by decide +kernel
+example : evalQ32Reciprocal (ratToQ32Word (-5/4)) = BitVec.ofInt 64 (-3435973837) := by decide +kernel
+example : evalQ32Reciprocal 4096#64 = 4503599626846208#64 := by decide +kernel
+example : evalQ32Reciprocal 4503599627370496#64 = 4095#64 := by decide +kernel
+
+#tooth reciprocalTwo by mutation evalQ32Reciprocal := fun d => evalAluOp .qmul32 (ratToQ32Word 1) d
+
+def zeroCrossingQ32 : Q32Interval := ⟨-((2 : Int)^32), (2 : Int)^32, by decide⟩
+example : propagateSsaInterval 1 (fun _ => zeroCrossingQ32) (fun _ => 0)
+    #[zeroCrossingQ32] (.invSafe 0) = none := by decide +kernel
+example : checkPdeSolverSpec { Burgers1D.spec with
+    fluxes := [[.invSafe (.var 0)]] } = false := by decide +kernel
+example : checkPdeSolverSpec { Burgers1D.spec with
+    domain := [], fluxes := [[.var 0]], aMax := 1, cfl := 1/2 } = true := by decide +kernel
+example : (reciprocalQ32Interval ⟨16, 16, by decide⟩).isSome = true := by decide +kernel
+example : (reciprocalQ32Interval ⟨-16, -16, by decide⟩).isSome = true := by decide +kernel
+example : reciprocalQ32Interval ⟨1, 15, by decide⟩ = none := by decide +kernel
+example : reciprocalQ32Interval ⟨-15, -1, by decide⟩ = none := by decide +kernel
+
+#tooth propagateSsaInterval_refuses_zero_crossing by mutation reciprocalQ32Interval := fun iv => some iv
+#tooth checkPdeSolverSpec_q32Intervals by mutation checkPdeSolverSpec := fun _ => true
+
+-- Both backends use the signed floor product, including negative fractional words.
+#tooth scalarQmul32_eval_eq_qmul32 by mutation scalarQmul32 := fun a _ => a
+example : (scalarQmul32 (.const (ratToQ32Word (-5/4)))
+    (.const (ratToQ32Word (3/2)))).eval (fun _ => 0#64) =
+    ratToQ32Word (-15/8) := by decide +kernel
+
+def reciprocalRtlDag : FluxSsaDag := ⟨[.var 0, .invSafe 0], [1]⟩
+#guard (emitSystolicFluxCellRtlModule "reciprocal" ["d"] reciprocalRtlDag).wires.length == 30
+#guard [16#64, 4096#64, 8589934592#64, 6442450944#64,
+    BitVec.ofInt 64 (-5368709120), 4503599627370496#64].all fun d =>
+  let m := emitSystolicFluxCellRtlModule "reciprocal" ["d"] reciprocalRtlDag
+  let wires := Obend.Hardware.HDL.evalWireTable (fun _ => d) (fun _ => 0#64) m.wires
+  match m.regs[0]? with
+  | none => false
+  | some r => Obend.Hardware.HDL.evalRtlExpr (fun _ => d) wires (fun _ => 0#64) r.nextExpr == evalQ32Reciprocal d
+
+private theorem reciprocalRtlTwo (d : Word) (hd : d = 8589934592#64) :
+    let m := emitSystolicFluxCellRtlModule "reciprocal" ["d"] reciprocalRtlDag
+    (stepModuleRegs m false (fun _ => d) (fun _ => 0#64)) 0 = 2147483647#64 := by
+  subst d
+  decide +kernel
+
+#tooth reciprocalRtlTwo by mutation reciprocalRtlExprs := fun _ d => [.alu .qmul32 (.const (ratToQ32Word 1)) d]
+#tooth scalarQmul32Source_eval by mutation scalarQmul32Source := fun _ => .ret [0]
+
+#tooth spec_fusedGpuKernel_sound by mutation buildSpecFusedGpuKernel := fun _ _ _ _ => .ret []
+#tooth evalNonlinearFluxCellQ32_constant by mutation evalNonlinearFluxCellQ32 :=
+  fun spec _ sample => (List.range spec.numVars).map (fun c => sample 0 c + sample 0 c)
+
+#guard [Burgers1D.spec, EulerGas3D.spec, IdealMhd8Wave.spec].all fun spec =>
+  let dims := List.replicate spec.numDims 2
+  let grids := fun c => List.replicate (gridCellCount dims) (ratToQ32Word (if c == 0 then 3/2 else 1/4))
+  evalFused grids (buildSpecFusedGpuKernel spec .periodic dims) == (List.range spec.numVars).map grids
+
+-- Independent source entry: lexical variables count back from the last component input.
+def nonlinearSourceValues (spec : ConservationLawSpec) (dims : List Nat) (axis : Nat)
+    (grids : Nat → List Word) : List (List Word) :=
+  (compileMultiDNonlinearFluxSweepSource spec .periodic dims axis).eval
+    (fun c => grids (spec.numVars-1-c))
+
+#guard [Burgers1D.spec, EulerGas3D.spec, IdealMhd8Wave.spec].all fun spec =>
+  let dims := List.replicate spec.numDims 2
+  let grids := fun c => List.replicate (gridCellCount dims) (ratToQ32Word (if c == 0 then 3/2 else 1/4))
+  nonlinearSourceValues spec dims 0 grids == (List.range spec.numVars).map grids
+
+#guard nonlinearSourceValues { Burgers1D.spec with cfl := 1/4 } [4] 0
+    (fun _ => [ratToQ32Word (1/4), ratToQ32Word (1/2), ratToQ32Word 1, ratToQ32Word (3/4)]) !=
+  nonlinearSourceValues { Burgers1D.spec with cfl := 1/8 } [4] 0
+    (fun _ => [ratToQ32Word (1/4), ratToQ32Word (1/2), ratToQ32Word 1, ratToQ32Word (3/4)])
+
+#guard [Burgers1D.spec, EulerGas3D.spec, IdealMhd8Wave.spec].all fun spec =>
+  (compileMultiDNonlinearFluxSweepSource spec .periodic (List.replicate spec.numDims 2)).scopedB spec.numVars
 
 /-! ## 4. Mutation-Sensitivity `#tooth` Suite (21 Kernel-Checked Mutation Kills) -/
 
@@ -617,7 +728,7 @@ def emptyBrickTiled (_ : List Nat) (_ : StencilBoundary) (_ : List Nat) (_ : Nat
     (_ : List Word → Word) (_ : List Word) : List Word := []
 def emptyFusedProg (_ : StencilBoundary) (_ : List Nat) (_ : Nat) (_ : ScalarExpr) :
     FusedProgram := .ret []
-def brokenSystolicRtl (modName : String) (varNames : List String) (_ : FluxSsaDag) : RtlModule :=
+def brokenSystolicRtl (modName : String) (varNames : List String) (_ : FluxSsaDag) (_ : Nat → Rat) : RtlModule :=
   { name := modName
     inputNames := varNames
     wires := []

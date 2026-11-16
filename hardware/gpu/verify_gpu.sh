@@ -14,7 +14,7 @@
 #                                 (isa_extract.py: one program per stage, buffer stores unless empty)
 #   verify_gpu.sh --plant NAME    only the comparison, on shaders emitted with the planted rule NAME
 #                                 (addAsSub, swapMux, mulHighZero); it fails, and says where
-#   verify_gpu.sh --stage N       only stage N of the gate (1-4)
+#   verify_gpu.sh --stage N       only stage N of the gate (1-5)
 #   verify_gpu.sh --digest NAME   write graphs/NAME.sha256 from a fresh emission (for a graph kept as a digest)
 #
 # The device: GPU_ADAPTER (a substring of the adapter's name or driver, e.g. radv, "6750", Apple) picks
@@ -203,4 +203,53 @@ else
   done
 fi
 fi
+
+if run_stage 5; then
+  echo '=== [5] nonlinear Q32 PDE: RX 6750 XT WGSL and bit-exact systolic Verilator ==='
+  ADAPTER_ARGS=(--adapter "${GPU_ADAPTER:-6750}")
+  PDE_GRAPHS=(burgers-1d-q32 euler-3d-q32 mhd-8wave-q32)
+  "${EMIT}" pde-nonlinear --out "${WORK}/pde"
+  for g in "${PDE_GRAPHS[@]}"; do
+    run_graph "${WORK}/pde/${g}"
+    if (( RUN_RC != 0 )); then
+      printf '%s\n' "${RUN_OUT}" >&2
+      cat "${WORK}/run.err" >&2
+      exit 1
+    fi
+    printf '%s\n' "${RUN_OUT}"
+  done
+  for plant in addAsSub mulHighZero; do
+    "${EMIT}" pde-nonlinear --out "${WORK}/pde-${plant}" --plant "${plant}"
+    caught=0
+    for g in "${PDE_GRAPHS[@]}"; do
+      cmp "${WORK}/pde/${g}/plan.json" "${WORK}/pde-${plant}/${g}/plan.json"
+      cmp "${WORK}/pde/${g}/expected.tsv" "${WORK}/pde-${plant}/${g}/expected.tsv"
+      run_graph "${WORK}/pde-${plant}/${g}"
+      if (( RUN_RC != 0 )); then
+        require_value_mismatch
+        echo "  ${g}: caught ${plant} by value mismatch"
+        caught=$((caught + 1))
+      fi
+    done
+    (( caught == ${#PDE_GRAPHS[@]} )) || { echo "[FAIL] ${plant}: only ${caught} PDE shaders detected the fault" >&2; exit 1; }
+  done
+  # The seeded 5.020 installation is relocatable; supply both its data root and binary.
+  if [[ -z "${VERILATOR_ROOT:-}" && -d /tmp/verilator-ok/usr_root/usr/share/verilator ]]; then
+    export VERILATOR_ROOT=/tmp/verilator-ok/usr_root/usr/share/verilator
+    export VERILATOR_BIN=../../bin/verilator_bin
+  fi
+  verilator --version | grep -q 'Verilator 5.020' || { echo '[FAIL] Stage 5 requires Verilator 5.020' >&2; exit 1; }
+  "${EMIT}" pde-verilate --out "${WORK}/rtl"
+  while IFS= read -r name; do
+    [[ -n "${name}" ]] || continue
+    dir="${WORK}/rtl/${name}"
+    verilator --cc --exe --build -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
+      --top-module "${name}" --Mdir "${dir}/obj_dir" "${dir}/${name}.sv" "${dir}/test.cpp" >"${dir}/build.log" 2>&1 || {
+        cat "${dir}/build.log" >&2; exit 1;
+      }
+    "${dir}/obj_dir/V${name}"
+  done < "${WORK}/rtl/modules.txt"
+  echo '[PASS] nonlinear PDE shaders, planted faults, and five systolic RTL modules'
+fi
+
 echo "[PASS] hardware/gpu${STAGE:+ (stage ${STAGE})}"
