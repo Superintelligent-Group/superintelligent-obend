@@ -343,6 +343,18 @@ open Obend.Receipt.Merkle
   Obend.Receipt.Merkle.climb256 := fun _ _ _ _ _ => some 0
 end FixedWidthCommitments
 
+section MerkleInBounds
+open Obend.Receipt.Merkle
+/-- `climb` at size 1 returns its leaf whatever the index, so position 5 of a one-leaf map would
+open against that leaf's own digest; `opens` refuses the position, under every hash. -/
+theorem Obend.Receipt.Merkle.opens_refuses_oob_index (H : Obend.Digest.HashBytes.Hash) (v : Nat) :
+    opens H ⟨1, 5, v, []⟩ (leaf H 5 v) = false := by
+  simp [opens]
+#tooth Obend.Receipt.Merkle.opens_refuses_oob_index by mutation
+  Obend.Receipt.Merkle.opens := fun H o r =>
+    Small o.index && climb H o.size o.index (leaf H o.index o.value) o.path == some r
+end MerkleInBounds
+
 section SignedSimplexAndCam
 open Obend.Consensus.SimplexTrace
 #tooth encodeMsgBytes_injective by mutation
