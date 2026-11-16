@@ -6,8 +6,8 @@
 #   hardware/fabulous/flow.sh [WORKDIR]     -> WORKDIR/mac8/user_design/obend_ice40_mac8.bin
 set -euo pipefail
 FAB_COMMIT=ba85d81            # FABulous v2.2.0-57 (CLI 2.2.1), github.com/FPGA-Research/FABulous
-FAB_HOME="${FAB_HOME:-/Users/ember/tools/FABulous}"
-OSS="${OSS_CAD_SUITE:-/Users/ember/tools/oss-cad-suite/bin}"
+FAB_HOME="${FAB_HOME:-${HOME}/tools/FABulous}"
+OSS="${OSS_CAD_SUITE:-${HOME}/tools/oss-cad-suite/bin}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "${HERE}/../.." && pwd)"
 WORK="${1:-$(mktemp -d "${TMPDIR:-/tmp}/obend-fabulous.XXXXXX")}"

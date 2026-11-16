@@ -78,7 +78,7 @@ compared the Lean AST with a renaming of itself and read no SystemVerilog; the L
 ## LEC
 
 `lec/lec.sh` is the logic-equivalence step (yosys, eqy and sby from the YosysHQ OSS CAD Suite under
-`/Users/ember/tools/oss-cad-suite`, or `OSS_CAD`). Every `verify_*.sh` whose `.sv` is printed by
+`$HOME/tools/oss-cad-suite`, or `OSS_CAD`). Every `verify_*.sh` whose `.sv` is printed by
 `emitModuleSV` from an `RtlModule` runs it after byte equality and before Verilator.
 
 - **The emitted SV against Lean's model (all of them).** `obend-emit-sv <target> --lec` writes

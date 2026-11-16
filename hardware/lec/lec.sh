@@ -16,7 +16,7 @@
 #     makes of it, and fails on the mutated copy against the same gate netlist.
 #
 # Tools: yosys and z3 from PATH or the YosysHQ OSS CAD Suite (OSS_CAD, default
-# /Users/ember/tools/oss-cad-suite); eqy from the suite.
+# $HOME/tools/oss-cad-suite); eqy from the suite.
 set -euo pipefail
 
 target="$1"; shift
@@ -25,7 +25,7 @@ mode="${1:---no-eqy}"; reason="${2:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 EMIT="${OBEND_EMIT_SV:-${REPO_ROOT}/lean/.lake/build/bin/obend-emit-sv}"
-OSS_CAD="${OSS_CAD:-/Users/ember/tools/oss-cad-suite}"
+OSS_CAD="${OSS_CAD:-${HOME}/tools/oss-cad-suite}"
 YOSYS="${YOSYS_BIN:-$([[ -x "${OSS_CAD}/bin/yosys" ]] && echo "${OSS_CAD}/bin/yosys" || command -v yosys || echo "${OSS_CAD}/bin/yosys")}"
 EQY="${EQY_BIN:-$([[ -x "${OSS_CAD}/bin/eqy" ]] && echo "${OSS_CAD}/bin/eqy" || command -v eqy || echo "${OSS_CAD}/bin/eqy")}"
 BITWUZLA="${BITWUZLA_BIN:-$([[ -x "${OSS_CAD}/bin/bitwuzla" ]] && echo "${OSS_CAD}/bin/bitwuzla" || command -v bitwuzla || true)}"
@@ -136,7 +136,11 @@ decide() {  # $1 = yosys .smt2, $2 = lean half, $3 = with get-value (0/1)
     if python3 "${SCRIPT_DIR}/smt_share.py" "${work}/abs.combined.smt2" "${work}/abs.bw.smt2" \
         --yosys "${YOSYS}" --keep-defines >"${work}/query.prepare.log" 2>&1; then
       local bw_answer bw_verdict bw_secs="${LEC_ABS_SECS:-30}"
-      bw_answer="$("${BITWUZLA}" --time-limit="$((bw_secs * 1000))" "${work}/abs.bw.smt2" 2>&1 || true)"
+      if "${BITWUZLA}" --help 2>&1 | grep -q -- '--time-limit'; then
+        bw_answer="$("${BITWUZLA}" --time-limit="$((bw_secs * 1000))" "${work}/abs.bw.smt2" 2>&1 || true)"
+      else
+        bw_answer="$("${BITWUZLA}" -t "${bw_secs}" "${work}/abs.bw.smt2" 2>&1 || true)"
+      fi
       bw_verdict="$(solver_verdict "${bw_answer}")"
       if [[ "${bw_verdict}" == "unsat" || "${bw_verdict}" == error ]]; then
         answer="${bw_answer}"; verdict="${bw_verdict}"

@@ -153,7 +153,7 @@ theorem inv_le_inv_of_le {a b : CanonicalRat} (ha : 0 < a) (hab : a ≤ b) : b�
   exact h1
 
 /-- The reciprocal of an interval that lies strictly above zero: `[1/hi, 1/lo]`. -/
-abbrev invPos (I : Interval) : Interval :=
+def invPos (I : Interval) : Interval :=
   ⟨I.hi⁻¹, I.lo⁻¹⟩
 
 theorem invPos_mem {x : CanonicalRat} {I : Interval} (hlo : 0 < I.lo) (hx : x ∈ I) :
@@ -165,7 +165,7 @@ theorem invPos_mem {x : CanonicalRat} {I : Interval} (hlo : 0 < I.lo) (hx : x �
 
 /-- `A / B` when `B` lies strictly above zero; `none` otherwise (a checker that needs the quotient
 refuses rather than divide through zero). -/
-abbrev divPos? (A B : Interval) : Option Interval :=
+def divPos? (A B : Interval) : Option Interval :=
   if 0 < B.lo then some (Interval.mul A (Interval.invPos B)) else none
 
 theorem divPos?_mem {x y : CanonicalRat} {A B J : Interval}
@@ -179,7 +179,7 @@ theorem divPos?_mem {x y : CanonicalRat} {A B J : Interval}
   · cases hJ
 
 /-- Round the endpoints outward to multiples of `1/s`: `[⌊lo·s⌋/s, ⌈hi·s⌉/s]`. -/
-abbrev roundOut (s : Nat) (I : Interval) : Interval :=
+def roundOut (s : Nat) (I : Interval) : Interval :=
   ⟨(((I.lo * (s : CanonicalRat)).floor : Int) : CanonicalRat) / (s : CanonicalRat),
    (((I.hi * (s : CanonicalRat)).ceil : Int) : CanonicalRat) / (s : CanonicalRat)⟩
 
@@ -246,17 +246,17 @@ theorem ratAbs_nonneg (t : CanonicalRat) : 0 ≤ ratAbs t := by
   (List.range deg).reverse.foldl (fun p j => 1 + t / (((j + 1 : Nat) : CanonicalRat)) * p) 1
 
 /-- The degree of the Taylor polynomial used on `[−1/2, 1/2]`. -/
-abbrev expDeg : Nat := 12
+def expDeg : Nat := 12
 
 /-- `13! = 6227020800`. -/
-abbrev fact13 : CanonicalRat := 6227020800
+def fact13 : CanonicalRat := 6227020800
 
 /-- The Lagrange remainder bound `2|t|¹³/13!` for `|t| ≤ 1/2` (`e^{1/2} < 2`). -/
-abbrev expHalfRem (t : CanonicalRat) : CanonicalRat :=
+def expHalfRem (t : CanonicalRat) : CanonicalRat :=
   2 * ratPow (ratAbs t) 13 / fact13
 
 /-- **Assumed fact `expHalf`**: for `|t| ≤ 1/2`, `eᵗ` lies in this interval. -/
-abbrev expHalfEnclosure (t : CanonicalRat) : Interval :=
+def expHalfEnclosure (t : CanonicalRat) : Interval :=
   ⟨expTaylor expDeg t - expHalfRem t, expTaylor expDeg t + expHalfRem t⟩
 
 /-- Dynamic halving count bringing `|x / 2ᵏ|` into `[0, 1/2]` for **all** `x : CanonicalRat`
@@ -265,9 +265,11 @@ abbrev expHalfEnclosure (t : CanonicalRat) : Interval :=
 @[expose] def halvings (x : CanonicalRat) : Nat :=
   go (ratAbs x) (2 * ratAbs x).ceil.toNat
 where
-  go : CanonicalRat → Nat → Nat
-    | _, 0 => 0
-    | a, fuel + 1 => if a ≤ 1/2 then 0 else go (a / 2) fuel + 1
+  go (a : CanonicalRat) (fuel : Nat) : Nat :=
+    match fuel with
+    | 0 => 0
+    | fuel + 1 => if a ≤ 1/2 then 0 else go (a / 2) fuel + 1
+  termination_by structural fuel
 
 private theorem halvings_go_two_mul_le :
     ∀ (fuel : Nat) (a : CanonicalRat),
@@ -398,16 +400,16 @@ theorem expEnclosure_sound
 /-! ## 4. The Bernoulli function -/
 
 /-- `1 − x/2 + x²/12 − x⁴/720 + x⁶/30240 − x⁸/1209600 + x¹⁰/47900160`. -/
-abbrev bernSeries (x : CanonicalRat) : CanonicalRat :=
+def bernSeries (x : CanonicalRat) : CanonicalRat :=
   let x2 := x * x
   1 - x / 2 + x2 * (1/12 + x2 * (-1/720 + x2 * (1/30240 + x2 * (-1/1209600 + x2 * (1/47900160)))))
 
 /-- The series' remainder bound `x¹²/10⁹` for `|x| ≤ 1/8`. -/
-abbrev bernSeriesRem (x : CanonicalRat) : CanonicalRat :=
+def bernSeriesRem (x : CanonicalRat) : CanonicalRat :=
   ratPow (ratAbs x) 12 / 1000000000
 
 /-- **Assumed fact `bernSmall`**: for `|x| ≤ 1/8`, `B(x) = x/(eˣ − 1)` lies in this interval. -/
-abbrev bernSmallEnclosure (x : CanonicalRat) : Interval :=
+def bernSmallEnclosure (x : CanonicalRat) : Interval :=
   ⟨bernSeries x - bernSeriesRem x, bernSeries x + bernSeriesRem x⟩
 
 /-- The Bernoulli function of `x` computed from a value `e` standing for `eˣ`, in the form the
@@ -469,7 +471,7 @@ theorem powBracket_agree {y₁ y₂ r : CanonicalRat} {num den : Nat} {δ : Cano
   · exact le_of_ratPow_le (Rat.mul_nonneg hy₁ h1δ') (Rat.le_trans hlo₂ hhi₁)
 
 /-- A square root bracket is the power bracket with `num/den = 1/2`. -/
-abbrev sqrtBracket (s x δ : CanonicalRat) : Bool :=
+def sqrtBracket (s x δ : CanonicalRat) : Bool :=
   powBracket s x 1 2 δ
 
 /-- A bracketed root is pinned: `(s(1−δ))² ≤ x ≤ (s(1+δ))²`. -/

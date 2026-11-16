@@ -3,8 +3,8 @@ module
 # Obend.Hardware.OpenHypergraph — Data-Parallel `StrictOpenHypergraph`, Wavefront Pipeline Layering & `catgrad` Syntactic `Optic` Reverse-Mode AD
 
 Mechanizes the categorical string-diagram and hardware-compilation foundations of
-`/Users/ember/hellas/open-hypergraphs` (Wilson & Zanasi, *Data-Parallel Algorithms for String Diagrams*,
-`arXiv:2305.01041`) and `/Users/ember/hellas/catgrad` (categorical reverse-mode automatic differentiation
+`open-hypergraphs` (Wilson & Zanasi, *Data-Parallel Algorithms for String Diagrams*,
+`arXiv:2305.01041`) and `catgrad` (categorical reverse-mode automatic differentiation
 via syntactic `Optic` morphisms), bridged directly to `Obend.Hardware.HDL` and `Obend.Hardware.Compiler`:
 
 1. **Data-Parallel `StrictOpenHypergraph` Representation (`FiniteFunction`, `IndexedCoproduct`, `StrictOpenHypergraph`)**:

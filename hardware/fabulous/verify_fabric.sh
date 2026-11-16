@@ -21,7 +21,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "${HERE}/../.." && pwd)"
 OBEND="${OBEND:-${ROOT}/lean/.lake/build/bin/obend}"
-OSS="${OSS_CAD_SUITE:-/Users/ember/tools/oss-cad-suite/bin}"
+OSS="${OSS_CAD_SUITE:-${HOME}/tools/oss-cad-suite/bin}"
 CYCLES="${CYCLES:-200}"
 W="$(mktemp -d "${TMPDIR:-/tmp}/verify-fabric.XXXXXX")"
 trap 'rm -rf "${W}"' EXIT

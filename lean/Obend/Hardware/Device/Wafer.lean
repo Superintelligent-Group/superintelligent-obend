@@ -34,6 +34,7 @@ deposited restores the stack), `sqrtEnclosure_spec` (the root enclosure brackets
 has the process parameters free and false for some value of them.
 -/
 public import Obend.Hardware.Device.Constants
+import all Obend.Hardware.Device.Enclosure
 public section
 
 namespace Obend.Hardware.Device

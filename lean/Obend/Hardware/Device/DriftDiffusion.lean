@@ -58,6 +58,7 @@ public import Obend.Judge.Class
 public import Lean.Data.Json
 public import Obend.Analysis.SosLyapunov
 import all Obend.Hardware.Device.Constants
+import all Obend.Hardware.Device.Enclosure
 public section
 namespace Obend.Hardware.Device
 open Obend.Analysis Obend.Judge

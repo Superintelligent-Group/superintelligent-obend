@@ -28,7 +28,7 @@ LEC_SH = os.path.join(REPO, "hardware", "lec", "lec.sh")
 Z3 = shutil.which("z3") or "/opt/homebrew/bin/z3"
 VERILATOR = shutil.which("verilator") or "/opt/homebrew/bin/verilator"
 CXX = shutil.which("c++") or "/usr/bin/c++"
-YOSYS = os.environ.get("YOSYS_BIN") or shutil.which("yosys") or "/Users/ember/tools/oss-cad-suite/bin/yosys"
+YOSYS = os.environ.get("YOSYS_BIN") or shutil.which("yosys") or os.path.expanduser("~/tools/oss-cad-suite/bin/yosys")
 
 
 def discover_verilator_include():
