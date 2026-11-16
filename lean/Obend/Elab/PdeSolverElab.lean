@@ -17,8 +17,8 @@ Implements `#pde_solver <Name> := "<conservation-law S-expr>"` and `elabConserva
    unguarded rational denominators, dimension mismatches, and CFL violations with descriptive
    compile-time diagnostics).
 2. Runs compile-time symbolic Fréchet differentiation, cleared-denominator `CanonPoly` fluctuation
-   verification, Futamura parameter specialization + CSE SSA DAG lowering, single-pass vertical
-   SOAC fusion, multi-dimensional brick halo tiling, and Q32.32 systolic `HDL.RtlModule` synthesis.
+   verification, Futamura parameter specialization + CSE SSA DAG lowering, linear nonlinear
+   Q32.32 array-source construction, and flat systolic `HDL.RtlModule` synthesis.
 3. Emits and kernel-typechecks inside `namespace <Name>`:
    - `<Name>.spec : ConservationLawSpec` & `<Name>.spec_valid : <Name>.spec.checkValid = true`
    - `<Name>.jacobians` & `<Name>.jacobian_frechet_sound` (exact multivariable Fréchet Taylor proof)
@@ -30,6 +30,281 @@ Implements `#pde_solver <Name> := "<conservation-law S-expr>"` and `elabConserva
 -/
 
 public section
+namespace Obend.Tactic.SymDiffAndFlux
+open Obend.Analysis.HyperbolicPde Obend.Analysis.PdeSexprAndApprox Obend.Analysis.NonlinearMultiDPde
+set_option autoImplicit false
+
+/-! ## 1. Declarative Conservation-Law S-Expression Parser & Validity Theorem -/
+
+def parseDigitsAux : List Char → Nat → Option Nat
+  | [], acc => some acc
+  | c :: cs, acc =>
+    if '0' ≤ c && c ≤ '9' then parseDigitsAux cs (acc * 10 + (c.toNat - '0'.toNat))
+    else none
+
+def parseNatChars : List Char → Option Nat
+  | [] => none
+  | cs => parseDigitsAux cs 0
+
+def parseIntChars : List Char → Option Int
+  | '-' :: cs => (parseNatChars cs).map fun n => -Int.ofNat n
+  | cs => (parseNatChars cs).map Int.ofNat
+
+def splitSlashChars : List Char → List Char → Option (List Char × List Char)
+  | [], _ => none
+  | '/' :: rest, revNum =>
+    if rest.contains '/' then none else some (revNum.reverse, rest)
+  | c :: rest, revNum => splitSlashChars rest (c :: revNum)
+
+/-- Pure `List Char` rational literal parser (`"3"`, `"-7/5"`, `"1/10"`), avoiding `String.splitOn`. -/
+def parseRatToken (s : String) : Option Rat :=
+  let cs := s.toList
+  match splitSlashChars cs [] with
+  | none => (parseIntChars cs).map fun z => (z : Rat)
+  | some (numCs, denCs) =>
+    match parseIntChars numCs, parseNatChars denCs with
+    | some num, some den => if den == 0 then none else some ((num : Rat) / (den : Rat))
+    | _, _ => none
+
+def evalParamOrRat (params : List (String × Rat)) : PdeSexpr → Option Rat
+  | .atom tok =>
+    match parseRatToken tok with
+    | some q => some q
+    | none => params.lookup tok
+  | .list [.atom "-", x] => (evalParamOrRat params x).map (-·)
+  | .list [.atom "+", x, y] => do
+    let a ← evalParamOrRat params x
+    let b ← evalParamOrRat params y
+    some (a + b)
+  | .list [.atom "*", x, y] => do
+    let a ← evalParamOrRat params x
+    let b ← evalParamOrRat params y
+    some (a * b)
+  | .list [.atom "/", x, y] => do
+    let a ← evalParamOrRat params x
+    let b ← evalParamOrRat params y
+    if b == 0 then none else some (a / b)
+  | _ => none
+
+def findStringIdx : List String → String → Nat → Option Nat
+  | [], _, _ => none
+  | x :: xs, target, k => if x == target then some k else findStringIdx xs target (k + 1)
+
+def foldBinLeft (op : FluxExpr → FluxExpr → FluxExpr) : List FluxExpr → Option FluxExpr
+  | [] => none
+  | e :: es => some (es.foldl op e)
+
+def parseLetBindings (fuel : Nat)
+    (parseFn : List (String × FluxExpr) → PdeSexpr → Except String FluxExpr)
+    (lets : List (String × FluxExpr)) : List PdeSexpr → Except String (List (String × FluxExpr))
+  | [] => .ok lets
+  | .list [.atom k, rhs] :: rest => do
+    match fuel with
+    | 0 => .error "expression fuel exhausted in let-binding"
+    | f + 1 =>
+      let e ← parseFn lets rhs
+      parseLetBindings f parseFn ((k, e) :: lets) rest
+  | _ => .error "malformed let-binding; expected (ident expr)"
+
+def parseFluxExprWithFuel :
+    Nat → List String → List String → List (String × FluxExpr) → PdeSexpr → Except String FluxExpr
+  | 0, _, _, _, _ => .error "expression nesting depth exceeded fuel"
+  | _ + 1, vars, params, lets, .atom tok =>
+    match parseRatToken tok with
+    | some q => .ok (.const q)
+    | none =>
+      match lets.lookup tok with
+      | some bound => .ok bound
+      | none =>
+        match findStringIdx vars tok 0 with
+        | some vi => .ok (.var vi)
+        | none =>
+          match findStringIdx params tok 0 with
+          | some pi => .ok (.param pi)
+          | none => .error s!"unknown state variable, parameter, or rational literal `{tok}`"
+  | fuel + 1, vars, params, lets, .list items =>
+    match items with
+    | [.atom "neg", a] | [.atom "-", a] => do
+      let ea ← parseFluxExprWithFuel fuel vars params lets a
+      .ok (.neg ea)
+    | [.atom "-", a, b] | [.atom "sub", a, b] => do
+      let ea ← parseFluxExprWithFuel fuel vars params lets a
+      let eb ← parseFluxExprWithFuel fuel vars params lets b
+      .ok (.sub ea eb)
+    | [.atom "inv", d] => do
+      let ed ← parseFluxExprWithFuel fuel vars params lets d
+      .ok (.invSafe ed)
+    | [.atom "/", a, d] | [.atom "div", a, d] => do
+      let ea ← parseFluxExprWithFuel fuel vars params lets a
+      let ed ← parseFluxExprWithFuel fuel vars params lets d
+      .ok (.mul ea (.invSafe ed))
+    | [.atom "sq", a] => do
+      let ea ← parseFluxExprWithFuel fuel vars params lets a
+      .ok (.mul ea ea)
+    | .atom "+" :: args | .atom "add" :: args => do
+      let parsed ← args.mapM (parseFluxExprWithFuel fuel vars params lets)
+      match foldBinLeft FluxExpr.add parsed with
+      | some res => .ok res
+      | none => .error "`+` requires at least one operand"
+    | .atom "*" :: args | .atom "mul" :: args => do
+      let parsed ← args.mapM (parseFluxExprWithFuel fuel vars params lets)
+      match foldBinLeft FluxExpr.mul parsed with
+      | some res => .ok res
+      | none => .error "`*` requires at least one operand"
+    | [.atom "let", .list binds, body] => do
+      let lets' ← parseLetBindings fuel (parseFluxExprWithFuel fuel vars params) lets binds
+      parseFluxExprWithFuel fuel vars params lets' body
+    | _ => .error "unsupported flux S-expression form"
+
+def parseDomainItem (vars params : List String) : PdeSexpr → Except String PosTarget
+  | .list [.atom ">", .atom ident, .atom "0"]
+  | .list [.atom "pos", .atom ident] =>
+    match findStringIdx vars ident 0 with
+    | some vi => .ok (.stateVar vi)
+    | none =>
+      match findStringIdx params ident 0 with
+      | some pi => .ok (.paramVar pi)
+      | none => .error s!"domain positivity target `{ident}` is neither a state variable nor a parameter"
+  | _ => .error "malformed domain guard; expected (> ident 0) or (pos ident)"
+
+def parseLimiterKind : PdeSexpr → Except String SlopeLimiterKind
+  | .atom "minmod" => .ok .minmod
+  | .atom "first-order" | .atom "firstOrder" | .atom "none" => .ok .firstOrder
+  | _ => .error "unsupported slope limiter; expected `minmod` or `first-order`"
+
+def findClause : List PdeSexpr → String → Option (List PdeSexpr)
+  | [], _ => none
+  | .list (.atom tag :: rest) :: cs, target =>
+    if tag == target then some rest else findClause cs target
+  | _ :: cs, target => findClause cs target
+
+def parseAxisFluxRow (vars params : List String) (expectedCoord : String) (numVars : Nat) :
+    PdeSexpr → Except String (List FluxExpr)
+  | .list [.atom head, .list (.atom "let" :: .list binds :: bodyExprs)] => do
+    if head == expectedCoord && bodyExprs.length == numVars then
+      let lets ← parseLetBindings 64 (parseFluxExprWithFuel 64 vars params) [] binds
+      bodyExprs.mapM (parseFluxExprWithFuel 64 vars params lets)
+    else if head == expectedCoord && bodyExprs.length == 1 && numVars == 1 then
+      let lets ← parseLetBindings 64 (parseFluxExprWithFuel 64 vars params) [] binds
+      bodyExprs.mapM (parseFluxExprWithFuel 64 vars params lets)
+    else if numVars == 2 && head != expectedCoord then
+      [PdeSexpr.atom head, .list (.atom "let" :: .list binds :: bodyExprs)].mapM
+        (parseFluxExprWithFuel 64 vars params [])
+    else
+      .error s!"flux row let-block for coordinate `{expectedCoord}` has {bodyExprs.length} components, expected {numVars}"
+  | .list (.atom head :: tail) =>
+    if head == expectedCoord && tail.length == numVars then
+      tail.mapM (parseFluxExprWithFuel 64 vars params [])
+    else if (head :: tail.map (fun _ => "")).length == numVars then
+      (PdeSexpr.atom head :: tail).mapM (parseFluxExprWithFuel 64 vars params [])
+    else
+      .error s!"flux row for coordinate `{expectedCoord}` does not match variable count {numVars}"
+  | .list raw =>
+    if raw.length == numVars then
+      raw.mapM (parseFluxExprWithFuel 64 vars params [])
+    else
+      .error s!"flux row for coordinate `{expectedCoord}` has length {raw.length}, expected {numVars}"
+  | _ => .error s!"malformed flux row for coordinate `{expectedCoord}`"
+
+def parseAxisFluxRows (vars params : List String) :
+    List String → List PdeSexpr → Except String (List (List FluxExpr))
+  | [], [] => .ok []
+  | c :: cs, r :: rs => do
+    let row ← parseAxisFluxRow vars params c vars.length r
+    let rest ← parseAxisFluxRows vars params cs rs
+    .ok (row :: rest)
+  | _, _ => .error "number of directional flux rows does not match `(coords ...)` dimension"
+
+def parseParamEntry : PdeSexpr → Except String (String × Rat)
+  | .list [.atom k, .atom v] =>
+    match parseRatToken v with
+    | some q => .ok (k, q)
+    | none => .error s!"invalid rational parameter value `{v}` for `{k}`"
+  | _ => .error "malformed parameter entry; expected (name rational)"
+
+def diagnoseSpecFailure (s : ConservationLawSpec) : String :=
+  if s.coords.isEmpty then "coordinate list `(coords ...)` must be non-empty"
+  else if s.vars.isEmpty then "state variable list `(vars ...)` must be non-empty"
+  else if s.coords.eraseDups.length != s.coords.length then "duplicate coordinate names in `(coords ...)`"
+  else if s.vars.eraseDups.length != s.vars.length then "duplicate state variable names in `(vars ...)`"
+  else if (s.params.map Prod.fst).eraseDups.length != s.params.length then "duplicate parameter names in `(params ...)`"
+  else if s.fluxes.length != s.coords.length then "directional flux row count does not match `(coords ...)`"
+  else if !s.fluxes.all (fun row => row.length == s.vars.length) then "flux row width does not match `(vars ...)`"
+  else if !s.fluxes.all (fun row => row.all (checkExprDomainSafe s.domain)) then
+    "unguarded rational division `(inv d)` / `(/ a d)`: denominator is not certified strictly positive by `(domain ...)`"
+  else "wave-speed / CFL violation: require `0 < aMax`, `0 ≤ cfl`, and `cfl * aMax ≤ 1`"
+
+def parseConservationLawRaw (text : String) : Except String ConservationLawSpec := do
+  let tree ← match parseSexpr text with
+    | some t => .ok t
+    | none => .error "malformed S-expression syntax"
+  let clauses ← match tree with
+    | .list (.atom "conservation-law" :: cs) => .ok cs
+    | _ => .error "expected top-level `(conservation-law ...)` form"
+  let name ← match findClause clauses "name" with
+    | some [.atom n] => .ok n
+    | _ => .error "missing or malformed `(name ...)` clause"
+  let coordSexprs ← match findClause clauses "coords" with
+    | some cs => .ok cs
+    | none => .error "missing `(coords ...)` clause"
+  let coords ← match coordSexprs.mapM atomText with
+    | some cs => .ok cs
+    | none => .error "`(coords ...)` entries must be bare or quoted identifiers"
+  let varSexprs ← match findClause clauses "vars" with
+    | some vs => .ok vs
+    | none => .error "missing `(vars ...)` clause"
+  let vars ← match varSexprs.mapM atomText with
+    | some vs => .ok vs
+    | none => .error "`(vars ...)` entries must be bare or quoted identifiers"
+  let params ← match findClause clauses "params" with
+    | some ps => ps.mapM parseParamEntry
+    | none => .ok []
+  let paramNames := params.map Prod.fst
+  let domain ← match findClause clauses "domain" with
+    | some ds => ds.mapM (parseDomainItem vars paramNames)
+    | none => .ok []
+  let fluxRowsSexpr ← match findClause clauses "fluxes" with
+    | some fs => .ok fs
+    | none => .error "missing `(fluxes ...)` clause"
+  let fluxes ← parseAxisFluxRows vars paramNames coords fluxRowsSexpr
+  let (aMax, cfl) ← match findClause clauses "wavespeed" with
+    | some [spSx, cflSx] =>
+      match evalParamOrRat params spSx, evalParamOrRat params cflSx with
+      | some a, some nu => .ok (a, nu)
+      | _, _ => .error "malformed `(wavespeed aMax cfl)` values"
+    | _ => .error "missing or malformed `(wavespeed aMax cfl)` clause"
+  let limiter ← match findClause clauses "limiter" with
+    | some [limSx] => parseLimiterKind limSx
+    | none => .ok .minmod
+    | _ => .error "malformed `(limiter ...)` clause"
+  .ok { name, coords, vars, params, domain, fluxes, aMax, cfl, limiter }
+
+/-- Parse and statically validate a multi-dimensional nonlinear conservation-law S-expression,
+returning descriptive diagnostics on syntax, domain-positivity, dimension, or CFL errors. -/
+def parseConservationLawSexprWithDiag (text : String) : Except String ConservationLawSpec :=
+  match parseConservationLawRaw text with
+  | .error msg => .error msg
+  | .ok raw => if raw.checkValid then .ok raw else .error (diagnoseSpecFailure raw)
+
+def parseConservationLawSexpr (text : String) : Option ConservationLawSpec :=
+  match parseConservationLawSexprWithDiag text with
+  | .ok spec => some spec
+  | .error _ => none
+
+theorem parseConservationLawSexpr_valid (text : String) (spec : ConservationLawSpec)
+    (h : parseConservationLawSexpr text = some spec) :
+    spec.checkValid = true := by
+  unfold parseConservationLawSexpr parseConservationLawSexprWithDiag at h
+  cases hRaw : parseConservationLawRaw text with
+  | error _ => simp [hRaw] at h
+  | ok raw =>
+    simp only [hRaw] at h
+    by_cases hv : raw.checkValid = true
+    · simp only [hv, ↓reduceIte, Option.some.injEq] at h; subst h; exact hv
+    · simp [hv] at h
+
+end Obend.Tactic.SymDiffAndFlux
+
 namespace Obend.Elab.PdeSolverElab
 open Lean Elab Command Term Meta
 open Obend.Analysis.HyperbolicPde
@@ -42,35 +317,43 @@ open Obend.Hardware.MultiDStencilTile
 open Obend.Tactic.SymDiffAndFlux
 set_option autoImplicit false
 
+/-- Evaluate the single runtime parser in elaboration; generated declarations still carry
+kernel-checked validity proofs. This avoids duplicating the parser across Lean phases. -/
+meta def evaluatePdeParser (raw : String) : MetaM (Except String ConservationLawSpec) := do
+  let expression := mkApp (mkConst ``parseConservationLawSexprWithDiag) (mkStrLit raw)
+  let type ← inferType expression
+  unsafe evalExpr (checkMeta := false) (Except String ConservationLawSpec) type expression
+
 /-- Term-level compile-time parser & quoter producing a direct `ConservationLawSpec` constructor term. -/
 elab "pde_spec_from_sexpr% " s:str : term => do
-  match parseConservationLawSexprWithDiag s.getString with
+  match ← evaluatePdeParser s.getString with
   | .error msg => throwError "[#pde_solver] {msg}"
   | .ok spec => return quoteConservationLawSpec spec
 
 /-- Pure compile-time gate checking structural/domain/CFL validity, reflective `CanonPoly`
-two-state fluctuation conservation, and topological SSA DAG well-formedness across every axis. -/
+two-state fluctuation conservation, topological SSA DAG well-formedness across every axis,
+and pre-modulo Q32.32 constant representability. -/
 def checkPdeSolverSpec (spec : ConservationLawSpec) : Bool :=
   spec.checkValid &&
   verifyFluctuationsReflective spec &&
-  (List.range spec.numDims).all fun d =>
-    checkFluxSsaDag (getOr (specializeFluxSweep spec).axisFluxDags d ⟨[], []⟩)
+  ((List.range spec.numDims).all fun d =>
+    checkFluxSsaDag (getOr (specializeFluxSweep spec).axisFluxDags d ⟨[], []⟩)) &&
+  (checkPdeQ32Constants spec && checkPdeQ32Intervals spec)
 
 /-- Pure S-expression parser and compile-time conservation/SSA gate backing `elabConservationLaw`. -/
 def validatePdeSolverSexpr (rawText : String) :
     Except String (ConservationLawSpec × SpecializedSweepPlan) := do
   let parsedSpec ← parseConservationLawSexprWithDiag rawText
-  if !parsedSpec.checkValid then
-    .error "invalid conservation-law specification"
-  else if !verifyFluctuationsReflective parsedSpec then
-    .error "reflective CanonPoly fluctuation conservation check failed"
+  if checkPdeSolverSpec parsedSpec then
+    .ok (parsedSpec, specializeFluxSweep parsedSpec)
   else
-    let plan := specializeFluxSweep parsedSpec
-    if !(List.range parsedSpec.numDims).all (fun d =>
-        checkFluxSsaDag (getOr plan.axisFluxDags d ⟨[], []⟩)) then
-      .error "internal SSA DAG topological check failed"
-    else
-      .ok (parsedSpec, plan)
+    .error (if !parsedSpec.checkValid then "invalid conservation-law specification"
+      else if !verifyFluctuationsReflective parsedSpec then
+        "reflective CanonPoly fluctuation conservation check failed"
+      else if !checkPdeQ32Constants parsedSpec then
+        "Q32.32 constant outside the signed guard-bit range"
+      else if !checkPdeQ32Intervals parsedSpec then "Q32.32 state box cannot certify all intermediates"
+      else "internal SSA DAG topological check failed")
 
 theorem checkPdeSolverSpec_valid (spec : ConservationLawSpec)
     (h : checkPdeSolverSpec spec = true) :
@@ -80,7 +363,17 @@ theorem checkPdeSolverSpec_valid (spec : ConservationLawSpec)
       checkFluxSsaDag (getOr (specializeFluxSweep spec).axisFluxDags d ⟨[], []⟩) = true := by
   unfold checkPdeSolverSpec at h
   simp only [Bool.and_eq_true, List.all_eq_true, List.mem_range] at h
-  exact ⟨h.1.1, h.1.2, h.2⟩
+  exact ⟨h.1.1.1, h.1.1.2, h.1.2⟩
+
+theorem checkPdeSolverSpec_q32Constants (spec : ConservationLawSpec)
+    (h : checkPdeSolverSpec spec = true) : checkPdeQ32Constants spec = true := by
+  simp only [checkPdeSolverSpec, Bool.and_eq_true] at h
+  exact h.2.1
+
+theorem checkPdeSolverSpec_q32Intervals (spec : ConservationLawSpec)
+    (h : checkPdeSolverSpec spec = true) : checkPdeQ32Intervals spec = true := by
+  simp only [checkPdeSolverSpec, Bool.and_eq_true] at h
+  exact h.2.2
 
 /-- **Kernel Soundness of `checkPdeSolverSpec` (`checkPdeSolverSpec_sound`)**:
 Every `ConservationLawSpec` accepted by `checkPdeSolverSpec` satisfies:
@@ -130,34 +423,17 @@ theorem validatePdeSolverSexpr_checks (rawText : String)
   | error _ => simp [hParse, bind, Except.bind] at h
   | ok parsed =>
     simp only [hParse, bind, Except.bind] at h
-    cases hValid : parsed.checkValid with
-    | false => simp [hValid] at h
-    | true =>
-      simp only [hValid, Bool.not_true, Bool.false_eq_true, ↓reduceIte] at h
-      cases hFluct : verifyFluctuationsReflective parsed with
-      | false => simp [hFluct] at h
-      | true =>
-        simp only [hFluct, Bool.not_true, Bool.false_eq_true, ↓reduceIte] at h
-        cases hDag : ((List.range parsed.numDims).all fun d =>
-            checkFluxSsaDag (getOr (specializeFluxSweep parsed).axisFluxDags d ⟨[], []⟩)) with
-        | false => simp [hDag] at h
-        | true =>
-          simp only [hDag, Bool.not_true, Bool.false_eq_true, ↓reduceIte, Except.ok.injEq,
-            Prod.mk.injEq] at h
-          obtain ⟨rfl, rfl⟩ := h
-          exact ⟨rfl, by simp [checkPdeSolverSpec, hValid, hFluct, hDag], rfl⟩
+    split at h
+    · rename_i hCheck
+      cases Except.ok.inj h
+      exact ⟨rfl, hCheck, rfl⟩
+    · contradiction
 
 theorem validatePdeSolverSexpr_of_valid (rawText : String) (spec : ConservationLawSpec)
     (hParse : parseConservationLawSexprWithDiag rawText = .ok spec)
     (hCheck : checkPdeSolverSpec spec = true) :
     validatePdeSolverSexpr rawText = .ok (spec, specializeFluxSweep spec) := by
-  obtain ⟨hVal, hRefl, hDags⟩ := checkPdeSolverSpec_valid spec hCheck
-  have hAll : ((List.range spec.numDims).all fun d =>
-      checkFluxSsaDag (getOr (specializeFluxSweep spec).axisFluxDags d ⟨[], []⟩)) = true := by
-    rw [List.all_eq_true]
-    intro d hd
-    exact hDags d (List.mem_range.mp hd)
-  simp [validatePdeSolverSexpr, bind, Except.bind, hParse, hVal, hRefl, hAll]
+  simp [validatePdeSolverSexpr, bind, Except.bind, hParse, hCheck]
 
 theorem validatePdeSolverSexpr_iff (rawText : String)
     (spec : ConservationLawSpec) (plan : SpecializedSweepPlan) :
@@ -223,13 +499,19 @@ under `namespace <solverId>`. -/
 meta def elabConservationLaw (solverId : TSyntax `ident) (sexprLit : TSyntax `str) :
     CommandElabM Unit := do
   let rawText := sexprLit.getString
-  let parsedSpec ← match parseConservationLawSexprWithDiag rawText with
+  let parsedSpec ← match ← liftTermElabM (evaluatePdeParser rawText) with
     | .error msg =>
       throwErrorAt sexprLit "[#pde_solver `{solverId.getId}`] specification rejected: {msg}"
     | .ok s => pure s
   if !verifyFluctuationsReflective parsedSpec then
     throwErrorAt sexprLit
       "[#pde_solver `{solverId.getId}`] reflective CanonPoly fluctuation conservation check failed"
+  if !checkPdeQ32Constants parsedSpec then
+    throwErrorAt sexprLit
+      "[#pde_solver `{solverId.getId}`] Q32.32 constant outside the signed guard-bit range"
+  if !checkPdeQ32Intervals parsedSpec then
+    throwErrorAt sexprLit
+      "[#pde_solver `{solverId.getId}`] Q32.32 state box cannot certify all intermediates"
   let plan := specializeFluxSweep parsedSpec
   for d in List.range parsedSpec.numDims do
     let dag := getOr plan.axisFluxDags d ⟨[], []⟩
@@ -369,34 +651,18 @@ meta def elabConservationLaw (solverId : TSyntax `ident) (sexprLit : TSyntax `st
       exact ⟨hBase.1, hBase.2 d hd u⟩))
 
   elabCommand (← `(command|
-    def $idFusedKernel (b : Obend.Hardware.Gpu.StencilTile.StencilBoundary) (dims : List Nat) :
-        Obend.Hardware.Gpu.SoacOptimize.FusedProgram :=
-      Obend.Tactic.SymDiffAndFlux.buildSpecFusedGpuKernel $idSpec b dims))
+    def $idFusedKernel (b : Obend.Hardware.Gpu.StencilTile.StencilBoundary) (dims : List Nat)
+        (axis : Nat := 0) : Obend.Hardware.Gpu.SoacOptimize.FusedProgram :=
+      Obend.Tactic.SymDiffAndFlux.buildSpecFusedGpuKernel $idSpec b dims axis))
 
   elabCommand (← `(command|
     theorem $idFusedKernelSound
-        (b : Obend.Hardware.Gpu.StencilTile.StencilBoundary)
-        (dims brickDims : List Nat)
-        (grid : List Obend.Hardware.ArrayHypergraph.Word)
-        (hNonEmpty : dims ≠ [])
-        (hLen : brickDims.length = dims.length)
-        (hB2 : ∀ B ∈ brickDims, 2 ≤ B)
-        (hBN : ∀ d < dims.length,
-          Obend.Analysis.HyperbolicPde.getOr brickDims d 0 ≤
-          Obend.Analysis.HyperbolicPde.getOr dims d 0) :
-        let e := Obend.Hardware.MultiDStencilTile.multiDMinmodRusanovExpr
-          dims.length ($idSpec).cfl.num ($idSpec).aMax.num
-        Obend.Hardware.Gpu.SoacOptimize.evalFused (fun _ => grid) ($idFusedKernel b dims) =
-          [Obend.Hardware.MultiDStencilTile.evalMultiDBrickTiled brickDims b dims 2
-            (Obend.Hardware.Gpu.StencilTile.scalarStencil e) grid] ∧
-        Obend.Hardware.MultiDStencilTile.evalMultiDBrickTiled brickDims b dims 2
-          (Obend.Hardware.Gpu.StencilTile.scalarStencil e) grid =
-          Obend.Hardware.MultiDStencilTile.evalStencilMultiD b dims 2
-            (Obend.Hardware.Gpu.StencilTile.scalarStencil e) grid ∧
-        Obend.Hardware.MultiDStencilTile.multiDBrickHbmReads brickDims 2 dims <
-          (2 * 2 + 1) ^ dims.length * Obend.Analysis.NonlinearMultiDPde.gridCellCount dims :=
-      Obend.Tactic.SymDiffAndFlux.spec_fusedGpuKernel_sound $idSpec b dims brickDims grid
-        hNonEmpty hLen hB2 hBN))
+        (b : Obend.Hardware.Gpu.StencilTile.StencilBoundary) (dims : List Nat)
+        (grids : Nat → List Obend.Hardware.ArrayHypergraph.Word) (axis : Nat := 0) :
+        Obend.Hardware.Gpu.SoacOptimize.evalFused grids ($idFusedKernel b dims axis) =
+          (Obend.Hardware.MultiDStencilTile.compileMultiDNonlinearFluxSweepSource $idSpec b dims axis).eval
+            (fun c => grids (($idSpec).numVars-1-c)) :=
+      Obend.Tactic.SymDiffAndFlux.spec_fusedGpuKernel_sound $idSpec b dims grids axis))
 
   elabCommand (← `(command|
     def $idSystolicRtl (axis : Nat) : Obend.Hardware.HDL.RtlModule :=

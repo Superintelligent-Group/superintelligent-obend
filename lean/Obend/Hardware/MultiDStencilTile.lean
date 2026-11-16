@@ -1,5 +1,6 @@
 module
 public import Obend.Analysis.NonlinearMultiDPde
+public import Obend.Hardware.Gpu.ArrayPrograms
 public import Obend.Hardware.Gpu.StencilTile
 public import Obend.Hardware.HDL
 public import Obend.Core.RangeSafe
@@ -10,25 +11,11 @@ import all Obend.Hardware.Gpu.SoacOptimize
 import all Obend.Hardware.Gpu.StencilTile
 import all Obend.Hardware.HDL
 import all Obend.Core.RangeSafe
-
 /-!
-# Multi-Dimensional Stencil Tiling, Futamura Flux Specialization & Systolic Lowering (`Obend.Hardware.MultiDStencilTile`)
-
-Compile-time hardware/accelerator lowering engine for `Obend.Analysis.NonlinearMultiDPde`:
-1. **Futamura Flux Specialization & CSE SSA DAG (`specializeFluxExpr`, `compileFluxSsaDag`)**:
-   - Eliminates `0 * x`, `1 * x`, `-1 * x`, `x + 0`, `x - 0`, `--x`, folds rational constants and known
-     equation parameters, and deduplicates shared subexpressions (e.g. `ρ⁻¹`, kinetic/magnetic energy)
-     into a verified topological SSA DAG with proved FLOP reduction (`dagFlops_le_naive_sum`).
-2. **Arbitrary-Dimension `D`-D Brick Halo Tiling (`evalMultiDBrickTiled`)**:
-   - Generalizes 1D scratchpad halo tiling (`Gpu.StencilTile`) to `D`-dimensional bricks
-     `(B_0 × … × B_{D-1})` including non-multiple boundary tail bricks and 3-phase barrier discipline,
-     proving `multiDBrickTiled_eq_global_sweep` and `multiDBrickHbmReads_lt_global`.
-3. **Single-Pass Vertical SOAC Fusion & Q32 Systolic `HDL.RtlModule` Generation**:
-   - Lowers `D`-D stencils through `cseProgram`, `dceProgram`, and `fuseVertical ∘ liftArraySource`
-     (`compileMultiDSweepFused_sound`), and lowers specialized `FluxSsaDag`s to `RangeSafe`-checked
-     Q32.32 fixed-point `HDL.RtlModule` datapaths (`emitSystolicFluxCellRtlModule_ok`).
+# Multi-dimensional nonlinear PDE hardware lowering
+Flux specialization and shared SSA, brick halos and traffic bounds, signed Q32 interval inference,
+flat Newton-reciprocal RTL, and linear multi-component MUSCL/Rusanov GPU source construction.
 -/
-
 public section
 namespace Obend.Hardware.MultiDStencilTile
 open Obend.Core
@@ -41,32 +28,26 @@ open Obend.Hardware.Gpu.SoacOptimize
 open Obend.Hardware.Gpu.StencilTile
 open Obend.Hardware.HDL
 set_option autoImplicit false
-
 /-! ## 1. Compile-Time Futamura Specialization, Zero-Elimination & CSE SSA DAG -/
-
 /-- Arithmetic operation count of a `FluxExpr` tree (leaves cost `0`, unary/binary ops cost `1`). -/
 @[expose] def fluxExprFlops : FluxExpr → Nat
   | .const _ | .var _ | .param _ => 0
   | .neg a | .invSafe a => fluxExprFlops a + 1
   | .add a b | .sub a b | .mul a b => fluxExprFlops a + fluxExprFlops b + 1
-
 def simpNeg : FluxExpr → FluxExpr
   | .const q => .const (-q)
   | .neg x => x
   | x => .neg x
-
 def simpAdd : FluxExpr → FluxExpr → FluxExpr
   | .const a, .const b => .const (a + b)
   | .const q, b => if q == 0 then b else .add (.const q) b
   | a, .const q => if q == 0 then a else .add a (.const q)
   | a, b => .add a b
-
 def simpSub : FluxExpr → FluxExpr → FluxExpr
   | .const a, .const b => .const (a - b)
   | a, .const q => if q == 0 then a else .sub a (.const q)
   | .const q, b => if q == 0 then simpNeg b else .sub (.const q) b
   | a, b => if a == b then .const 0 else .sub a b
-
 def simpMul : FluxExpr → FluxExpr → FluxExpr
   | .const a, .const b => .const (a * b)
   | .const q, b =>
@@ -80,7 +61,6 @@ def simpMul : FluxExpr → FluxExpr → FluxExpr
     else if q == -1 then simpNeg a
     else .mul a (.const q)
   | a, b => .mul a b
-
 def simpInv : FluxExpr → FluxExpr
   | .const q => .const ((1 : Rat) / q)
   | d => .invSafe d
@@ -534,6 +514,8 @@ theorem sum_map_le {α : Type} (xs : List α) (f g : α → Nat) (h : ∀ x ∈ 
     have hx := h x List.mem_cons_self
     have hr := ih fun y hy => h y (List.mem_cons_of_mem _ hy)
     omega
+
+#guard (compileFluxSsaDag none [.mul (.var 0) (.var 0)]).roots.length == 1
 
 /-- **CSE SSA DAG Soundness & FLOP Reduction (`compileFluxSsaDag_sound`)**:
 The specialized + CSE-deduplicated `FluxSsaDag` is a valid topological DAG, evaluates identically to
@@ -1061,246 +1043,405 @@ theorem compileMultiDSweepFused_sound (b : StencilBoundary) (dims : List Nat) (r
   funext s
   exact multiDHaloLeaf_read b dims r s idx grid (List.mem_range.mp hMem)
 
-/-- Fused 2nd-order `minmod` + Rusanov scalar kernel expression on a `D`-D radius-2 window. -/
-def multiDMinmodRusanovExpr (D : Nat) (courantNum viscosityNum : Int) : ScalarExpr :=
-  let center := ((2 * 2 + 1) ^ D) / 2
-  if center >= 2 then
-    let sL := scalarMinmod (scalarSub (.input (center - 1)) (.input (center - 2)))
-                           (scalarSub (.input center) (.input (center - 1)))
-    let sR := scalarMinmod (scalarSub (.input (center + 1)) (.input center))
-                           (scalarSub (.input (center + 2)) (.input (center + 1)))
-    scalarAdd (scalarSub (scalarScale 2 (.input center))
-      (scalarScale courantNum (scalarSub (.input (center + 1)) (.input (center - 1)))))
-      (scalarScale viscosityNum (scalarSub sR sL))
-  else
-    rusanovNumerator courantNum viscosityNum
-
 /-! ## 4. Q32.32 Systolic `HDL.RtlModule` Lowering & `RangeSafe` Interval Gate -/
 
-/-- Encode an exact `Rat` constant into signed Q32.32 fixed-point (`⌊q · 2^32⌋` as `BitVec 64`). -/
-def ratToQ32Word (q : Rat) : BitVec 64 :=
-  let scaled : Int := (q.num * ((2 : Int) ^ 32)) / (q.den : Int)
-  BitVec.ofInt 64 scaled
+/-- Scale before encoding: range checks must inspect this integer, never a wrapped word. -/
+def ratToQ32Scaled (q : Rat) : Int := (q.num * ((2 : Int) ^ 32)) / (q.den : Int)
 
-/-- Lower a single `FluxSsaNode` into a combinational `RtlExpr` (`qmul32` for Q32.32 products). -/
-def lowerSsaNodeToRtl (numVars : Nat) : FluxSsaNode → RtlExpr
-  | .const q => .const (ratToQ32Word q)
-  | .var i => if i < numVars then .inputPort i else .const 0#64
-  | .param _ => .const 0#64
-  | .neg a => .alu .sub (.const 0#64) (.wireRef a)
-  | .add a b => .alu .add (.wireRef a) (.wireRef b)
-  | .sub a b => .alu .sub (.wireRef a) (.wireRef b)
-  | .mul a b => .alu .qmul32 (.wireRef a) (.wireRef b)
-  | .invSafe d => .alu .qmul32 (.const (ratToQ32Word 1)) (.wireRef d)
+/-- Unchecked modular encoding for callers that already established representability. -/
+def ratToQ32Word (q : Rat) : BitVec 64 := BitVec.ofInt 64 (ratToQ32Scaled q)
 
-def lowerSsaNodesToWires (numVars : Nat) : Nat → List FluxSsaNode → List WireAssign
+/-- Reserve a signed guard bit and refuse overflow before the modular conversion. -/
+def ratToQ32Checked (q : Rat) : Option (BitVec 64) :=
+  let scaled := ratToQ32Scaled q
+  if -((2 : Int) ^ 62) < scaled ∧ scaled < (2 : Int) ^ 62 then
+    some (BitVec.ofInt 64 scaled)
+  else none
+
+theorem ratToQ32Checked_sound (q : Rat) (w : BitVec 64)
+    (h : ratToQ32Checked q = some w) :
+    w.toInt = ratToQ32Scaled q ∧
+      -((2 : Int) ^ 62) < w.toInt ∧ w.toInt < (2 : Int) ^ 62 := by
+  simp only [ratToQ32Checked] at h
+  split at h
+  · rename_i hb
+    cases Option.some.inj h
+    have hw : (BitVec.ofInt 64 (ratToQ32Scaled q)).toInt = ratToQ32Scaled q :=
+      BitVec.toInt_ofInt_eq_self (by decide) (by omega) (by omega)
+    exact ⟨hw, by simpa only [hw] using hb⟩
+  · contradiction
+
+theorem ratToQ32Checked_complete (q : Rat)
+    (h : -((2 : Int) ^ 62) < ratToQ32Scaled q ∧ ratToQ32Scaled q < (2 : Int) ^ 62) :
+    ∃ w, ratToQ32Checked q = some w :=
+  ⟨BitVec.ofInt 64 (ratToQ32Scaled q), by simp only [ratToQ32Checked]; rw [ite_eq_left h]⟩
+
+theorem ratToQ32Checked_refuses_overflow (q : Rat)
+    (h : ratToQ32Scaled q ≤ -((2 : Int) ^ 62) ∨ (2 : Int) ^ 62 ≤ ratToQ32Scaled q) :
+    ratToQ32Checked q = none := by
+  simp only [ratToQ32Checked]
+  split
+  · omega
+  · rfl
+
+theorem ratToQ32Checked_refuses_large (q : Rat) (h : (2 : Rat) ^ 30 ≤ q) :
+    ratToQ32Checked q = none := by
+  apply ratToQ32Checked_refuses_overflow q
+  right
+  have hd : (0 : Int) < q.den := by have := q.den_nz; omega
+  have hn := (Rat.le_iff _ _).mp h
+  have hn' : 1073741824 * (q.den : Int) ≤ q.num := by
+    simpa using hn
+  change (2 : Int) ^ 62 ≤ (q.num * (2 : Int) ^ 32) / (q.den : Int)
+  apply (Int.le_ediv_iff_mul_le hd).mpr
+  omega
+
+/-- Four 32-bit limbs implement signed Q32.32 multiplication using existing GPU primitives. -/
+def scalarQmul32 (a b : ScalarExpr) : ScalarExpr :=
+  let op := fun o x y => ScalarExpr.prim o x y (.const 0#64)
+  let low := fun x => op .band x (.const 0xFFFFFFFF#64)
+  let high := fun x => op .bor (op .shr x (.const 32#64))
+    (scalarSelect (scalarLt x (.const 0x8000000000000000#64))
+      (.const 0#64) (.const 0xFFFFFFFF00000000#64))
+  scalarAdd (scalarAdd (scalarAdd
+    (op .shl (op (.scalar .mul) (high a) (high b)) (.const 32#64))
+    (op (.scalar .mul) (high a) (low b)))
+    (op (.scalar .mul) (low a) (high b)))
+    (op .shr (op (.scalar .mul) (low a) (low b)) (.const 32#64))
+
+/-- ANF counterpart: multiplication of lexical component arrays 0 and 1. -/
+def scalarQmul32Source (size : Nat) : Program :=
+  compileScalar size (fun i => .map size (.scalar (.scale 1)) [i])
+    (scalarQmul32 (.input 0) (.input 1)) (.ret [0])
+
+def q32NormalizeStep (s : Nat) (u : Word) (k : Nat) : Word × Nat :=
+  if u.ult (1#64 <<< (63-s)) then (u <<< s,k+s) else (u,k)
+def q32NormalizeLoop : List Nat → Word → Nat → Word × Nat
+  | [], u, k => (u,k)
+  | s::ss, u, k => let next := q32NormalizeStep s u k; q32NormalizeLoop ss next.1 next.2
+
+def q32NewtonStep (d x : Word) : Word :=
+  evalAluOp .qmul32 x ((2#64 <<< 32)-evalAluOp .qmul32 d x)
+def q32NewtonIterate (d : Word) : Nat → Word → Word
+  | 0, x => x
+  | n+1, x => q32NewtonIterate d n (q32NewtonStep d x)
+def q32ReciprocalMantissa (d : Word) : Word :=
+  q32NewtonIterate d 4 (ratToQ32Word (48/17)-evalAluOp .qmul32 (ratToQ32Word (32/17)) d)
+/-- LUT-free four-step Newton reciprocal. The accepted denominator domain is
+`16 ≤ |d.toInt| ≤ 2^60`; outside it this total word function has no accuracy contract. -/
+def evalQ32Reciprocal (d : Word) : Word := Id.run do
+  let neg := d.slt 0#64
+  let (u,k) := q32NormalizeLoop [32,16,8,4,2,1] (if neg then -d else d) 0
+  let dp := (u + (1#64 <<< 30)) >>> 31
+  let x := q32ReciprocalMantissa dp
+  let mag := if k < 31 then x >>> (31 - k) else x <<< (k - 31)
+  return if neg then -mag else mag
+
+/-- Independent fixed-point semantics of one SSA node. -/
+def evalFluxSsaNodeQ32 (inputs : Nat → Word) (paramEnv : Nat → Rat)
+    (acc : Array Word) : FluxSsaNode → Word
+  | .const q => ratToQ32Word q
+  | .var i => inputs i
+  | .param p => ratToQ32Word (paramEnv p)
+  | .neg a => -acc.getD a 0#64
+  | .add a b => acc.getD a 0#64 + acc.getD b 0#64
+  | .sub a b => acc.getD a 0#64 - acc.getD b 0#64
+  | .mul a b => evalAluOp .qmul32 (acc.getD a 0#64) (acc.getD b 0#64)
+  | .invSafe a => evalQ32Reciprocal (acc.getD a 0#64)
+
+def evalFluxSsaDagQ32 (inputs : Nat → Word) (paramEnv : Nat → Rat)
+    (dag : FluxSsaDag) : List Word :=
+  let values := dag.nodes.foldl (fun acc n => acc.push (evalFluxSsaNodeQ32 inputs paramEnv acc n)) #[]
+  dag.roots.map fun r => values.getD r 0#64
+
+/-- Independent word semantics of a reconstructed nonlinear finite-volume cell update. -/
+def evalNonlinearFluxCellQ32 (spec : ConservationLawSpec) (dag : FluxSsaDag)
+    (sample : Int → Nat → Word) : List Word :=
+  let qm := evalAluOp .qmul32
+  let half := fun w => BitVec.sshiftRight w 1
+  let mm := fun (a b : Word) => if a.slt 0#64 then
+    if b.slt 0#64 then (if a.slt b then b else a) else 0#64
+    else if b.slt 0#64 then 0#64 else if a.ult b then a else b
+  let slope := fun offset j => if spec.limiter == .firstOrder then 0#64 else
+    mm (sample offset j-sample (offset-1) j) (sample (offset+1) j-sample offset j)
+  let face := fun offset =>
+    let left := fun j => sample offset j+half (slope offset j)
+    let right := fun j => sample (offset+1) j-half (slope (offset+1) j)
+    let fl := evalFluxSsaDagQ32 left spec.paramEnv dag
+    let fr := evalFluxSsaDagQ32 right spec.paramEnv dag
+    (List.range spec.numVars).map fun c => half (fl.getD c 0#64+fr.getD c 0#64) -
+      qm ((ratToQ32Checked (spec.aMax/2)).getD 0#64) (right c-left c)
+  let left := face (-1); let right := face 0
+  (List.range spec.numVars).map fun c => sample 0 c -
+    qm ((ratToQ32Checked spec.cfl).getD 0#64) (right.getD c 0#64-left.getD c 0#64)
+
+/-- Flat reciprocal datapath: 29 wires, with six shared normalization decisions
+and four shared Newton iterates. Local references are rebased by `base`. -/
+def reciprocalRtlExprs (base : Nat) (d : RtlExpr) : List RtlExpr :=
+  let w := fun i => RtlExpr.wireRef (base + i)
+  let c := fun n => RtlExpr.const (BitVec.ofNat 64 n)
+  [.alu .slt d (c 0), .mux (w 0) (.alu .sub (c 0) d) d, c 0,
+   .alu .ult (w 1) (c 2147483648),
+   .mux (w 3) (.alu .shl (w 1) (c 32)) (w 1),
+   .mux (w 3) (.alu .add (w 2) (c 32)) (w 2),
+   .alu .ult (w 4) (c 140737488355328),
+   .mux (w 6) (.alu .shl (w 4) (c 16)) (w 4),
+   .mux (w 6) (.alu .add (w 5) (c 16)) (w 5),
+   .alu .ult (w 7) (c 36028797018963968),
+   .mux (w 9) (.alu .shl (w 7) (c 8)) (w 7),
+   .mux (w 9) (.alu .add (w 8) (c 8)) (w 8),
+   .alu .ult (w 10) (c 576460752303423488),
+   .mux (w 12) (.alu .shl (w 10) (c 4)) (w 10),
+   .mux (w 12) (.alu .add (w 11) (c 4)) (w 11),
+   .alu .ult (w 13) (c 2305843009213693952),
+   .mux (w 15) (.alu .shl (w 13) (c 2)) (w 13),
+   .mux (w 15) (.alu .add (w 14) (c 2)) (w 14),
+   .alu .ult (w 16) (c 4611686018427387904),
+   .mux (w 18) (.alu .shl (w 16) (c 1)) (w 16),
+   .mux (w 18) (.alu .add (w 17) (c 1)) (w 17),
+   .alu .lshr (.alu .add (w 19) (c 1073741824)) (c 31),
+   .alu .sub (.const (ratToQ32Word (48/17)))
+     (.alu .qmul32 (.const (ratToQ32Word (32/17))) (w 21)),
+   .alu .qmul32 (w 22) (.alu .sub (c 8589934592) (.alu .qmul32 (w 21) (w 22))),
+   .alu .qmul32 (w 23) (.alu .sub (c 8589934592) (.alu .qmul32 (w 21) (w 23))),
+   .alu .qmul32 (w 24) (.alu .sub (c 8589934592) (.alu .qmul32 (w 21) (w 24))),
+   .alu .qmul32 (w 25) (.alu .sub (c 8589934592) (.alu .qmul32 (w 21) (w 25))),
+   .mux (.alu .ult (w 20) (c 31))
+     (.alu .lshr (w 26) (.alu .sub (c 31) (w 20)))
+     (.alu .shl (w 26) (.alu .sub (w 20) (c 31))),
+   .mux (w 0) (.alu .sub (c 0) (w 27)) (w 27)]
+
+/-- Invalid SSA references are zero; well-formed DAGs always use the indexed branch. -/
+def ssaWireRef (refs : Array Nat) (bound a : Nat) : RtlExpr :=
+  match refs[a]? with
+  | some i => if i < bound then .wireRef i else .const 0#64
+  | none => .const 0#64
+
+/-- Each ordinary SSA node emits one wire; reciprocal nodes emit the flat NR datapath. -/
+def lowerSsaNodeToRtl (numVars base : Nat) (refs : Array Nat) (paramEnv : Nat → Rat) :
+    FluxSsaNode → List RtlExpr
+  | .const q => [.const (ratToQ32Word q)]
+  | .var i => [if i < numVars then .inputPort i else .const 0#64]
+  | .param p => [.const (ratToQ32Word (paramEnv p))]
+  | .neg a => [.alu .sub (.const 0#64) (ssaWireRef refs base a)]
+  | .add a b => [.alu .add (ssaWireRef refs base a) (ssaWireRef refs base b)]
+  | .sub a b => [.alu .sub (ssaWireRef refs base a) (ssaWireRef refs base b)]
+  | .mul a b => [.alu .qmul32 (ssaWireRef refs base a) (ssaWireRef refs base b)]
+  | .invSafe d => reciprocalRtlExprs base (ssaWireRef refs base d)
+
+def assignRtlExprs : Nat → List RtlExpr → List WireAssign
   | _, [] => []
-  | idx, n :: rest =>
-    { wireIdx := idx, name := s!"ssa_w{idx}", expr := lowerSsaNodeToRtl numVars n } ::
-      lowerSsaNodesToWires numVars (idx + 1) rest
+  | idx, e :: es => { wireIdx := idx, name := s!"ssa_w{idx}", expr := e } :: assignRtlExprs (idx + 1) es
 
-/-- Synthesize a pipelined synchronous Q32.32 systolic `HDL.RtlModule` from a `FluxSsaDag`. -/
+def lowerSsaNodesToWires (numVars : Nat) (paramEnv : Nat → Rat) :
+    Nat → Array Nat → List FluxSsaNode → List WireAssign × Array Nat
+  | _, refs, [] => ([], refs)
+  | idx, refs, n :: ns =>
+    let es := lowerSsaNodeToRtl numVars idx refs paramEnv n
+    let tail := lowerSsaNodesToWires numVars paramEnv (idx + es.length)
+      (refs.push (idx + es.length - 1)) ns
+    (assignRtlExprs idx es ++ tail.1, tail.2)
+
+/-- Synthesize a pipelined synchronous Q32.32 systolic module, remapping SSA roots to wires. -/
 def emitSystolicFluxCellRtlModule (modName : String) (varNames : List String)
-    (dag : FluxSsaDag) : RtlModule :=
-  let numVars := varNames.length
-  let wires := lowerSsaNodesToWires numVars 0 dag.nodes
-  let nWires := wires.length
-  let validRoots := dag.roots.filter (· < nWires)
+    (dag : FluxSsaDag) (paramEnv : Nat → Rat := fun _ => 0) : RtlModule :=
+  let lowered := lowerSsaNodesToWires varNames.length paramEnv 0 #[] dag.nodes
+  let wires := lowered.1
+  let validRoots := (dag.roots.map (fun r => lowered.2.getD r 0)).filter (· < wires.length)
   let regs : List RegSpec := (List.range validRoots.length).map fun k =>
-    let rWire := getOr validRoots k 0
-    { regIdx := k
-      name := s!"flux_pipe_r{k}"
-      width := 64
-      domain := .coreClk
-      resetKind := .syncReset 0#64
-      isSynchronizer := false
-      nextExpr := .wireRef rWire }
-  let outputs : List OutputPort := (List.range validRoots.length).map fun k =>
-    { name := s!"flux_out_{k}", expr := .regRead k, width := 64 }
-  { name := modName
-    inputNames := varNames
-    wires := wires
-    regs := regs
-    outputs := outputs }
+    { regIdx := k, name := s!"flux_pipe_r{k}", width := 64, domain := .coreClk,
+      resetKind := .syncReset 0#64, isSynchronizer := false,
+      nextExpr := .wireRef (getOr validRoots k 0) }
+  { name := modName, inputNames := varNames, wires := wires, regs := regs,
+    outputs := (List.range validRoots.length).map fun k =>
+      { name := s!"flux_out_{k}", expr := .regRead k, width := 64 } }
 
-theorem lowerSsaNodeToRtl_dag (numVars numRegs bound : Nat) (n : FluxSsaNode)
-    (hB : checkSsaNodeBound bound n = true) :
-    checkExprDAG numVars numRegs bound (lowerSsaNodeToRtl numVars n) = true := by
-  cases n <;> simp only [checkSsaNodeBound, Bool.and_eq_true, decide_eq_true_eq] at hB <;>
-    simp only [lowerSsaNodeToRtl, checkExprDAG]
-  · split <;> simp [checkExprDAG, ‹_›]
-  · simp [hB]
-  · simp [hB.1, hB.2]
-  · simp [hB.1, hB.2]
-  · simp [hB.1, hB.2]
-  · simp [hB]
+/-- Signed word bounds; intervals crossing zero cannot certify a reciprocal. -/
+structure Q32Interval where
+  lo : Int
+  hi : Int
+  hle : lo ≤ hi
+  deriving DecidableEq, Repr
 
-theorem lowerSsaNodesToWires_length (numVars idx : Nat) (ns : List FluxSsaNode) :
-    (lowerSsaNodesToWires numVars idx ns).length = ns.length := by
-  induction ns generalizing idx with
-  | nil => rfl
-  | cons _ rest ih => simp [lowerSsaNodesToWires, ih]
+/-- Reserve a guard bit on every intermediate, before conversion to a word. -/
+def checkedQ32Interval (lo hi : Int) : Option Q32Interval :=
+  if h : lo ≤ hi ∧ -((2 : Int)^62) < lo ∧ hi < (2 : Int)^62 then
+    some ⟨lo, hi, h.1⟩ else none
 
-theorem lowerSsaNodesToWires_dag_go (numVars numRegs idx : Nat) (ns : List FluxSsaNode)
-    (hTopo : checkNodesTopological idx ns = true) :
-    checkWireTableDAG.go numVars numRegs idx (lowerSsaNodesToWires numVars idx ns) = true := by
-  induction ns generalizing idx with
-  | nil => rfl
-  | cons n rest ih =>
-    simp only [checkNodesTopological, Bool.and_eq_true] at hTopo
-    simp [lowerSsaNodesToWires, checkWireTableDAG.go,
-      lowerSsaNodeToRtl_dag numVars numRegs idx n hTopo.1, ih (idx + 1) hTopo.2]
+/-- Scale-aware reciprocal enclosure, with residual constants K=16 and C=4. -/
+def reciprocalQ32Interval (iv : Q32Interval) : Option Q32Interval :=
+  let lower := fun d => ((2 : Int)^64 - 16 * (2 : Int)^32) / d - 5
+  let upper := fun d => ((2 : Int)^64 + 16 * (2 : Int)^32) / d + 4
+  if 16 ≤ iv.lo ∧ iv.hi ≤ (2 : Int)^60 then
+    checkedQ32Interval (lower iv.hi) (upper iv.lo)
+  else if -((2 : Int)^60) ≤ iv.lo ∧ iv.hi ≤ -16 then
+    checkedQ32Interval (-upper (-iv.hi)) (-lower (-iv.lo))
+  else none
 
-/-- **Systolic `HDL.RtlModule` Well-Formedness & CDC/DAG Soundness (`emitSystolicFluxCellRtlModule_ok`)**:
-Every `FluxSsaDag` satisfying `checkFluxSsaDag` lowers to an `RtlModule` passing `checkRtlModule`
-(acyclic topological wire table, in-bounds pipeline registers & output ports, single-domain CDC). -/
-theorem emitSystolicFluxCellRtlModule_ok (modName : String) (varNames : List String)
-    (dag : FluxSsaDag) (hDag : checkFluxSsaDag dag = true) :
-    checkRtlModule (emitSystolicFluxCellRtlModule modName varNames dag) = true := by
-  simp only [checkFluxSsaDag, Bool.and_eq_true] at hDag
-  unfold emitSystolicFluxCellRtlModule checkRtlModule
-  dsimp only
-  have hWT : checkWireTableDAG varNames.length
-      (dag.roots.filter (· < (lowerSsaNodesToWires varNames.length 0 dag.nodes).length)).length
-      (lowerSsaNodesToWires varNames.length 0 dag.nodes) = true := by
-    unfold checkWireTableDAG
-    exact lowerSsaNodesToWires_dag_go _ _ 0 dag.nodes hDag.1
-  simp only [List.length_map, List.length_range, hWT, Bool.true_and, Bool.and_eq_true]
-  refine ⟨⟨?_, ?_⟩, ?_⟩
-  · rw [List.all_eq_true]
-    intro r hr
-    rw [List.mem_map] at hr; obtain ⟨k, hk, rfl⟩ := hr
-    have hk' : k < (dag.roots.filter (· < (lowerSsaNodesToWires varNames.length 0 dag.nodes).length)).length :=
-      List.mem_range.mp hk
-    have hMem := getOr_mem_of_lt _ k 0 hk'
-    rw [List.mem_filter] at hMem
-    simpa [checkExprDAG] using of_decide_eq_true hMem.2
-  · rw [List.all_eq_true]
-    intro o ho
-    rw [List.mem_map] at ho; obtain ⟨k, hk, rfl⟩ := ho
-    simpa [checkExprDAG] using List.mem_range.mp hk
-  · unfold checkModuleCdc
-    rw [List.all_eq_true]
-    intro dst hdst
-    rw [List.mem_map] at hdst; obtain ⟨k, _, rfl⟩ := hdst
-    simp [checkRegCdc, exprReadRegs, exprReadRegsAndWires]
+/-- Each operand lookup checks topology; the mutable accumulator is an Array. -/
+def propagateSsaInterval (numVars : Nat) (varBounds : Nat → Q32Interval)
+    (paramEnv : Nat → Rat) (acc : Array Q32Interval) : FluxSsaNode → Option Q32Interval
+  | .const q => do
+    let w ← ratToQ32Checked q
+    checkedQ32Interval w.toInt w.toInt
+  | .param p => do
+    let w ← ratToQ32Checked (paramEnv p)
+    checkedQ32Interval w.toInt w.toInt
+  | .var i => if i < numVars then
+      checkedQ32Interval (varBounds i).lo (varBounds i).hi else none
+  | .neg a => do
+    let x ← acc[a]?
+    checkedQ32Interval (-x.hi) (-x.lo)
+  | .add a b => do
+    let x ← acc[a]?; let y ← acc[b]?
+    checkedQ32Interval (x.lo + y.lo) (x.hi + y.hi)
+  | .sub a b => do
+    let x ← acc[a]?; let y ← acc[b]?
+    checkedQ32Interval (x.lo - y.hi) (x.hi - y.lo)
+  | .mul a b => do
+    let x ← acc[a]?; let y ← acc[b]?
+    let ll := x.lo * y.lo / (2 : Int)^32
+    let lh := x.lo * y.hi / (2 : Int)^32
+    let hl := x.hi * y.lo / (2 : Int)^32
+    let hh := x.hi * y.hi / (2 : Int)^32
+    checkedQ32Interval (min (min ll lh) (min hl hh)) (max (max ll lh) (max hl hh))
+  | .invSafe a => do reciprocalQ32Interval (← acc[a]?)
 
-/-- **Systolic Wire-Table Semantic Agreement (`evalWireTable_systolic_at_index`)**:
-Because `lowerSsaNodesToWires` is strictly topological (`checkNodesTopological`), later wire
-assignments (`≥ idx + 1`) never clobber earlier wires (`evalRtlExpr_dag_locality`), so wire `j` of
-`emitSystolicFluxCellRtlModule` evaluates to `evalRtlExpr` of node `j`'s Q32.32 `RtlExpr`. -/
-theorem foldl_lowerSsaNodesToWires_preserve (inputs regs : Nat → BitVec 64)
-    (numVars idx : Nat) (ns : List FluxSsaNode) (env : Nat → BitVec 64) (k : Nat) (hk : k < idx) :
-    (lowerSsaNodesToWires numVars idx ns).foldl
-      (fun (e : Nat → BitVec 64) a =>
-        let v := evalRtlExpr inputs e regs a.expr
-        fun i => if i == a.wireIdx then v else e i) env k = env k := by
-  induction ns generalizing idx env with
-  | nil => rfl
-  | cons n rest ih =>
-    simp only [lowerSsaNodesToWires, List.foldl_cons]
-    rw [ih (idx + 1) _ (by omega)]
-    simp [beq_false_of_ne (by omega : k ≠ idx)]
-
-theorem evalWireTable_systolic_at_index (inputs regs : Nat → BitVec 64)
-    (modName : String) (varNames : List String) (dag : FluxSsaDag)
-    (hTopo : checkNodesTopological 0 dag.nodes = true) (j : Nat) (hj : j < dag.nodes.length) :
-    let m := emitSystolicFluxCellRtlModule modName varNames dag
-    let wEnv := evalWireTable inputs regs m.wires
-    wEnv j = evalRtlExpr inputs wEnv regs
-      (lowerSsaNodeToRtl varNames.length (getOr dag.nodes j (.const 0))) := by
-  dsimp only [emitSystolicFluxCellRtlModule, evalWireTable]
-  suffices ∀ (idx : Nat) (ns : List FluxSsaNode) (env : Nat → BitVec 64) (off : Nat),
-      checkNodesTopological idx ns = true → off < ns.length →
-      let fullEnv := (lowerSsaNodesToWires varNames.length idx ns).foldl
-        (fun (e : Nat → BitVec 64) a =>
-          let v := evalRtlExpr inputs e regs a.expr
-          fun i => if i == a.wireIdx then v else e i) env
-      fullEnv (idx + off) = evalRtlExpr inputs fullEnv regs
-        (lowerSsaNodeToRtl varNames.length (getOr ns off (.const 0))) by
-    simpa using this 0 dag.nodes (fun _ => 0#64) j hTopo hj
-  intro idx ns
-  induction ns generalizing idx with
-  | nil => intro _ _ _ h; simp at h
-  | cons n rest ih =>
-    intro env off hT hOff
-    simp only [checkNodesTopological, Bool.and_eq_true] at hT
-    cases off with
-    | zero =>
-      simp only [Nat.add_zero, getOr, lowerSsaNodesToWires, List.foldl_cons]
-      let env1 : Nat → BitVec 64 :=
-        let v := evalRtlExpr inputs env regs (lowerSsaNodeToRtl varNames.length n)
-        fun i => if i == idx then v else env i
-      have hKeep := foldl_lowerSsaNodesToWires_preserve inputs regs varNames.length (idx + 1) rest
-        env1 idx (by omega)
-      rw [hKeep]
-      simp only [env1, beq_self_eq_true, ↓reduceIte]
-      exact evalRtlExpr_dag_locality varNames.length 0 idx inputs regs env _
-        _ (lowerSsaNodeToRtl_dag varNames.length 0 idx n hT.1) fun i hi => by
-          rw [foldl_lowerSsaNodesToWires_preserve inputs regs varNames.length (idx + 1) rest
-            env1 i (by omega)]
-          simp [env1, show i ≠ idx by omega]
-    | succ off' =>
-      simp only [lowerSsaNodesToWires, List.foldl_cons]
-      let env1 : Nat → BitVec 64 :=
-        let v := evalRtlExpr inputs env regs (lowerSsaNodeToRtl varNames.length n)
-        fun i => if i == idx then v else env i
-      have hStep := ih (idx + 1) env1 off' hT.2 (by simpa using hOff)
-      simpa [env1, show idx + 1 + off' = idx + (off' + 1) by omega, getOr] using hStep
-
-/-- Static non-negative magnitude interval bound propagation over `FluxSsaDag` via `RangeSafe.Interval`,
-refusing any Q32.32 wire whose worst-case magnitude reaches `2^62` (preventing 64-bit wrap). -/
-def ssaNodeHiBound (varBounds : Nat → RangeSafe.Interval) (acc : List RangeSafe.Interval) :
-    FluxSsaNode → Nat
-  | .const q => (ratToQ32Word (if q < 0 then -q else q)).toNat
-  | .var i => (varBounds i).hi
-  | .param _ => 0
-  | .neg a | .invSafe a => (getOr acc a (RangeSafe.Interval.mkNat 0 0)).hi
-  | .add a b | .sub a b =>
-    (getOr acc a (RangeSafe.Interval.mkNat 0 0)).hi +
-    (getOr acc b (RangeSafe.Interval.mkNat 0 0)).hi
-  | .mul a b =>
-    ((getOr acc a (RangeSafe.Interval.mkNat 0 0)).hi *
-     (getOr acc b (RangeSafe.Interval.mkNat 0 0)).hi) / (2 ^ 32) + 1
-
-def inferNodesMagnitude (varBounds : Nat → RangeSafe.Interval) :
-    List FluxSsaNode → List RangeSafe.Interval → Option (List RangeSafe.Interval)
+def inferNodesQ32Intervals (numVars : Nat) (varBounds : Nat → Q32Interval)
+    (paramEnv : Nat → Rat) : List FluxSsaNode → Array Q32Interval → Option (Array Q32Interval)
   | [], acc => some acc
-  | n :: rest, acc =>
-    let hi := ssaNodeHiBound varBounds acc n
-    if hi < 2 ^ 62 then inferNodesMagnitude varBounds rest (acc ++ [RangeSafe.Interval.mkNat 0 hi])
-    else none
+  | n :: ns, acc => do
+    let iv ← propagateSsaInterval numVars varBounds paramEnv acc n
+    inferNodesQ32Intervals numVars varBounds paramEnv ns (acc.push iv)
 
-def inferSsaDagMagnitudeIntervals (varBounds : Nat → RangeSafe.Interval)
-    (dag : FluxSsaDag) : Option (List RangeSafe.Interval) :=
-  inferNodesMagnitude varBounds dag.nodes []
+def inferSsaDagQ32Intervals (numVars : Nat) (varBounds : Nat → Q32Interval)
+    (paramEnv : Nat → Rat) (dag : FluxSsaDag) : Option (Array Q32Interval) :=
+  inferNodesQ32Intervals numVars varBounds paramEnv dag.nodes #[]
 
-theorem inferSsaDagMagnitudeIntervals_safe (varBounds : Nat → RangeSafe.Interval)
-    (dag : FluxSsaDag) (ivs : List RangeSafe.Interval)
-    (hOk : inferSsaDagMagnitudeIntervals varBounds dag = some ivs) :
-    ∀ iv ∈ ivs, iv.sort = .nat ∧ iv.hi < 2 ^ 62 := by
-  unfold inferSsaDagMagnitudeIntervals at hOk
-  suffices ∀ (ns : List FluxSsaNode) (acc : List RangeSafe.Interval),
-      (∀ iv ∈ acc, iv.sort = .nat ∧ iv.hi < 2 ^ 62) →
-      inferNodesMagnitude varBounds ns acc = some ivs →
-      ∀ iv ∈ ivs, iv.sort = .nat ∧ iv.hi < 2 ^ 62 from
-    this dag.nodes [] (by simp) hOk
-  intro ns
-  induction ns with
-  | nil =>
-    intro acc hAcc hEq
-    simp only [inferNodesMagnitude, Option.some.injEq] at hEq
-    subst hEq; exact hAcc
-  | cons n rest ih =>
-    intro acc hAcc hEq
-    simp only [inferNodesMagnitude] at hEq
-    by_cases hLt : ssaNodeHiBound varBounds acc n < 2 ^ 62
-    · simp only [hLt, ↓reduceIte] at hEq
-      refine ih _ (fun iv hiv => ?_) hEq
-      rw [List.mem_append, List.mem_singleton] at hiv
-      rcases hiv with h1 | rfl
-      · exact hAcc iv h1
-      · exact ⟨rfl, hLt⟩
-    · simp [hLt] at hEq
+theorem propagateSsaInterval_refuses_zero_crossing (numVars : Nat)
+    (varBounds : Nat → Q32Interval) (paramEnv : Nat → Rat) (acc : Array Q32Interval)
+    (a : Nat) (iv : Q32Interval) (ha : acc[a]? = some iv)
+    (hz : iv.lo ≤ 0 ∧ 0 ≤ iv.hi) :
+    propagateSsaInterval numVars varBounds paramEnv acc (.invSafe a) = none := by
+  have hp : ¬ (16 ≤ iv.lo ∧ iv.hi ≤ (2 : Int)^60) := by omega
+  have hn : ¬ (-((2 : Int)^60) ≤ iv.lo ∧ iv.hi ≤ -16) := by omega
+  simp only [propagateSsaInterval, ha, bind, Option.bind, reciprocalQ32Interval,
+    ite_eq_right hp, ite_eq_right hn]
+
+/-- Intern stable source handles before closing to de Bruijn indices. -/
+def bindPdeRhs (rhs : Rhs) : Obend.Hardware.Gpu.ArrayPrograms.BuildM Nat := do
+  let st ← get
+  match st.bindings.findIdx? (fun r => decide (r = rhs)) with
+  | some j => pure (st.inputCount+j)
+  | none => Obend.Hardware.Gpu.ArrayPrograms.bindSource rhs
+
+/-- Shared scalar construction: inputs are stable lexical handles, never substituted trees. -/
+def bindPdeScalar (size : Nat) : ScalarExpr → Obend.Hardware.Gpu.ArrayPrograms.BuildM Nat
+  | .input i => pure i
+  | .const w => bindPdeRhs (.literal (List.replicate size w))
+  | .prim op a b c => do
+    let args : List Nat ← match op with
+      | .scalar (.const _) => pure []
+      | .scalar (.scale _) => do let x ← bindPdeScalar size a; pure [x]
+      | .scalar .mux | .scalar .mac => do
+        let x ← bindPdeScalar size a; let y ← bindPdeScalar size b; let z ← bindPdeScalar size c; pure [x,y,z]
+      | _ => do
+        let x ← bindPdeScalar size a; let y ← bindPdeScalar size b; pure [x,y]
+    bindPdeRhs (.map size op args)
+
+/-- Arithmetic halving, including negative odd words. -/
+def scalarQ32Half (a : ScalarExpr) : ScalarExpr :=
+  .prim .bor (.prim .shr a (.const 1#64) (.const 0#64))
+    (.prim .band a (.const 0x8000000000000000#64) (.const 0#64)) (.const 0#64)
+
+/-- Linear shared GPU Newton datapath; each iterate is a lexical binding. -/
+def bindPdeReciprocal (size d : Nat) : Obend.Hardware.Gpu.ArrayPrograms.BuildM Nat := do
+  let emit := bindPdeScalar size
+  let i := ScalarExpr.input
+  let op := fun o a b => ScalarExpr.prim o a b (.const 0#64)
+  let neg ← emit (scalarLt (.const 0x7FFFFFFFFFFFFFFF#64) (i d))
+  let mut u ← emit (scalarSelect (i neg) (scalarSub (.const 0#64) (i d)) (i d))
+  let mut k ← emit (.const 0#64)
+  for shift in [32,16,8,4,2,1] do
+    let cond ← emit (scalarLt (i u) (.const (1#64 <<< (63-shift))))
+    u ← emit (scalarSelect (i cond) (op .shl (i u) (.const (BitVec.ofNat 64 shift))) (i u))
+    k ← emit (scalarSelect (i cond) (scalarAdd (i k) (.const (BitVec.ofNat 64 shift))) (i k))
+  let dp ← emit (op .shr (scalarAdd (i u) (.const (1#64 <<< 30))) (.const 31#64))
+  let seedProduct ← emit (scalarQmul32 (.const (ratToQ32Word (32/17))) (i dp))
+  let mut x ← emit (scalarSub (.const (ratToQ32Word (48/17))) (i seedProduct))
+  for _ in [0,1,2,3] do
+    let dx ← emit (scalarQmul32 (i dp) (i x))
+    x ← emit (scalarQmul32 (i x) (scalarSub (.const (2#64 <<< 32)) (i dx)))
+  let mag ← emit (scalarSelect (scalarLt (i k) (.const 31#64))
+    (op .shr (i x) (scalarSub (.const 31#64) (i k)))
+    (op .shl (i x) (scalarSub (i k) (.const 31#64))))
+  emit (scalarSelect (i neg) (scalarSub (.const 0#64) (i mag)) (i mag))
+
+/-- Compile the genuine specialized flux DAG, retaining every SSA result once. -/
+def bindPdeFlux (size : Nat) (inputs : Array Nat) (dag : FluxSsaDag)
+    (params : Nat → Rat) : Obend.Hardware.Gpu.ArrayPrograms.BuildM (Array Nat) := do
+  let mut refs : Array Nat := #[]
+  let zeroRef ← bindPdeScalar size (.const 0#64)
+  for node in dag.nodes do
+    let v ← match node with
+      | .const q => bindPdeScalar size (.const (ratToQ32Word q))
+      | .param p => bindPdeScalar size (.const (ratToQ32Word (params p)))
+      | .var j => pure (inputs.getD j zeroRef)
+      | .neg a => bindPdeScalar size (scalarSub (.const 0#64) (.input (refs.getD a zeroRef)))
+      | .add a b => bindPdeScalar size (scalarAdd (.input (refs.getD a zeroRef)) (.input (refs.getD b zeroRef)))
+      | .sub a b => bindPdeScalar size (scalarSub (.input (refs.getD a zeroRef)) (.input (refs.getD b zeroRef)))
+      | .mul a b => bindPdeScalar size (scalarQmul32 (.input (refs.getD a zeroRef)) (.input (refs.getD b zeroRef)))
+      | .invSafe a => bindPdeReciprocal size (refs.getD a zeroRef)
+    refs := refs.push v
+  return (dag.roots.map fun r => refs.getD r zeroRef).toArray
+
+/-- Five directional gathers per component; transverse coordinates remain unchanged. -/
+def pdeDirectionalIndices (b : StencilBoundary) (dims : List Nat) (axis slot : Nat) : FiniteFunction :=
+  let n := gridCellCount dims
+  ⟨n, n, (List.range n).map fun idx =>
+    let offsets := (List.range dims.length).map fun d => if d == axis then slot else 2
+    encodeMultiIdx dims (resolveMultiCoords b dims (decodeMultiIdx dims idx) offsets 2)⟩
+
+/-- Multi-component MUSCL/Rusanov source with exact Q32 coefficients and shared nonlinear fluxes. -/
+def compileMultiDNonlinearFluxSweepSource (spec : ConservationLawSpec) (b : StencilBoundary)
+    (dims : List Nat) (axis : Nat := 0) : Program :=
+  let size := gridCellCount dims
+  let dag := compileFluxSsaDag (some spec.paramEnv) (getOr spec.fluxes axis [])
+  Obend.Hardware.Gpu.ArrayPrograms.sourceBuild (fun inputs => do
+    if axis ≥ dims.length then return inputs
+    let emit := bindPdeScalar size
+    let i := ScalarExpr.input
+    let mut centers : Array Nat := #[]
+    let mut states : Array (Array Nat) := #[#[],#[],#[],#[]]
+    for c in [:spec.numVars] do
+      let mut u : Array Nat := #[]
+      for slot in [:5] do
+        u := u.push (← bindPdeRhs (.gather
+          (pdeDirectionalIndices b dims axis slot) (inputs.getD c 0)))
+      centers := centers.push u[2]!
+      let mut slopes : Array Nat := #[]
+      for j in [1,2,3] do
+        slopes := slopes.push (← emit (if spec.limiter == .minmod then
+          scalarMinmod (scalarSub (i u[j]!) (i u[j-1]!))
+            (scalarSub (i u[j+1]!) (i u[j]!)) else .const 0#64))
+      for (cell, slope, right) in [(1,0,true),(2,1,false),(2,1,true),(3,2,false)] do
+        let half ← emit (scalarQ32Half (i slopes[slope]!))
+        let value ← emit (if right then scalarAdd (i u[cell]!) (i half) else scalarSub (i u[cell]!) (i half))
+        let index := if cell == 1 then 0 else if cell == 3 then 3 else if right then 2 else 1
+        states := states.set! index (states[index]!.push value)
+    let mut fluxes : Array (Array Nat) := #[]
+    for state in states do fluxes := fluxes.push (← bindPdeFlux size state dag spec.paramEnv)
+    let mut outputs : List Nat := []
+    for c in [:spec.numVars] do
+      let mut faces : Array Nat := #[]
+      for left in [0,2] do
+        let mean ← emit (scalarQ32Half (scalarAdd (i fluxes[left]![c]!) (i fluxes[left+1]![c]!)))
+        let diffusion ← emit (scalarQmul32 (.const ((ratToQ32Checked (spec.aMax/2)).getD 0#64))
+          (scalarSub (i states[left+1]![c]!) (i states[left]![c]!)))
+        faces := faces.push (← emit (scalarSub (i mean) (i diffusion)))
+      let change ← emit (scalarQmul32 (.const ((ratToQ32Checked spec.cfl).getD 0#64))
+        (scalarSub (i faces[1]!) (i faces[0]!)))
+      outputs := (← emit (scalarSub (i centers[c]!) (i change))) :: outputs
+    return outputs.reverse) (List.replicate spec.numVars size)
 
 end Obend.Hardware.MultiDStencilTile

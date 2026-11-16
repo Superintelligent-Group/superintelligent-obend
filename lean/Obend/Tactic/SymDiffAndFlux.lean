@@ -10,29 +10,104 @@ public meta import Obend.Hardware.MultiDStencilTile
 import all Obend.Analysis.PdeSexprAndApprox
 import all Obend.Analysis.NonlinearMultiDPde
 import all Obend.Hardware.MultiDStencilTile
+import all Obend.Hardware.Gpu.SoacOptimize
+import all Obend.Hardware.Gpu.StencilTile
+import all Obend.Hardware.ArrayHypergraph
+import all Obend.Hardware.OpenHypergraph
 
 /-!
-# Symbolic Fréchet Differentiation, Reflective `CanonPoly` & S-Expression Parser (`Obend.Tactic.SymDiffAndFlux`)
+# Symbolic PDE proofs and accelerator refinement
 
-Compile-time metaprogramming support and kernel-verified proof combinators for `#pde_solver`:
-1. **Declarative Conservation-Law S-Expression Parser (`parseConservationLawSexpr`)**:
-   - Quote-aware S-expression parser supporting arbitrary spatial/phase-space coordinates, state
-     variables, rational parameters, strict positivity domain guards `(> rho 0)`, local `(let ...)`
-     bindings, rational divisions `(/ a d)` / `(inv d)`, wave-speed / CFL bounds, and slope limiters,
-     paired with `parseConservationLawSexpr_valid`.
-2. **Reflective `CanonPoly` Conservation & Symmetrizer Proofs**:
-   - `verifyFluctuationsReflective` & `fluctuationConservation_of_reflective` (discharging
-     nonlinear rational Rusanov fluctuation conservation via `checkFluxEqReflective_sound`),
-   - `checkSymmetrizerReflective` & `symmetrizerReflective_sound` (verifying `H(U) J(U)` symmetry
-     entrywise via `CanonPoly` rational normalization).
-3. **Bundled Kernel Soundness Combinators & Proof-Producing Tactics**:
-   - `spec_jacobian_frechet_sound`, `spec_sweep_conserves_integral`, `spec_minmod_tvd_sound`,
-     `spec_fusedGpuKernel_sound`, `spec_systolicRtl_ok`,
-   - Meta expression quoters (`quoteConservationLawSpec`) and tactics `flux_eq_by_canon` /
-     `sym_jacobian_frechet`.
+Symbolic Fréchet differentiation, reflective conservation and symmetrizers, Q32 arithmetic,
+shared nonlinear source lowering, and accelerator soundness. Parsing lives with the elaborator
+in `PdeSolverElab`; its existing declaration names remain unchanged.
 -/
 
 public section
+namespace Obend.Hardware.MultiDStencilTile
+open Obend.Hardware.HDL Obend.Analysis.HyperbolicPde Obend.Analysis.NonlinearMultiDPde
+theorem checkExprDAG_mono (ni nr a b : Nat) (e : RtlExpr) (hab : a ≤ b)
+    (h : checkExprDAG ni nr a e = true) : checkExprDAG ni nr b e = true := by
+  induction e <;> simp_all [checkExprDAG] <;> omega
+
+theorem ssaWireRef_dag (ni nr base bound a : Nat) (refs : Array Nat) (h : base ≤ bound) :
+    checkExprDAG ni nr bound (ssaWireRef refs base a) = true := by
+  unfold ssaWireRef
+  split
+  · split <;> simp_all [checkExprDAG] <;> omega
+  · rfl
+
+theorem assignRtlExprs_length (idx : Nat) (es : List RtlExpr) :
+    (assignRtlExprs idx es).length = es.length := by
+  induction es generalizing idx with
+  | nil => rfl
+  | cons e es ih => simp [assignRtlExprs, ih]
+
+theorem reciprocalRtlExprs_dag (ni nr base : Nat) (d : RtlExpr)
+    (h : checkExprDAG ni nr base d = true) :
+    checkWireTableDAG.go ni nr base (assignRtlExprs base (reciprocalRtlExprs base d)) = true := by
+  have h1 := checkExprDAG_mono ni nr base (base + 1) d (by omega) h
+  simp [reciprocalRtlExprs, assignRtlExprs, checkWireTableDAG.go, checkExprDAG,
+    h, h1, Nat.add_assoc]
+
+theorem lowerSsaNodeToRtl_dag (ni nr base : Nat) (refs : Array Nat)
+    (params : Nat → Rat) (n : FluxSsaNode) :
+    checkWireTableDAG.go ni nr base
+      (assignRtlExprs base (lowerSsaNodeToRtl ni base refs params n)) = true := by
+  cases n with
+  | invSafe d => exact reciprocalRtlExprs_dag ni nr base _ (ssaWireRef_dag _ _ _ _ _ _ (by omega))
+  | var i => simp only [lowerSsaNodeToRtl]; split <;> simp_all [assignRtlExprs, checkWireTableDAG.go, checkExprDAG]
+  | _ => simp [lowerSsaNodeToRtl, assignRtlExprs, checkWireTableDAG.go, checkExprDAG,
+      ssaWireRef_dag ni nr base base _ refs (by omega)]
+
+theorem checkWireTableDAG_go_append (ni nr idx : Nat) (xs ys : List WireAssign) :
+    checkWireTableDAG.go ni nr idx (xs ++ ys) =
+      (checkWireTableDAG.go ni nr idx xs && checkWireTableDAG.go ni nr (idx + xs.length) ys) := by
+  induction xs generalizing idx with
+  | nil => simp [checkWireTableDAG.go]
+  | cons x xs ih => simp [checkWireTableDAG.go, ih, Bool.and_assoc, Nat.add_assoc, Nat.add_comm 1]
+
+theorem lowerSsaNodesToWires_dag_go (ni nr idx : Nat) (refs : Array Nat)
+    (params : Nat → Rat) (ns : List FluxSsaNode) :
+    checkWireTableDAG.go ni nr idx (lowerSsaNodesToWires ni params idx refs ns).1 = true := by
+  induction ns generalizing idx refs with
+  | nil => rfl
+  | cons n ns ih =>
+    simp only [lowerSsaNodesToWires, checkWireTableDAG_go_append, assignRtlExprs_length]
+    rw [lowerSsaNodeToRtl_dag, ih]
+    rfl
+
+/-- Every generated systolic module has topological wires and single-domain pipeline registers. -/
+theorem emitSystolicFluxCellRtlModule_ok (modName : String) (varNames : List String)
+    (dag : FluxSsaDag) (params : Nat → Rat := fun _ => 0) :
+    checkRtlModule (emitSystolicFluxCellRtlModule modName varNames dag params) = true := by
+  unfold emitSystolicFluxCellRtlModule checkRtlModule
+  dsimp only
+  have hWT := lowerSsaNodesToWires_dag_go varNames.length
+    ((dag.roots.map (fun r => (lowerSsaNodesToWires varNames.length params 0 #[] dag.nodes).2.getD r 0)).filter
+      (· < (lowerSsaNodesToWires varNames.length params 0 #[] dag.nodes).1.length)).length
+    0 #[] params dag.nodes
+  simp only [checkWireTableDAG, List.length_map, List.length_range, hWT,
+    Bool.true_and, Bool.and_eq_true]
+  refine ⟨⟨?_, ?_⟩, ?_⟩
+  · rw [List.all_eq_true]
+    intro r hr
+    rw [List.mem_map] at hr; obtain ⟨k, hk, rfl⟩ := hr
+    have hm := getOr_mem_of_lt _ k 0 (List.mem_range.mp hk)
+    rw [List.mem_filter] at hm
+    simpa [checkExprDAG] using of_decide_eq_true hm.2
+  · rw [List.all_eq_true]
+    intro o ho
+    rw [List.mem_map] at ho; obtain ⟨k, hk, rfl⟩ := ho
+    simpa [checkExprDAG] using List.mem_range.mp hk
+  · unfold checkModuleCdc
+    rw [List.all_eq_true]
+    intro dst hdst
+    rw [List.mem_map] at hdst; obtain ⟨k, _, rfl⟩ := hdst
+    simp [checkRegCdc, exprReadRegs, exprReadRegsAndWires]
+
+end Obend.Hardware.MultiDStencilTile
+
 namespace Obend.Tactic.SymDiffAndFlux
 open Lean Elab Tactic Meta
 open Obend.Analysis.HyperbolicPde
@@ -45,275 +120,6 @@ open Obend.Hardware.Gpu.StencilTile
 open Obend.Hardware.HDL
 open Obend.Hardware.MultiDStencilTile
 set_option autoImplicit false
-
-/-! ## 1. Declarative Conservation-Law S-Expression Parser & Validity Theorem -/
-
-def parseDigitsAux : List Char → Nat → Option Nat
-  | [], acc => some acc
-  | c :: cs, acc =>
-    if '0' ≤ c && c ≤ '9' then parseDigitsAux cs (acc * 10 + (c.toNat - '0'.toNat))
-    else none
-
-def parseNatChars : List Char → Option Nat
-  | [] => none
-  | cs => parseDigitsAux cs 0
-
-def parseIntChars : List Char → Option Int
-  | '-' :: cs => (parseNatChars cs).map fun n => -Int.ofNat n
-  | cs => (parseNatChars cs).map Int.ofNat
-
-def splitSlashChars : List Char → List Char → Option (List Char × List Char)
-  | [], _ => none
-  | '/' :: rest, revNum =>
-    if rest.contains '/' then none else some (revNum.reverse, rest)
-  | c :: rest, revNum => splitSlashChars rest (c :: revNum)
-
-/-- Pure `List Char` rational literal parser (`"3"`, `"-7/5"`, `"1/10"`), avoiding `String.splitOn`. -/
-def parseRatToken (s : String) : Option Rat :=
-  let cs := s.toList
-  match splitSlashChars cs [] with
-  | none => (parseIntChars cs).map fun z => (z : Rat)
-  | some (numCs, denCs) =>
-    match parseIntChars numCs, parseNatChars denCs with
-    | some num, some den => if den == 0 then none else some ((num : Rat) / (den : Rat))
-    | _, _ => none
-
-def evalParamOrRat (params : List (String × Rat)) : PdeSexpr → Option Rat
-  | .atom tok =>
-    match parseRatToken tok with
-    | some q => some q
-    | none => params.lookup tok
-  | .list [.atom "-", x] => (evalParamOrRat params x).map (-·)
-  | .list [.atom "+", x, y] => do
-    let a ← evalParamOrRat params x
-    let b ← evalParamOrRat params y
-    some (a + b)
-  | .list [.atom "*", x, y] => do
-    let a ← evalParamOrRat params x
-    let b ← evalParamOrRat params y
-    some (a * b)
-  | .list [.atom "/", x, y] => do
-    let a ← evalParamOrRat params x
-    let b ← evalParamOrRat params y
-    if b == 0 then none else some (a / b)
-  | _ => none
-
-def findStringIdx : List String → String → Nat → Option Nat
-  | [], _, _ => none
-  | x :: xs, target, k => if x == target then some k else findStringIdx xs target (k + 1)
-
-def foldBinLeft (op : FluxExpr → FluxExpr → FluxExpr) : List FluxExpr → Option FluxExpr
-  | [] => none
-  | e :: es => some (es.foldl op e)
-
-def parseLetBindings (fuel : Nat)
-    (parseFn : List (String × FluxExpr) → PdeSexpr → Except String FluxExpr)
-    (lets : List (String × FluxExpr)) : List PdeSexpr → Except String (List (String × FluxExpr))
-  | [] => .ok lets
-  | .list [.atom k, rhs] :: rest => do
-    match fuel with
-    | 0 => .error "expression fuel exhausted in let-binding"
-    | f + 1 =>
-      let e ← parseFn lets rhs
-      parseLetBindings f parseFn ((k, e) :: lets) rest
-  | _ => .error "malformed let-binding; expected (ident expr)"
-
-def parseFluxExprWithFuel :
-    Nat → List String → List String → List (String × FluxExpr) → PdeSexpr → Except String FluxExpr
-  | 0, _, _, _, _ => .error "expression nesting depth exceeded fuel"
-  | _ + 1, vars, params, lets, .atom tok =>
-    match parseRatToken tok with
-    | some q => .ok (.const q)
-    | none =>
-      match lets.lookup tok with
-      | some bound => .ok bound
-      | none =>
-        match findStringIdx vars tok 0 with
-        | some vi => .ok (.var vi)
-        | none =>
-          match findStringIdx params tok 0 with
-          | some pi => .ok (.param pi)
-          | none => .error s!"unknown state variable, parameter, or rational literal `{tok}`"
-  | fuel + 1, vars, params, lets, .list items =>
-    match items with
-    | [.atom "neg", a] | [.atom "-", a] => do
-      let ea ← parseFluxExprWithFuel fuel vars params lets a
-      .ok (.neg ea)
-    | [.atom "-", a, b] | [.atom "sub", a, b] => do
-      let ea ← parseFluxExprWithFuel fuel vars params lets a
-      let eb ← parseFluxExprWithFuel fuel vars params lets b
-      .ok (.sub ea eb)
-    | [.atom "inv", d] => do
-      let ed ← parseFluxExprWithFuel fuel vars params lets d
-      .ok (.invSafe ed)
-    | [.atom "/", a, d] | [.atom "div", a, d] => do
-      let ea ← parseFluxExprWithFuel fuel vars params lets a
-      let ed ← parseFluxExprWithFuel fuel vars params lets d
-      .ok (.mul ea (.invSafe ed))
-    | [.atom "sq", a] => do
-      let ea ← parseFluxExprWithFuel fuel vars params lets a
-      .ok (.mul ea ea)
-    | .atom "+" :: args | .atom "add" :: args => do
-      let parsed ← args.mapM (parseFluxExprWithFuel fuel vars params lets)
-      match foldBinLeft FluxExpr.add parsed with
-      | some res => .ok res
-      | none => .error "`+` requires at least one operand"
-    | .atom "*" :: args | .atom "mul" :: args => do
-      let parsed ← args.mapM (parseFluxExprWithFuel fuel vars params lets)
-      match foldBinLeft FluxExpr.mul parsed with
-      | some res => .ok res
-      | none => .error "`*` requires at least one operand"
-    | [.atom "let", .list binds, body] => do
-      let lets' ← parseLetBindings fuel (parseFluxExprWithFuel fuel vars params) lets binds
-      parseFluxExprWithFuel fuel vars params lets' body
-    | _ => .error "unsupported flux S-expression form"
-
-def parseDomainItem (vars params : List String) : PdeSexpr → Except String PosTarget
-  | .list [.atom ">", .atom ident, .atom "0"]
-  | .list [.atom "pos", .atom ident] =>
-    match findStringIdx vars ident 0 with
-    | some vi => .ok (.stateVar vi)
-    | none =>
-      match findStringIdx params ident 0 with
-      | some pi => .ok (.paramVar pi)
-      | none => .error s!"domain positivity target `{ident}` is neither a state variable nor a parameter"
-  | _ => .error "malformed domain guard; expected (> ident 0) or (pos ident)"
-
-def parseLimiterKind : PdeSexpr → Except String SlopeLimiterKind
-  | .atom "minmod" => .ok .minmod
-  | .atom "first-order" | .atom "firstOrder" | .atom "none" => .ok .firstOrder
-  | _ => .error "unsupported slope limiter; expected `minmod` or `first-order`"
-
-def findClause : List PdeSexpr → String → Option (List PdeSexpr)
-  | [], _ => none
-  | .list (.atom tag :: rest) :: cs, target =>
-    if tag == target then some rest else findClause cs target
-  | _ :: cs, target => findClause cs target
-
-def parseAxisFluxRow (vars params : List String) (expectedCoord : String) (numVars : Nat) :
-    PdeSexpr → Except String (List FluxExpr)
-  | .list [.atom head, .list (.atom "let" :: .list binds :: bodyExprs)] => do
-    if head == expectedCoord && bodyExprs.length == numVars then
-      let lets ← parseLetBindings 64 (parseFluxExprWithFuel 64 vars params) [] binds
-      bodyExprs.mapM (parseFluxExprWithFuel 64 vars params lets)
-    else if head == expectedCoord && bodyExprs.length == 1 && numVars == 1 then
-      let lets ← parseLetBindings 64 (parseFluxExprWithFuel 64 vars params) [] binds
-      bodyExprs.mapM (parseFluxExprWithFuel 64 vars params lets)
-    else if numVars == 2 && head != expectedCoord then
-      [PdeSexpr.atom head, .list (.atom "let" :: .list binds :: bodyExprs)].mapM
-        (parseFluxExprWithFuel 64 vars params [])
-    else
-      .error s!"flux row let-block for coordinate `{expectedCoord}` has {bodyExprs.length} components, expected {numVars}"
-  | .list (.atom head :: tail) =>
-    if head == expectedCoord && tail.length == numVars then
-      tail.mapM (parseFluxExprWithFuel 64 vars params [])
-    else if (head :: tail.map (fun _ => "")).length == numVars then
-      (PdeSexpr.atom head :: tail).mapM (parseFluxExprWithFuel 64 vars params [])
-    else
-      .error s!"flux row for coordinate `{expectedCoord}` does not match variable count {numVars}"
-  | .list raw =>
-    if raw.length == numVars then
-      raw.mapM (parseFluxExprWithFuel 64 vars params [])
-    else
-      .error s!"flux row for coordinate `{expectedCoord}` has length {raw.length}, expected {numVars}"
-  | _ => .error s!"malformed flux row for coordinate `{expectedCoord}`"
-
-def parseAxisFluxRows (vars params : List String) :
-    List String → List PdeSexpr → Except String (List (List FluxExpr))
-  | [], [] => .ok []
-  | c :: cs, r :: rs => do
-    let row ← parseAxisFluxRow vars params c vars.length r
-    let rest ← parseAxisFluxRows vars params cs rs
-    .ok (row :: rest)
-  | _, _ => .error "number of directional flux rows does not match `(coords ...)` dimension"
-
-def parseParamEntry : PdeSexpr → Except String (String × Rat)
-  | .list [.atom k, .atom v] =>
-    match parseRatToken v with
-    | some q => .ok (k, q)
-    | none => .error s!"invalid rational parameter value `{v}` for `{k}`"
-  | _ => .error "malformed parameter entry; expected (name rational)"
-
-def diagnoseSpecFailure (s : ConservationLawSpec) : String :=
-  if s.coords.isEmpty then "coordinate list `(coords ...)` must be non-empty"
-  else if s.vars.isEmpty then "state variable list `(vars ...)` must be non-empty"
-  else if s.coords.eraseDups.length != s.coords.length then "duplicate coordinate names in `(coords ...)`"
-  else if s.vars.eraseDups.length != s.vars.length then "duplicate state variable names in `(vars ...)`"
-  else if (s.params.map Prod.fst).eraseDups.length != s.params.length then "duplicate parameter names in `(params ...)`"
-  else if s.fluxes.length != s.coords.length then "directional flux row count does not match `(coords ...)`"
-  else if !s.fluxes.all (fun row => row.length == s.vars.length) then "flux row width does not match `(vars ...)`"
-  else if !s.fluxes.all (fun row => row.all (checkExprDomainSafe s.domain)) then
-    "unguarded rational division `(inv d)` / `(/ a d)`: denominator is not certified strictly positive by `(domain ...)`"
-  else "wave-speed / CFL violation: require `0 < aMax`, `0 ≤ cfl`, and `cfl * aMax ≤ 1`"
-
-def parseConservationLawRaw (text : String) : Except String ConservationLawSpec := do
-  let tree ← match parseSexpr text with
-    | some t => .ok t
-    | none => .error "malformed S-expression syntax"
-  let clauses ← match tree with
-    | .list (.atom "conservation-law" :: cs) => .ok cs
-    | _ => .error "expected top-level `(conservation-law ...)` form"
-  let name ← match findClause clauses "name" with
-    | some [.atom n] => .ok n
-    | _ => .error "missing or malformed `(name ...)` clause"
-  let coordSexprs ← match findClause clauses "coords" with
-    | some cs => .ok cs
-    | none => .error "missing `(coords ...)` clause"
-  let coords ← match coordSexprs.mapM atomText with
-    | some cs => .ok cs
-    | none => .error "`(coords ...)` entries must be bare or quoted identifiers"
-  let varSexprs ← match findClause clauses "vars" with
-    | some vs => .ok vs
-    | none => .error "missing `(vars ...)` clause"
-  let vars ← match varSexprs.mapM atomText with
-    | some vs => .ok vs
-    | none => .error "`(vars ...)` entries must be bare or quoted identifiers"
-  let params ← match findClause clauses "params" with
-    | some ps => ps.mapM parseParamEntry
-    | none => .ok []
-  let paramNames := params.map Prod.fst
-  let domain ← match findClause clauses "domain" with
-    | some ds => ds.mapM (parseDomainItem vars paramNames)
-    | none => .ok []
-  let fluxRowsSexpr ← match findClause clauses "fluxes" with
-    | some fs => .ok fs
-    | none => .error "missing `(fluxes ...)` clause"
-  let fluxes ← parseAxisFluxRows vars paramNames coords fluxRowsSexpr
-  let (aMax, cfl) ← match findClause clauses "wavespeed" with
-    | some [spSx, cflSx] =>
-      match evalParamOrRat params spSx, evalParamOrRat params cflSx with
-      | some a, some nu => .ok (a, nu)
-      | _, _ => .error "malformed `(wavespeed aMax cfl)` values"
-    | _ => .error "missing or malformed `(wavespeed aMax cfl)` clause"
-  let limiter ← match findClause clauses "limiter" with
-    | some [limSx] => parseLimiterKind limSx
-    | none => .ok .minmod
-    | _ => .error "malformed `(limiter ...)` clause"
-  .ok { name, coords, vars, params, domain, fluxes, aMax, cfl, limiter }
-
-/-- Parse and statically validate a multi-dimensional nonlinear conservation-law S-expression,
-returning descriptive diagnostics on syntax, domain-positivity, dimension, or CFL errors. -/
-def parseConservationLawSexprWithDiag (text : String) : Except String ConservationLawSpec :=
-  match parseConservationLawRaw text with
-  | .error msg => .error msg
-  | .ok raw => if raw.checkValid then .ok raw else .error (diagnoseSpecFailure raw)
-
-def parseConservationLawSexpr (text : String) : Option ConservationLawSpec :=
-  match parseConservationLawSexprWithDiag text with
-  | .ok spec => some spec
-  | .error _ => none
-
-theorem parseConservationLawSexpr_valid (text : String) (spec : ConservationLawSpec)
-    (h : parseConservationLawSexpr text = some spec) :
-    spec.checkValid = true := by
-  unfold parseConservationLawSexpr parseConservationLawSexprWithDiag at h
-  cases hRaw : parseConservationLawRaw text with
-  | error _ => simp [hRaw] at h
-  | ok raw =>
-    simp only [hRaw] at h
-    by_cases hv : raw.checkValid = true
-    · simp only [hv, ↓reduceIte, Option.some.injEq] at h; subst h; exact hv
-    · simp [hv] at h
 
 /-! ## 2. Certified Symbolic Jacobian, Reflective `CanonPoly` & Accelerator Lowering Theorems -/
 
@@ -574,53 +380,647 @@ theorem spec_minmod_tvd_sound (spec : ConservationLawSpec) (hValid : spec.checkV
     fun f ν hν hcfl hLip N u =>
       tvd_rusanov_minmod_step_nonincreasing f spec.aMax ν (Rat.le_of_lt haPos) hν hcfl hLip N u⟩
 
-/-- Default single-pass vertically fused multi-dimensional `minmod` + Rusanov GPU kernel for `spec`. -/
-def buildSpecFusedGpuKernel (spec : ConservationLawSpec) (b : StencilBoundary)
-    (dims : List Nat) : FusedProgram :=
-  let cNum : Int := spec.cfl.num
-  let vNum : Int := spec.aMax.num
-  compileMultiDSweepFused b dims 2 (multiDMinmodRusanovExpr dims.length cNum vNum)
+/-- A spatially constant state is preserved exactly, even if intermediate word arithmetic wraps. -/
+theorem evalNonlinearFluxCellQ32_constant (spec : ConservationLawSpec) (dag : FluxSsaDag)
+    (u0 : Nat → Word) : evalNonlinearFluxCellQ32 spec dag (fun _ c => u0 c) =
+      (List.range spec.numVars).map u0 := by
+  simp [evalNonlinearFluxCellQ32, evalAluOp]
 
-/-- **Fused GPU Kernel & Multi-D Brick Halo Tiling Soundness (`spec_fusedGpuKernel_sound`)**:
-Proves single-pass vertical SOAC fusion equivalence + `letCount` non-increase, exact `D`-dimensional
-brick-tiling equivalence (including non-multiple tail bricks), and strict HBM read reduction! -/
+/-- Keep shared arithmetic as lexical source bindings. The graph backend fuses these into
+register programs; eagerly substituting KernelInput trees would duplicate Newton iterates. -/
+def pdeSourceFused : Program → FusedProgram
+  | .ret arrays => .ret arrays
+  | .letE rhs body => .letE (.source rhs) (pdeSourceFused body)
+
+theorem pdeSourceFused_sound (source : Program) (env : Env) :
+    evalFused env (pdeSourceFused source) = source.eval env := by
+  induction source generalizing env with
+  | ret arrays => rfl
+  | letE rhs body ih => exact ih _
+
+/-- All components of the selected nonlinear directional sweep, with shared SSA arithmetic. -/
+def buildSpecFusedGpuKernel (spec : ConservationLawSpec) (b : StencilBoundary)
+    (dims : List Nat) (axis : Nat := 0) : FusedProgram :=
+  (pdeSourceFused (compileMultiDNonlinearFluxSweepSource spec b dims axis)).rename
+    (fun c => spec.numVars-1-c)
+
+/-- Compiler equivalence to the shared nonlinear array source. This statement covers source
+lowering; refinement to an independent Q32 sweep and brick evaluation requires separate proofs. -/
 theorem spec_fusedGpuKernel_sound (spec : ConservationLawSpec) (b : StencilBoundary)
-    (dims brickDims : List Nat) (grid : List Word)
-    (hNonEmpty : dims ≠ [])
-    (hLen : brickDims.length = dims.length)
-    (hB2 : ∀ B ∈ brickDims, 2 ≤ B)
-    (hBN : ∀ d < dims.length, getOr brickDims d 0 ≤ getOr dims d 0) :
-    let e := multiDMinmodRusanovExpr dims.length spec.cfl.num spec.aMax.num
-    evalFused (fun _ => grid) (buildSpecFusedGpuKernel spec b dims) =
-      [evalMultiDBrickTiled brickDims b dims 2 (scalarStencil e) grid] ∧
-    evalMultiDBrickTiled brickDims b dims 2 (scalarStencil e) grid =
-      evalStencilMultiD b dims 2 (scalarStencil e) grid ∧
-    multiDBrickHbmReads brickDims 2 dims < (2 * 2 + 1) ^ dims.length * gridCellCount dims := by
-  have hBPos : ∀ B ∈ brickDims, 0 < B := fun B hB => by have := hB2 B hB; omega
-  have hDPos : ∀ N ∈ dims, 0 < N := by
-    intro N hN
-    obtain ⟨d, hd, rfl⟩ : ∃ d, d < dims.length ∧ getOr dims d 0 = N := by
-      clear hNonEmpty hLen hBN
-      induction dims with
-      | nil => cases hN
-      | cons M ds ih =>
-        rcases List.mem_cons.mp hN with rfl | hRest
-        · exact ⟨0, by simp, rfl⟩
-        · obtain ⟨k, hk, hEq⟩ := ih hRest
-          exact ⟨k + 1, by simp; omega, hEq⟩
-    have hBd_ge2 : 2 ≤ getOr brickDims d 0 :=
-      hB2 (getOr brickDims d 0) (getOr_mem_of_lt brickDims d 0 (by omega))
-    have hLe := hBN d hd
+    (dims : List Nat) (grids : Nat → List Word) (axis : Nat := 0) :
+    evalFused grids (buildSpecFusedGpuKernel spec b dims axis) =
+      (compileMultiDNonlinearFluxSweepSource spec b dims axis).eval (fun c => grids (spec.numVars-1-c)) := by
+  rw [buildSpecFusedGpuKernel, FusedProgram.rename_sound, pdeSourceFused_sound]
+
+/-- Q32 multiplication is the Euclidean-floored signed product, modulo 64 bits. -/
+theorem qmul32_eq_ofInt (a b : Word) :
+    evalAluOp .qmul32 a b = BitVec.ofInt 64 (a.toInt * b.toInt / (2 : Int)^32) := by
+  let p := a.signExtend 128 * b.signExtend 128
+  have hlo := BitVec.le_toInt_mul_toInt (x := a) (y := b)
+  have hhi := BitVec.toInt_mul_toInt_le (x := a) (y := b)
+  have hp : p.toInt = a.toInt * b.toInt := by
+    dsimp [p]
+    rw [BitVec.toInt_mul, BitVec.toInt_signExtend_of_le (by decide),
+      BitVec.toInt_signExtend_of_le (by decide)]
+    exact Int.bmod_eq_of_le (by omega) (by omega)
+  have hn := BitVec.toInt_eq_toNat_cond p
+  apply BitVec.eq_of_toInt_eq
+  change ((p >>> 32).setWidth 64).toInt = _
+  rw [BitVec.toInt_setWidth, BitVec.toNat_ushiftRight, Nat.shiftRight_eq_div_pow,
+    BitVec.toInt_ofInt]
+  simp only [Int.bmod_def]
+  split at hn <;> omega
+
+private theorem q32_limb_identity (a b : Int) :
+    a * b / 4294967296 =
+      (a / 4294967296) * (b / 4294967296) * 4294967296 +
+      (a / 4294967296) * (b % 4294967296) +
+      (a % 4294967296) * (b / 4294967296) +
+      ((a % 4294967296) * (b % 4294967296)) / 4294967296 := by
+  have ha : a = (a / 4294967296) * 4294967296 + a % 4294967296 := by omega
+  have hb : b = (b / 4294967296) * 4294967296 + b % 4294967296 := by omega
+  have hab : a * b =
+      ((a / 4294967296) * (b / 4294967296) * 4294967296 +
+        (a / 4294967296) * (b % 4294967296) +
+        (a % 4294967296) * (b / 4294967296)) * 4294967296 +
+        (a % 4294967296) * (b % 4294967296) := by
+    calc a * b = ((a / 4294967296) * 4294967296 + a % 4294967296) *
+        ((b / 4294967296) * 4294967296 + b % 4294967296) := by rw [← ha, ← hb]
+         _ = _ := by grind
+  rw [hab, Int.mul_add_ediv_right _ _ (by decide)]
+
+private theorem q32_low_word (a : Word) :
+    a &&& 0xFFFFFFFF#64 = BitVec.ofInt 64 (a.toInt % 4294967296) := by
+  have ha := BitVec.toInt_eq_toNat_cond a
+  apply BitVec.eq_of_toNat_eq
+  rw [BitVec.toNat_and, BitVec.toNat_ofInt]
+  change a.toNat &&& (2^32 - 1) = _
+  rw [Nat.and_two_pow_sub_one_eq_mod]
+  split at ha <;> omega
+
+private theorem q32_high_word (a : Word) :
+    (a >>> 32) ||| (if a.ult 0x8000000000000000#64 then 0#64 else 0xFFFFFFFF00000000#64) =
+      BitVec.ofInt 64 (a.toInt / 4294967296) := by
+  have ha := BitVec.toInt_eq_toNat_cond a
+  have hal := a.isLt
+  have hor := Nat.two_pow_add_eq_or_of_lt
+    (i := 32) (b := a.toNat / 4294967296) (by omega) 4294967295
+  have hor' : a.toNat / 4294967296 ||| 18446744069414584320 =
+      18446744069414584320 + a.toNat / 4294967296 := by
+    rw [Nat.or_comm]
+    exact hor.symm
+  clear hor
+  apply BitVec.eq_of_toNat_eq
+  simp only [BitVec.toNat_or, BitVec.toNat_ushiftRight, Nat.shiftRight_eq_div_pow,
+    BitVec.ult, BitVec.toNat_ofNat, BitVec.toNat_ofInt]
+  split
+  · change a.toNat / 4294967296 ||| 0 = _
+    rw [Nat.or_zero]
+    simp only [decide_eq_true_eq] at *
+    split at ha <;> omega
+  · change a.toNat / 4294967296 ||| 18446744069414584320 = _
+    rw [hor']
+    simp only [decide_eq_true_eq] at *
+    split at ha <;> omega
+
+private theorem q32_low_product (a b : Int) :
+    (BitVec.ofInt 64 (a % 4294967296) * BitVec.ofInt 64 (b % 4294967296)) >>> 32 =
+      BitVec.ofInt 64 ((a % 4294967296) * (b % 4294967296) / 4294967296) := by
+  have ha := Int.emod_nonneg a (by decide : (4294967296 : Int) ≠ 0)
+  have hb := Int.emod_nonneg b (by decide : (4294967296 : Int) ≠ 0)
+  have hat := Int.emod_lt_of_pos a (by decide : (0 : Int) < 4294967296)
+  have hbt := Int.emod_lt_of_pos b (by decide : (0 : Int) < 4294967296)
+  have hp := Int.mul_nonneg ha hb
+  have hpt := Int.mul_le_mul_of_nonneg_right
+    (show a % 4294967296 ≤ 4294967295 by omega) hb
+  apply BitVec.eq_of_toNat_eq
+  simp only [BitVec.toNat_ushiftRight, Nat.shiftRight_eq_div_pow, BitVec.toNat_mul,
+    BitVec.toNat_ofInt]
+  have ha' : ((a % 4294967296) % 2^64).toNat = (a % 4294967296).toNat := by omega
+  have hb' : ((b % 4294967296) % 2^64).toNat = (b % 4294967296).toNat := by omega
+  change ((a % 4294967296 % 2^64).toNat * (b % 4294967296 % 2^64).toNat) % 2^64 / 2^32 =
+    (a % 4294967296 * (b % 4294967296) / 4294967296 % 2^64).toNat
+  rw [ha', hb', ← Int.toNat_mul ha hb]
+  omega
+
+/-- The limb implementation agrees with HDL for every pair of 64-bit words, including overflow. -/
+theorem scalarQmul32_eval_eq_qmul32 (a b : ScalarExpr) (slots : Nat → Word) :
+    (scalarQmul32 a b).eval slots = evalAluOp .qmul32 (a.eval slots) (b.eval slots) := by
+  simp only [scalarQmul32, scalarAdd, scalarSelect, scalarLt, ScalarExpr.eval,
+    Obend.Hardware.ArrayHypergraph.evalElemOp,
+    Obend.Hardware.OpenHypergraph.evalHypergraphOpBv, List.getD_cons_zero,
+    List.getD_cons_succ, Obend.Hardware.ArrayHypergraph.wordShl_eq,
+    Obend.Hardware.ArrayHypergraph.wordShr_eq]
+  have hmux : ∀ c : Bool, (if (if c then 1#64 else 0#64) != 0#64 then 0#64
+      else 0xFFFFFFFF00000000#64) = if c then 0#64 else 0xFFFFFFFF00000000#64 := by
+    intro c; cases c <;> rfl
+  simp only [hmux, show (32#64).toNat = 32 from rfl]
+  rw [q32_high_word, q32_high_word, q32_low_word, q32_low_word, q32_low_product,
+    ← BitVec.ofInt_mul, ← BitVec.ofInt_mul, ← BitVec.ofInt_mul,
+    BitVec.shiftLeft_eq_mul_twoPow]
+  change BitVec.ofInt 64 _ * BitVec.ofInt 64 4294967296 + _ + _ + _ = _
+  rw [← BitVec.ofInt_mul, ← BitVec.ofInt_add, ← BitVec.ofInt_add,
+    ← BitVec.ofInt_add, ← q32_limb_identity, qmul32_eq_ofInt]
+  rfl
+
+/-- The linear lexical source program produces the same Q32 products pointwise. -/
+theorem scalarQmul32Source_eval (size : Nat) (env : Env) :
+    (scalarQmul32Source size).eval env =
+      [(List.range size).map fun i => evalAluOp .qmul32
+        ((env 0).getD i 0#64) ((env 1).getD i 0#64)] := by
+  let leaf : Nat → Rhs := fun i => .map size (.scalar (.scale 1)) [i]
+  obtain ⟨final, he, hv, _⟩ := compileScalar_eval
+    (scalarQmul32 (.input 0) (.input 1)) size leaf env (.ret [0])
+  change (compileScalar size leaf _ _).eval env = _
+  rw [he]
+  simp only [Program.eval, List.map_cons, List.map_nil, hv]
+  rw [evalScalarArrays_pointwise _ size _ (by intro i; simp [leaf, Rhs.eval])]
+  congr 1
+  apply List.map_congr_left
+  intro i hi
+  rw [scalarQmul32_eval_eq_qmul32]
+  simp [ScalarExpr.eval, leaf, Rhs.eval, Obend.Hardware.ArrayHypergraph.evalElemOp,
+    Obend.Hardware.OpenHypergraph.evalHypergraphOpBv,
+    List.getD_eq_getElem?_getD, List.getElem?_map, List.getElem?_range (List.mem_range.mp hi)]
+
+theorem qmul32_toInt (a b : Word)
+    (h : -((2 : Int)^63) ≤ a.toInt * b.toInt / (2 : Int)^32 ∧
+      a.toInt * b.toInt / (2 : Int)^32 < (2 : Int)^63) :
+    (evalAluOp .qmul32 a b).toInt = a.toInt * b.toInt / (2 : Int)^32 := by
+  rw [qmul32_eq_ofInt]
+  exact BitVec.toInt_ofInt_eq_self (by decide) h.1 h.2
+
+theorem q32Normalization_shift_exact (u : (BitVec 64)) (s : Nat) (hs : s ≤ 63)
+    (hu : u.toNat < 2^(63-s)) :
+    (u <<< s).toNat = u.toNat*2^s ∧ (u <<< s).toNat < 2^63 := by
+  have hp : 2^(63-s)*2^s = (2:Nat)^63 := by rw [← Nat.pow_add]; congr 1; omega
+  have hm : u.toNat*2^s < 2^63 := by
+    rw [← hp]
+    exact Nat.mul_lt_mul_of_pos_right hu (Nat.two_pow_pos s)
+  have he : (u <<< s).toNat = u.toNat*2^s := by
+    rw [BitVec.toNat_shiftLeft, Nat.shiftLeft_eq, Nat.mod_eq_of_lt (by omega)]
+  exact ⟨he, by omega⟩
+
+theorem q32NormalizeStep_correct (u : (BitVec 64)) (s k lo : Nat) (hs : s ≤ 63)
+    (hl : 2^lo ≤ u.toNat) (hu : u.toNat < 2^63) :
+    let result := q32NormalizeStep s u k
+    2^(min (lo+s) (63-s)) ≤ result.1.toNat ∧ result.1.toNat < 2^63 ∧
+      ∃ t, result.1.toNat = u.toNat*2^t ∧ result.2 = k+t := by
+  have ht : (1#64 <<< (63-s)).toNat = 2^(63-s) := by
+    rw [BitVec.toNat_shiftLeft, Nat.shiftLeft_eq]
+    change (1*(2:Nat)^(63-s)) % 2^64 = _
+    rw [Nat.one_mul, Nat.mod_eq_of_lt (Nat.pow_lt_pow_right (by decide) (by omega))]
+  unfold q32NormalizeStep
+  split
+  · rename_i h
+    have small : u.toNat < 2^(63-s) := by simpa only [BitVec.ult_iff_toNat_lt, ht] using h
+    obtain ⟨he, hhi⟩ := q32Normalization_shift_exact u s hs small
+    have hh := Nat.mul_le_mul_right (2^s) hl
+    rw [← Nat.pow_add] at hh
+    have hm := Nat.pow_le_pow_right (by decide : 0 < (2:Nat)) (Nat.min_le_left (lo+s) (63-s))
+    exact ⟨by dsimp only; omega, hhi, s, he, rfl⟩
+  · rename_i h
+    have large : 2^(63-s) ≤ u.toNat := by
+      have hn : ¬u.toNat < 2^(63-s) := by simpa only [BitVec.ult_iff_toNat_lt, ht] using h
+      omega
+    have hm := Nat.pow_le_pow_right (by decide : 0 < (2:Nat)) (Nat.min_le_right (lo+s) (63-s))
+    exact ⟨Nat.le_trans hm large, hu, 0, by simp, by simp⟩
+theorem q32NormalizeLoop_correct (shifts : List Nat) (u : BitVec 64) (k lo : Nat)
+    (hs : ∀ s ∈ shifts, s ≤ 63) (hl : 2^lo ≤ u.toNat) (hu : u.toNat < 2^63) :
+    let result := q32NormalizeLoop shifts u k
+    2^(shifts.foldl (fun low s => min (low+s) (63-s)) lo) ≤ result.1.toNat ∧
+      result.1.toNat < 2^63 ∧ ∃ t, result.1.toNat = u.toNat*2^t ∧ result.2 = k+t := by
+  induction shifts generalizing u k lo with
+  | nil => exact ⟨hl,hu,0,by simp [q32NormalizeLoop],by simp [q32NormalizeLoop]⟩
+  | cons s ss ih =>
+    simp only [q32NormalizeLoop, List.foldl_cons]
+    obtain ⟨hb,hu',t,he,hk⟩ := q32NormalizeStep_correct u s k lo (hs s (by simp)) hl hu
+    obtain ⟨hbF,huF,v,hv,hkv⟩ := ih (q32NormalizeStep s u k).1 (q32NormalizeStep s u k).2 (min (lo+s) (63-s))
+      (fun s h => hs s (by simp [h])) hb hu'
+    change _ ≤ (q32NormalizeLoop ss (q32NormalizeStep s u k).1 (q32NormalizeStep s u k).2).1.toNat ∧ _
+    refine ⟨hbF,huF,t+v,?_,?_⟩
+    · rw [hv,he,Nat.mul_assoc,← Nat.pow_add]
+    · rw [hkv,hk,Nat.add_assoc]
+
+theorem q32NormalizeLoop_bounds (d : BitVec 64) (hd : 16 ≤ d.toNat ∧ d.toNat ≤ 2^60) :
+    let result := q32NormalizeLoop [32,16,8,4,2,1] d 0
+    2^62 ≤ result.1.toNat ∧ result.1.toNat < 2^63 ∧
+      result.1.toNat = d.toNat*2^result.2 ∧ 2 ≤ result.2 ∧ result.2 ≤ 58 := by
+  let result := q32NormalizeLoop [32,16,8,4,2,1] d 0
+  obtain ⟨hl,hu,t,he,hk⟩ := q32NormalizeLoop_correct [32,16,8,4,2,1] d 0 4 (by decide +kernel)
+    (by omega) (by omega)
+  change 2^62 ≤ result.1.toNat at hl
+  change result.1.toNat < 2^63 at hu
+  change result.1.toNat = d.toNat*2^t at he
+  change result.2 = 0+t at hk
+  have factor : result.1.toNat = d.toNat*2^result.2 := by simp only [Nat.zero_add] at hk; rw [hk]; exact he
+  have lower : 2 ≤ result.2 := by
+    by_cases h0 : result.2 = 0
+    · rw [h0] at factor; simp only [Nat.pow_zero,Nat.mul_one] at factor; omega
+    by_cases h1 : result.2 = 1
+    · rw [h1] at factor; simp only [Nat.pow_one] at factor; omega
     omega
-  have hTile := multiDBrickTiled_eq_global_sweep brickDims b dims 2
-    (scalarStencil (multiDMinmodRusanovExpr dims.length spec.cfl.num spec.aMax.num)) grid
-    hLen hBPos hDPos
-  have hFused := (compileMultiDSweepFused_sound b dims 2
-    (multiDMinmodRusanovExpr dims.length spec.cfl.num spec.aMax.num) grid).1
-  unfold buildSpecFusedGpuKernel
+  have upper : result.2 ≤ 58 := by
+    by_cases hn : result.2 ≤ 58
+    · exact hn
+    · have power := Nat.pow_le_pow_right (by decide : 0 < (2:Nat)) (show 59 ≤ result.2 by omega)
+      have bound := Nat.mul_le_mul hd.1 power
+      rw [← factor] at bound
+      omega
+  exact ⟨hl,hu,factor,lower,upper⟩
+
+/-- Each hardware Newton step is exactly the rounded integer recurrence; no intermediate wraps. -/
+theorem q32_nr_word_step (d x : Word)
+    (hd : 2147483648 ≤ d.toInt ∧ d.toInt ≤ 4294967296)
+    (hx : 0 ≤ x.toInt ∧ x.toInt ≤ 12884901888) :
+    (evalAluOp .qmul32 x ((2#64 <<< 32) - evalAluOp .qmul32 d x)).toInt =
+      x.toInt * (8589934592-d.toInt*x.toInt/4294967296)/4294967296 := by
+  have hd0 : 0 ≤ d.toInt := by omega
+  have hp0 := Int.mul_nonneg hd0 hx.1
+  have hp1 := Int.mul_le_mul_of_nonneg_left hx.2 hd0
+  have hy0 : 0 ≤ d.toInt*x.toInt/4294967296 := Int.ediv_nonneg hp0 (by decide)
+  have hy1 : d.toInt*x.toInt/4294967296 ≤ 12884901888 := by omega
+  have inner := qmul32_toInt d x (by omega)
+  have correction : ((2#64 <<< 32)-evalAluOp .qmul32 d x).toInt =
+      8589934592-d.toInt*x.toInt/4294967296 := by
+    rw [BitVec.toInt_sub, inner]
+    change (8589934592-d.toInt*x.toInt/4294967296).bmod 18446744073709551616 = _
+    exact Int.bmod_eq_of_le (by omega) (by omega)
+  have hlo : -4294967296 ≤ 8589934592-d.toInt*x.toInt/4294967296 := by omega
+  have hhi : 8589934592-d.toInt*x.toInt/4294967296 ≤ 8589934592 := by omega
+  have lower := Int.mul_le_mul_of_nonneg_left hlo hx.1
+  have upper := Int.mul_le_mul_of_nonneg_left hhi hx.1
+  rw [qmul32_toInt x _ (by rw [correction]; omega), correction]
+  rfl
+
+/-- Exact quadratic self-correction identity, including both Euclidean rounding remainders. -/
+theorem q32_nr_residual_identity (d x : Int) :
+    let y := d*x / 4294967296
+    let z := x*(8589934592-y)
+    18446744073709551616 * (18446744073709551616-d*(z/4294967296)) =
+      (18446744073709551616-d*x)*(18446744073709551616-d*x) -
+        d*x*(d*x % 4294967296) + d*4294967296*(z % 4294967296) := by
+  have h1 : d*x / 4294967296 * 4294967296 + d*x % 4294967296 = d*x := by omega
+  have h2 : (x*(8589934592-d*x/4294967296))/4294967296 * 4294967296 +
+      (x*(8589934592-d*x/4294967296)) % 4294967296 = x*(8589934592-d*x/4294967296) := by omega
   dsimp only
-  refine ⟨by rw [hFused, ← hTile], hTile,
-    multiDBrickHbmReads_lt_global brickDims dims 2 hNonEmpty (by omega) hLen hB2 hBN⟩
+  grind
+
+/-- A Newton step squares the incoming residual and adds bounded rounding error. -/
+theorem q32_nr_residual_bound (d x E : Int)
+    (hd : 2147483648 ≤ d ∧ d ≤ 4294967296)
+    (hx : 0 ≤ x ∧ x ≤ 12884901888)
+    (he : -E ≤ 18446744073709551616-d*x ∧ 18446744073709551616-d*x ≤ E) :
+    let z := x*(8589934592-d*x/4294967296);
+    -12884901888 ≤ 18446744073709551616-d*(z/4294967296) ∧
+      18446744073709551616-d*(z/4294967296) ≤ E*E/18446744073709551616 + 4294967296 := by
+  let e := 18446744073709551616-d*x
+  let a := d*x % 4294967296
+  let z := x*(8589934592-d*x/4294967296)
+  let b := z % 4294967296
+  have ha0 : 0 ≤ a := Int.emod_nonneg _ (by decide)
+  have ha1 : a ≤ 4294967296 := by have := Int.emod_lt_of_pos (d*x) (by decide : (0 : Int) < 4294967296); omega
+  have hb0 : 0 ≤ b := Int.emod_nonneg _ (by decide)
+  have hb1 : b ≤ 4294967296 := by have := Int.emod_lt_of_pos z (by decide : (0 : Int) < 4294967296); omega
+  have hdx0 := Int.mul_nonneg (show 0 ≤ d by omega) hx.1
+  have hdx1 := Int.mul_le_mul_of_nonneg_left hx.2 (show 0 ≤ d by omega)
+  have hA0 := Int.mul_nonneg hdx0 ha0
+  have hA1 := Int.mul_le_mul_of_nonneg_left ha1 hdx0
+  have hB0 := Int.mul_nonneg (show 0 ≤ d*4294967296 by omega) hb0
+  have hB1 := Int.mul_le_mul_of_nonneg_left hb1 (show 0 ≤ d*4294967296 by omega)
+  have he0 : 0 ≤ e*e := by
+    by_cases hp : 0 ≤ e
+    · exact Int.mul_nonneg hp hp
+    · have hh := Int.mul_nonneg (show 0 ≤ -e by omega) (show 0 ≤ -e by omega)
+      simpa only [Int.neg_mul, Int.mul_neg, Int.neg_neg] using hh
+  have he1 : e*e ≤ E*E := by
+    by_cases hp : 0 ≤ e
+    · exact Int.mul_self_le_mul_self hp he.2
+    · have hh := Int.mul_self_le_mul_self (show 0 ≤ -e by omega) (show -e ≤ E by omega)
+      simpa only [Int.neg_mul, Int.mul_neg, Int.neg_neg] using hh
+  have identity := q32_nr_residual_identity d x
+  change 18446744073709551616 * (18446744073709551616-d*(z/4294967296)) =
+    e*e-d*x*a+d*4294967296*b at identity
+  change -12884901888 ≤ 18446744073709551616-d*(z/4294967296) ∧
+    18446744073709551616-d*(z/4294967296) ≤ E*E/18446744073709551616 + 4294967296
+  omega
+
+private theorem q32_seed_identity (d q a : Int)
+    (h : q*4294967296+a = 8084644321*d) :
+    73014444032*(18446744073709551616-d*(12126966482-q)) =
+      4294967296*(2*((4*d-12884901888)*(4*d-12884901888))-18446744073709551616) +
+        60129542144*d-15*(d*d)-17*(a*d) := by
+  grind
+
+private theorem q32_seed_polynomial_bound (d u v w e : Int)
+    (hd : 2147483648 ≤ d ∧ d ≤ 4294967296)
+    (hu : 0 ≤ u ∧ u ≤ 18446744073709551616)
+    (hv : 0 ≤ v ∧ v ≤ 18446744073709551616)
+    (hw : 0 ≤ w ∧ w ≤ 4294967296*d)
+    (he : 73014444032*e = 4294967296*(2*u-18446744073709551616) +
+      60129542144*d-15*v-17*w) :
+    -1152921504606846976 ≤ e ∧ e ≤ 1152921504606846976 := by
+  have he' : 73014444032*e = 8589934592*u - 4294967296*18446744073709551616 +
+      60129542144*d-15*v-17*w := by
+    rw [Int.mul_sub, ← Int.mul_assoc] at he
+    exact he
+  have hUlo := Int.mul_nonneg (by decide : (0 : Int) ≤ 8589934592) hu.1
+  have hUhi := Int.mul_le_mul_of_nonneg_left hu.2 (by decide : (0 : Int) ≤ 8589934592)
+  have hd0 : 0 ≤ d := Int.le_trans (by decide) hd.1
+  have hAlo := Int.mul_nonneg (by decide : (0 : Int) ≤ 60129542144) hd0
+  have hAhi := Int.mul_le_mul_of_nonneg_left hd.2 (by decide : (0 : Int) ≤ 60129542144)
+  have hBlo := Int.mul_nonneg (by decide : (0 : Int) ≤ 15) hv.1
+  have hBhi := Int.mul_le_mul_of_nonneg_left hv.2 (by decide : (0 : Int) ≤ 15)
+  have hClo := Int.mul_nonneg (by decide : (0 : Int) ≤ 17) hw.1
+  have hw' : w ≤ 4294967296*4294967296 := Int.le_trans hw.2
+    (Int.mul_le_mul_of_nonneg_left hd.2 (by decide))
+  have hChi := Int.mul_le_mul_of_nonneg_left hw' (by decide : (0 : Int) ≤ 17)
+  have upper := Int.sub_le_sub
+    (Int.sub_le_sub (Int.add_le_add (Int.sub_le_sub_right hUhi (4294967296*18446744073709551616)) hAhi) hBlo) hClo
+  have lower := Int.sub_le_sub
+    (Int.sub_le_sub (Int.add_le_add (Int.sub_le_sub_right hUlo (4294967296*18446744073709551616)) hAlo) hBhi) hChi
+  rw [← he'] at upper lower
+  constructor
+  · apply Int.le_of_mul_le_mul_left (a := 73014444032) _ (by decide)
+    exact Int.le_trans (by decide +kernel) lower
+  · apply Int.le_of_mul_le_mul_left (a := 73014444032) _ (by decide)
+    exact Int.le_trans upper (by decide +kernel)
+
+/-- The exact floored 48/17,32/17 seed satisfies the uniform normalized seed contract. -/
+theorem q32_nr_seed_bound (d : Int) (hd : 2147483648 ≤ d ∧ d ≤ 4294967296) :
+    let x := 12126966482-8084644321*d/4294967296;
+    (0 ≤ x ∧ x ≤ 12884901888) ∧
+      -1152921504606846976 ≤ 18446744073709551616-d*x ∧
+      18446744073709551616-d*x ≤ 1152921504606846976 := by
+  let x := 12126966482-8084644321*d/4294967296
+  have hx : 0 ≤ x ∧ x ≤ 12884901888 := by
+    have h0 : 0 ≤ 8084644321*d/4294967296 :=
+      Int.ediv_nonneg (Int.mul_nonneg (by decide) (by omega)) (by decide)
+    have h1 : 8084644321*d/4294967296 ≤ 8084644321 :=
+      Int.ediv_le_of_le_mul (by decide) (Int.mul_le_mul_of_nonneg_left hd.2 (by decide))
+    dsimp [x]
+    omega
+  let a := 8084644321*d % 4294967296
+  let z := 4*d-12884901888
+  have ha0 : 0 ≤ a := Int.emod_nonneg _ (by decide)
+  have ha1 : a ≤ 4294967296 := by
+    have := Int.emod_lt_of_pos (8084644321*d) (by decide : (0 : Int) < 4294967296)
+    omega
+  have hsq0 : 0 ≤ z*z := by
+    by_cases hp : 0 ≤ z
+    · exact Int.mul_nonneg hp hp
+    · have hh := Int.mul_nonneg (show 0 ≤ -z by omega) (show 0 ≤ -z by omega)
+      simp only [Int.neg_mul, Int.mul_neg, Int.neg_neg] at hh
+      omega
+  have hsq1 : z*z ≤ 18446744073709551616 := by
+    by_cases hp : 0 ≤ z
+    · have hh := Int.mul_self_le_mul_self hp (show z ≤ 4294967296 by dsimp [z]; omega)
+      omega
+    · have hh := Int.mul_self_le_mul_self (show 0 ≤ -z by omega)
+        (show -z ≤ 4294967296 by dsimp [z]; omega)
+      simp only [Int.neg_mul, Int.mul_neg, Int.neg_neg] at hh
+      omega
+  have hd0 : 0 ≤ d := by omega
+  have hdSq0 := Int.mul_nonneg hd0 hd0
+  have hdSq1 := Int.mul_self_le_mul_self hd0 hd.2
+  have had0 := Int.mul_nonneg ha0 hd0
+  have had1 := Int.mul_le_mul_of_nonneg_right ha1 hd0
+  have rem : 8084644321*d/4294967296*4294967296 + a = 8084644321*d := by dsimp [a]; omega
+  have identity := q32_seed_identity d (8084644321*d/4294967296) a rem
+  change 73014444032*(18446744073709551616-d*x) =
+      4294967296*(2*(z*z)-18446744073709551616) + 60129542144*d-15*(d*d)-17*(a*d) at identity
+  change (0 ≤ x ∧ x ≤ 12884901888) ∧
+    -1152921504606846976 ≤ 18446744073709551616-d*x ∧
+      18446744073709551616-d*x ≤ 1152921504606846976
+  refine ⟨hx, ?_⟩
+  exact q32_seed_polynomial_bound d (z*z) (d*d) (a*d) _ hd
+    ⟨hsq0, hsq1⟩ ⟨hdSq0, by omega⟩ ⟨had0, had1⟩ identity
+
+/-- Four Newton steps reduce a 1/16 seed residual to three normalized word units. -/
+theorem q32_nr_four_steps (d x0 : Int)
+    (hd : 2147483648 ≤ d ∧ d ≤ 4294967296)
+    (hx : 0 ≤ x0 ∧ x0 ≤ 12884901888)
+    (he : -1152921504606846976 ≤ 18446744073709551616-d*x0 ∧
+      18446744073709551616-d*x0 ≤ 1152921504606846976) :
+    let step := fun x : Int => x*(8589934592-d*x/4294967296)/4294967296
+    let x4 := step (step (step (step x0)));
+    -12884901888 ≤ 18446744073709551616-d*x4 ∧
+      18446744073709551616-d*x4 ≤ 12884901888 := by
+  let step := fun x : Int => x*(8589934592-d*x/4294967296)/4294967296
+  have range : ∀ r E : Int, E ≤ 9223372036854775808 →
+      -E ≤ 18446744073709551616-d*r ∧ 18446744073709551616-d*r ≤ E →
+      0 ≤ r ∧ r ≤ 12884901888 := by
+    intro r E hE hr
+    have hr0 : 0 ≤ r := by
+      by_cases hp : 0 ≤ r
+      · exact hp
+      · have hh := Int.mul_le_mul_of_nonneg_left (show r ≤ 0 by omega) (show 0 ≤ d by omega)
+        simp only [Int.mul_zero] at hh
+        omega
+    have hh := Int.mul_le_mul_of_nonneg_right hd.1 hr0
+    exact ⟨hr0, by omega⟩
+  have h1 := q32_nr_residual_bound d x0 1152921504606846976 hd hx he
+  have e1 : -144115188075855872 ≤ 18446744073709551616-d*(step x0) ∧
+      18446744073709551616-d*(step x0) ≤ 144115188075855872 := by
+    change -12884901888 ≤ 18446744073709551616-d*(step x0) ∧
+      18446744073709551616-d*(step x0) ≤ 1152921504606846976*1152921504606846976/18446744073709551616 + 4294967296 at h1
+    omega
+  have x1 := range (step x0) 144115188075855872 (by decide) e1
+  have h2 := q32_nr_residual_bound d (step x0) 144115188075855872 hd x1 e1
+  have e2 : -2251799813685248 ≤ 18446744073709551616-d*(step (step x0)) ∧
+      18446744073709551616-d*(step (step x0)) ≤ 2251799813685248 := by
+    change -12884901888 ≤ 18446744073709551616-d*(step (step x0)) ∧
+      18446744073709551616-d*(step (step x0)) ≤ 144115188075855872*144115188075855872/18446744073709551616 + 4294967296 at h2
+    omega
+  have x2 := range (step (step x0)) 2251799813685248 (by decide) e2
+  have h3 := q32_nr_residual_bound d (step (step x0)) 2251799813685248 hd x2 e2
+  have e3 : -549755813888 ≤ 18446744073709551616-d*(step (step (step x0))) ∧
+      18446744073709551616-d*(step (step (step x0))) ≤ 549755813888 := by
+    change -12884901888 ≤ 18446744073709551616-d*(step (step (step x0))) ∧
+      18446744073709551616-d*(step (step (step x0))) ≤ 2251799813685248*2251799813685248/18446744073709551616 + 4294967296 at h3
+    omega
+  have x3 := range (step (step (step x0))) 549755813888 (by decide) e3
+  have h4 := q32_nr_residual_bound d (step (step (step x0))) 549755813888 hd x3 e3
+  change -12884901888 ≤ 18446744073709551616-d*(step (step (step (step x0)))) ∧
+    18446744073709551616-d*(step (step (step (step x0)))) ≤ 549755813888*549755813888/18446744073709551616 + 4294967296 at h4
+  change -12884901888 ≤ 18446744073709551616-d*(step (step (step (step x0)))) ∧
+    18446744073709551616-d*(step (step (step (step x0)))) ≤ 12884901888
+  omega
+
+/-- Symbolic normalized integer recurrence with the actual rational seed and four rounded steps. -/
+theorem q32_nr_normalized_residual (d : Int) (hd : 2147483648 ≤ d ∧ d ≤ 4294967296) :
+    let step := fun x : Int => x*(8589934592-d*x/4294967296)/4294967296
+    let x4 := step (step (step (step (12126966482-8084644321*d/4294967296))));
+    -12884901888 ≤ 18446744073709551616-d*x4 ∧
+      18446744073709551616-d*x4 ≤ 12884901888 :=
+  q32_nr_four_steps d _ hd (q32_nr_seed_bound d hd).1 (q32_nr_seed_bound d hd).2
+
+/-- Rounding a normalized reciprocal down by a positive scale costs at most one output word.
+The denominator rounding allowance is one normalized unit. -/
+theorem q32_nr_postscale_residual (d dp x q : Int)
+    (hd : 0 ≤ d) (hq : 0 < q) (hx : 0 ≤ x ∧ x ≤ 12884901888)
+    (hround : -q ≤ d-dp*q ∧ d-dp*q ≤ q)
+    (hnr : -12884901888 ≤ x*dp-18446744073709551616 ∧
+      x*dp-18446744073709551616 ≤ 12884901888) :
+    -(25769803776+d) ≤ (x/q)*d-18446744073709551616 ∧
+      (x/q)*d-18446744073709551616 ≤ 25769803776+d := by
+  let e := d-dp*q
+  let rem := x % q
+  have rem0 : 0 ≤ rem := Int.emod_nonneg _ (by omega)
+  have rem1 : rem ≤ q := by have := Int.emod_lt_of_pos x hq; omega
+  have loE := Int.mul_le_mul_of_nonneg_left hround.1 hx.1
+  have hiE := Int.mul_le_mul_of_nonneg_left hround.2 hx.1
+  have xq := Int.mul_le_mul_of_nonneg_right hx.2 (Int.le_of_lt hq)
+  have loR := Int.mul_nonneg rem0 hd
+  have hiR := Int.mul_le_mul_of_nonneg_right rem1 hd
+  have loN := Int.mul_le_mul_of_nonneg_right hnr.1 (Int.le_of_lt hq)
+  have hiN := Int.mul_le_mul_of_nonneg_right hnr.2 (Int.le_of_lt hq)
+  have identity : ((x/q)*d-18446744073709551616)*q =
+      (x*dp-18446744073709551616)*q + x*e-rem*d := by
+    have divide : (x/q)*q+rem=x := Int.ediv_mul_add_emod x q
+    dsimp [e]
+    grind
+  have bounded : -(25769803776*q+q*d) ≤ ((x/q)*d-18446744073709551616)*q ∧
+      ((x/q)*d-18446744073709551616)*q ≤ 25769803776*q+q*d := by
+    change x*(-q) ≤ x*e at loE
+    change x*e ≤ x*q at hiE
+    rw [Int.mul_neg] at loE
+    omega
+  constructor
+  · apply Int.le_of_mul_le_mul_right _ hq
+    rw [Int.neg_mul, Int.add_mul, Int.mul_comm d q]
+    exact bounded.1
+  · apply Int.le_of_mul_le_mul_right _ hq
+    rw [Int.add_mul, Int.mul_comm d q]
+    exact bounded.2
+
+/-- Upscaling is exact when the integer normalized denominator is `d*t`. -/
+theorem q32_nr_upscale_residual (d dp x t : Int) (hscale : dp = d*t)
+    (hnr : -12884901888 ≤ x*dp-18446744073709551616 ∧
+      x*dp-18446744073709551616 ≤ 12884901888) :
+    -12884901888 ≤ (x*t)*d-18446744073709551616 ∧
+      (x*t)*d-18446744073709551616 ≤ 12884901888 := by
+  have h : (x*t)*d = x*dp := by rw [hscale]; ac_rfl
+  simpa only [h] using hnr
+
+/-- Positive interval enclosure derived from the scale-aware residual inequality. -/
+theorem q32_interval_of_residual (lo hi d r : Int)
+    (hlo : 16 ≤ lo) (hd : lo ≤ d ∧ d ≤ hi)
+    (hr : -(16 * (2 : Int)^32 + 4*d) ≤ r*d - (2 : Int)^64 ∧
+      r*d - (2 : Int)^64 ≤ 16 * (2 : Int)^32 + 4*d) :
+    ((2 : Int)^64 - 16*(2 : Int)^32) / hi - 5 ≤ r ∧
+      r ≤ ((2 : Int)^64 + 16*(2 : Int)^32) / lo + 4 := by
+  let a := ((2 : Int)^64 - 16*(2 : Int)^32) / hi
+  let b := ((2 : Int)^64 + 16*(2 : Int)^32) / lo
+  have hd0 : 0 < d := by omega
+  have ha0 : 0 ≤ a := Int.ediv_nonneg (by decide) (by omega)
+  have hb0 : 0 ≤ b := Int.ediv_nonneg (by decide) (by omega)
+  have ha := Int.ediv_mul_le ((2 : Int)^64 - 16*(2 : Int)^32) (by omega : hi ≠ 0)
+  have hb := Int.lt_ediv_add_one_mul_self ((2 : Int)^64 + 16*(2 : Int)^32) (by omega : 0 < lo)
+  have hal := Int.mul_le_mul_of_nonneg_left hd.2 ha0
+  have hbu := Int.mul_le_mul_of_nonneg_left hd.1 (show 0 ≤ b+1 by omega)
+  change a - 5 ≤ r ∧ r ≤ b + 4
+  have hrl : a*d ≤ (r+4)*d := by
+    dsimp [a] at *
+    rw [Int.add_mul]
+    omega
+  have hru : (r-4)*d < (b+1)*d := by
+    dsimp [b] at *
+    simp only [Int.sub_mul, Int.add_mul, Int.one_mul] at *
+    omega
+  have h1 := Int.le_of_mul_le_mul_right hrl hd0
+  have h2 := Int.lt_of_mul_lt_mul_right hru (Int.le_of_lt hd0)
+  omega
+
+theorem checkedQ32Interval_bounds (lo hi : Int) (iv : Q32Interval)
+    (h : checkedQ32Interval lo hi = some iv) :
+    iv.lo = lo ∧ iv.hi = hi ∧ -((2 : Int)^62) < iv.lo ∧ iv.hi < (2 : Int)^62 := by
+  unfold checkedQ32Interval at h
+  split at h
+  · rename_i hb
+    cases Option.some.inj h
+    exact ⟨rfl, rfl, hb.2⟩
+  · contradiction
+
+theorem reciprocalQ32Interval_refuses_small (iv : Q32Interval)
+    (h : iv.lo < 16 ∧ -16 < iv.hi) : reciprocalQ32Interval iv = none := by
+  unfold reciprocalQ32Interval
+  split
+  · omega
+  · split
+    · omega
+    · rfl
+
+theorem propagateSsaInterval_bounds (numVars : Nat) (box : Nat → Q32Interval)
+    (params : Nat → Rat) (acc : Array Q32Interval) (n : FluxSsaNode) (iv : Q32Interval)
+    (h : propagateSsaInterval numVars box params acc n = some iv) :
+    -((2 : Int)^62) < iv.lo ∧ iv.hi < (2 : Int)^62 := by
+  have hc : ∀ lo hi, checkedQ32Interval lo hi = some iv →
+      -((2 : Int)^62) < iv.lo ∧ iv.hi < (2 : Int)^62 :=
+    fun lo hi hh => (checkedQ32Interval_bounds lo hi iv hh).2.2
+  cases n with
+  | const q | param q =>
+    obtain ⟨w, _, hw⟩ := Option.bind_eq_some_iff.mp h
+    exact hc _ _ hw
+  | var i =>
+    simp only [propagateSsaInterval] at h
+    split at h
+    · exact hc _ _ h
+    · contradiction
+  | neg a =>
+    obtain ⟨x, _, hx⟩ := Option.bind_eq_some_iff.mp h
+    exact hc _ _ hx
+  | add a b | sub a b | mul a b =>
+    obtain ⟨x, _, hx⟩ := Option.bind_eq_some_iff.mp h
+    obtain ⟨y, _, hy⟩ := Option.bind_eq_some_iff.mp hx
+    exact hc _ _ hy
+  | invSafe a =>
+    obtain ⟨x, _, hx⟩ := Option.bind_eq_some_iff.mp h
+    unfold reciprocalQ32Interval at hx
+    split at hx
+    · exact hc _ _ hx
+    · split at hx
+      · exact hc _ _ hx
+      · contradiction
+
+theorem inferSsaDagQ32Intervals_bounds (numVars : Nat) (box : Nat → Q32Interval)
+    (params : Nat → Rat) (dag : FluxSsaDag) (ivs : Array Q32Interval)
+    (h : inferSsaDagQ32Intervals numVars box params dag = some ivs) :
+    ∀ iv ∈ ivs, -((2 : Int)^62) < iv.lo ∧ iv.hi < (2 : Int)^62 := by
+  suffices ∀ ns acc, (∀ iv ∈ acc, -((2 : Int)^62) < iv.lo ∧ iv.hi < (2 : Int)^62) →
+      inferNodesQ32Intervals numVars box params ns acc = some ivs →
+      ∀ iv ∈ ivs, -((2 : Int)^62) < iv.lo ∧ iv.hi < (2 : Int)^62 from
+    this dag.nodes #[] (by simp) h
+  intro ns
+  induction ns with
+  | nil => intro acc hb hh; cases Option.some.inj hh; exact hb
+  | cons n ns ih =>
+    intro acc hb hh
+    obtain ⟨iv, hn, ht⟩ := Option.bind_eq_some_iff.mp hh
+    apply ih (acc.push iv) _ ht
+    intro x hx
+    rcases Array.mem_push.mp hx with hx | rfl
+    · exact hb x hx
+    · exact propagateSsaInterval_bounds numVars box params acc n x hn
+
+/-- Canonical admissible state box: declared positive variables are in [0.5,4]. -/
+def pdeQ32StateBox (spec : ConservationLawSpec) (i : Nat) : Q32Interval :=
+  if PosTarget.stateVar i ∈ spec.domain then
+    ⟨(2 : Int)^31, 4 * (2 : Int)^32, by decide⟩
+  else ⟨-4 * (2 : Int)^32, 4 * (2 : Int)^32, by decide⟩
+
+def checkPdeQ32Intervals (spec : ConservationLawSpec) : Bool :=
+  (specializeFluxSweep spec).axisFluxDags.all fun dag =>
+    (inferSsaDagQ32Intervals spec.numVars (pdeQ32StateBox spec) spec.paramEnv dag).isSome
+
+/-- Check fixed-point constants before any modular encoding, including specialized flux constants. -/
+def checkPdeQ32Constants (spec : ConservationLawSpec) : Bool :=
+  (ratToQ32Checked spec.cfl).isSome && (ratToQ32Checked (spec.aMax / 2)).isSome &&
+  (specializeFluxSweep spec).axisFluxDags.all fun dag => dag.nodes.all fun n =>
+    match n with
+    | .const q => (ratToQ32Checked q).isSome
+    | .param p => (ratToQ32Checked (spec.paramEnv p)).isSome
+    | _ => true
 
 /-- Synthesize the pipelined Q32.32 systolic `RtlModule` for directional flux `axis` of `spec`. -/
 def buildSpecSystolicRtl (spec : ConservationLawSpec) (axis : Nat) : RtlModule :=
@@ -631,21 +1031,7 @@ def buildSpecSystolicRtl (spec : ConservationLawSpec) (axis : Nat) : RtlModule :
 theorem spec_systolicRtl_ok (spec : ConservationLawSpec) (axis : Nat) :
     checkRtlModule (buildSpecSystolicRtl spec axis) = true := by
   unfold buildSpecSystolicRtl
-  dsimp only [specializeFluxSweep]
-  by_cases hLt : axis < spec.fluxes.length
-  · rw [getOr_map_lt spec.fluxes (compileFluxSsaDag (some spec.paramEnv)) axis [] ⟨[], []⟩ hLt]
-    exact emitSystolicFluxCellRtlModule_ok _ spec.vars _
-      (compileFluxSsaDag_sound (some spec.paramEnv) (getOr spec.fluxes axis [])).1
-  · have hGe : (spec.fluxes.map (compileFluxSsaDag (some spec.paramEnv))).length ≤ axis := by
-      simp; omega
-    have hOut : ∀ (xs : List FluxSsaDag) (k : Nat), xs.length ≤ k →
-        getOr xs k ⟨[], []⟩ = ⟨[], []⟩ := by
-      intro xs; induction xs with
-      | nil => intro _ _; rfl
-      | cons _ rest ih =>
-        intro k hk; cases k with | zero => simp at hk | succ k' => exact ih k' (by simpa using hk)
-    rw [hOut _ axis hGe]
-    exact emitSystolicFluxCellRtlModule_ok _ spec.vars ⟨[], []⟩ rfl
+  exact emitSystolicFluxCellRtlModule_ok _ _ _
 
 theorem domainValid_nil (env : FluxEnv) : DomainValid [] env := fun _ h => nomatch h
 
