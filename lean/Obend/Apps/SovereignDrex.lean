@@ -28,6 +28,7 @@ public import Obend.Leaf.Static
 public import Obend.Spec.CrossPackage
 public import Obend.Tactic.Tooth
 public import Obend.Elab.Workbook
+import all Obend.Hardware.Compiler
 import all Obend.Consensus.Simplex
 import all Obend.Consensus.SimplexProtocol
 import all Obend.Consensus.Finality

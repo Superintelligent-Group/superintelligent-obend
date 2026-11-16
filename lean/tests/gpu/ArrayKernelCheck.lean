@@ -1,3 +1,8 @@
+module
+import Obend.Tactic.Tooth
+import all Obend.Hardware.ArrayKernel
+import all Obend.Hardware.ArrayKernelUnique
+import all Obend.Hardware.ArrayHypergraph
 import Obend.Hardware.ArrayKernel
 
 open Obend.Hardware.ArrayKernel
@@ -57,3 +62,22 @@ def main : IO Unit := do
     { copyPhase with lanes := 0, reads := [⟨0, 0, .mod .lane (2^32)⟩] })
 
 #eval main
+
+#tooth Obend.Hardware.ArrayKernel.scrubSharedBuffers_eq by
+  mutation Obend.Hardware.ArrayKernel.scrubSharedBuffers := fun _ mem => mem
+example : evalGroupScrubbed [⟨1, .shared, []⟩] ⟨1, []⟩ 0 #[#[7#64]] = #[#[0#64]] := by
+  decide +kernel
+
+/-- A phase cannot initialize its own reads; a previous group cannot initialize this group. -/
+theorem shared_init_order_and_group_scope :
+    (withPhase { copyPhase with reads := [⟨0,2,.lane⟩], writes := [⟨2,.lane,0⟩] }).sharedInitSafe = false ∧
+    ({ copyProgram with dispatches := [⟨2,
+        [{ lanes := 1, reads := [], code := [], writes := [⟨2,.group,0⟩] },
+         { lanes := 1, reads := [⟨0,2,.lit 0⟩], code := [], writes := [] }]⟩] } : Program).sharedInitSafe = false ∧
+    ({ copyProgram with dispatches := [⟨1,
+        [{ copyPhase with writes := [⟨2,.lane,0⟩] },
+         { copyPhase with reads := [⟨0,2,.lane⟩] }]⟩] } : Program).sharedInitSafe = true := by
+  decide +kernel
+
+#tooth evalDispatch_checked_agrees_with_scrubbed by
+  mutation Obend.Hardware.ArrayKernel.Program.sharedInitSafe := fun _ => true

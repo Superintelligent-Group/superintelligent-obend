@@ -19,6 +19,7 @@ RADV allocated it (the dump's `LDS:` line); `certifyBlockDump_sound` says the mo
 holds every device array element `evalProgram` computes, for every memory the host binds.
 -/
 module
+import all Obend.Hardware.ArrayKernel
 public import Obend.Hardware.Gpu.Rdna2.CertSound
 public import Obend.Hardware.Gpu.Rdna2.Residuals
 public import Obend.Hardware.Gpu.Rdna2.Check

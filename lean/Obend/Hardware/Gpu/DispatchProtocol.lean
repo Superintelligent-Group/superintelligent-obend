@@ -1,4 +1,5 @@
 module
+import all Obend.Hardware.ArrayKernel
 /-
 Whole-dispatch G4 composition. Workgroup memory is renamed by its instance; storage addresses stay
 shared across groups. Thread labels are globally distinct. This file lifts the admitted local

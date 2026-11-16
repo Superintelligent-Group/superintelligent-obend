@@ -1,4 +1,5 @@
 module
+import all Obend.Hardware.Judge
 /-
 # tests/SiliconSpineTest — End-to-End Verification Suite for Hardware Compilation & Silicon Tapeout Spine
 
@@ -87,8 +88,7 @@ theorem judge_decoders_strictly_refuse_missing_fields :
     -- 1. `hw-rtl-synth@1`: legacy `{dagOk, cdcOk}` without `numWires`/wire definitions is refused
     (decodeRtlSynthCert "{\"dagOk\":1,\"cdcOk\":1}").isOk = false ∧
     -- 2. `hw-rtl-synth@1`: explicit module with all required header/output fields decodes cleanly
-    (decodeRtlSynthCert
-      "{\"module\":\"test_rtl\",\"inputPort\":\"arg\",\"numWires\":0,\"numRegs\":0,\"outputName\":\"out_sum\",\"outputWire\":0}").isOk = true ∧
+    (decodeRtlSynthCert (encodeRtlSynthCert goldenFlatRtlModule)).isOk = true ∧
     -- 3. `hw-retime-sta@1`: missing `lag1` is refused
     (decodeRetimeCert "{\"lag0\":0}").isOk = false ∧
     -- 4. `hw-pnr-bitstream@1`: missing `net1DstWire` is refused
@@ -97,6 +97,7 @@ theorem judge_decoders_strictly_refuse_missing_fields :
     (decodeDatasheetFitCert "{\"vthMv\":1700,\"kpScaled\":500}").isOk = false ∧
     -- 6. `agentic-eda@1`: missing `postSwapMaxTempMilliC` is refused
     (decodeAgenticEdaCert "{\"cand2LcscPartId\":25801,\"cand2StockQty\":50000,\"cand2VdsMaxMv\":40000,\"cand2RdsOnMaxMohm\":28}").isOk = false := by
+  rw [decodeRtlSynthCert_encodeRtlSynthCert_roundtrip]
   decide +kernel
 
 /-! ## 3. Rational `Device.Wafer` Root Enclosure & `[FF, TT, SS]` Corner Envelope Timing Closure -/

@@ -201,3 +201,14 @@ theorem lowered_demand : ∃ k,
   scExpr_toCore4_clairvoyant_sound 0 _ [true] [] 6 [] (by decide +kernel)
 
 end Obend.Tests.Metasystem.LinMemDeltaNetClairvoyantTest
+
+namespace Obend.Tests.ReplicatorArity
+open Obend.Hardware.Delta
+def uncheckedRepInteraction (a b : DTree) : Option (List DRedex) :=
+  match a, b with
+  | .rep l1 d1 as, .rep l2 d2 bs =>
+    if replicatorsAnnihilate l1 d1 l2 d2 then some (as.zip bs) else none
+  | _, _ => none
+#tooth rep_arity_mismatch_refused by mutation deltaInteract := uncheckedRepInteraction
+example : deltaInteract (.rep 0 [0] [.era, .era]) (.rep 0 [0] [.era]) = none := rfl
+end Obend.Tests.ReplicatorArity

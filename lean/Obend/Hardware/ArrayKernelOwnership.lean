@@ -1,13 +1,14 @@
 module
 public import Obend.Hardware.ArrayKernel
-@[expose] public section
+import all Obend.Hardware.ArrayKernel
+public section
 
 /-! Ownership facts extracted from the executable source admission checker. -/
 namespace Obend.Hardware.ArrayKernel
 set_option autoImplicit false
 
 /-- The device writes of a single workgroup, before combining the groups into one dispatch. -/
-def Dispatch.groupDeviceWriteAddresses (p : Program) (d : Dispatch) (g : Nat) : List (Nat × Nat) :=
+@[expose] def Dispatch.groupDeviceWriteAddresses (p : Program) (d : Dispatch) (g : Nat) : List (Nat × Nat) :=
   d.phases.flatMap fun ph => (List.range ph.lanes).flatMap fun l =>
     ph.writes.filterMap fun w =>
       if (p.buffers.getD w.array default).storage == .device then

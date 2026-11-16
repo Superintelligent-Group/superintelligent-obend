@@ -24,6 +24,10 @@ public import Obend.Hardware.Retiming
 public import Obend.Hardware.PlaceRoute
 public import Obend.Hardware.DRC
 public import Obend.Hardware.Judge
+import all Obend.Spec.Syntax
+import all Obend.Lower.Proofs.Hardware
+import all Obend.Hardware.Compiler
+import all Obend.Hardware.Judge
 public section
 namespace Obend.Hardware.TapeoutPipeline
 open Lean (Json toJson)

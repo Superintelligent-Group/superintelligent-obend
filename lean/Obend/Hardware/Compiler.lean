@@ -26,7 +26,7 @@ public import Obend.Core.Term
 public import Obend.Leaf.Emit
 public import Obend.Hardware.HDL
 public import Obend.Hardware.Types
-@[expose] public section
+public section
 
 namespace Obend.Hardware.Compiler
 open Obend.Core.Term Obend.Leaf Obend.Hardware.HDL Obend.Hardware.Types
@@ -75,7 +75,7 @@ theorem substInputPort0_sound
 /-! ## 2. Primitive Operations Compilation & Soundness -/
 
 /-- Reference 64-bit hardware semantics for `Obend.Core.Term.Primitive`. -/
-def evalPrimHw (op : Primitive) (a b : BitVec 64) : Option (BitVec 64) :=
+@[expose] def evalPrimHw (op : Primitive) (a b : BitVec 64) : Option (BitVec 64) :=
   match op with
   | .add         => some (a + b)
   | .multiply    => some (a * b)
@@ -95,7 +95,7 @@ def evalPrimHw (op : Primitive) (a b : BitVec 64) : Option (BitVec 64) :=
   | _            => none
 
 /-- Compile an `Obend.Core.Term.Primitive` applied to two compiled `RtlExpr` operands. -/
-def compilePrim (op : Primitive) (l r : RtlExpr) : Option RtlExpr :=
+@[expose] def compilePrim (op : Primitive) (l r : RtlExpr) : Option RtlExpr :=
   match op with
   | .add         => some (.alu .add l r)
   | .multiply    => some (.alu .mul l r)
@@ -134,7 +134,7 @@ theorem compilePrim_sound
 * `inputs`, `slotWires`, `regs`: hardware port, wire, and register environments,
 * `selfDepth`: current de Bruijn index of `self`,
 * `varVals`: current 64-bit values of bound variables `0, 1, ...` inside the method body. -/
-def evalTermHw
+@[expose] def evalTermHw
     (slots : List String)
     (slotBodies : List RtlExpr)
     (inputs slotWires regs : Nat → BitVec 64)
@@ -194,7 +194,7 @@ def evalTermHw
 * `slotBodies`: already-compiled slot expressions for `self.m(arg)` method calls,
 * `selfDepth`: current de Bruijn index of `self`,
 * `varEnv`: `RtlExpr` bound to each de Bruijn variable `0, 1, ...` in scope. -/
-def compileTerm
+@[expose] def compileTerm
     (slots : List String)
     (slotBodies : List RtlExpr)
     (selfDepth : Nat)
@@ -1125,61 +1125,115 @@ def compileLinearRec2StateSat
         [ { name := s!"out_{fnName}", expr := .wireRef 2 }
         , { name := "out_done",       expr := .wireRef 3 } ] }
 
-/-- Compile a single-slot `Obend.Leaf.Book` containing a `Nat.rec` loop (or 2-state linear recurrence
-recognized structurally by `extractTwoStateLinearRec`) into a verified multi-cycle synchronous `RtlModule`. -/
-def compileBookToSeqRtlSat (modName : String) (B : Book) : Option RtlModule :=
-  match B.defs with
-  | [d] =>
-    match extractSeqNatRecDefSat d with
-    | none =>
-      match extractTwoStateLinearRec d.code with
-      | some (init0, init1, coeffCurr, coeffPrev) =>
-        some { (compileLinearRec2StateSat d.member 0 init0 init1 coeffCurr coeffPrev) with name := modName }
-      | none =>
-        none
-    | some (zExpr, stepExpr, countExpr) =>
-      let w0 : WireAssign := { wireIdx := 0, name := "w_count", expr := countExpr }
-      let w1 : WireAssign :=
-        { wireIdx := 1
-        , name    := "w_eff_acc"
-        , expr    := .mux (.alu .eq (.regRead 0) (.const 0#64)) zExpr (.regRead 1) }
-      let w2 : WireAssign := { wireIdx := 2, name := "w_step", expr := stepExpr }
-      let w3 : WireAssign := { wireIdx := 3, name := d.member, expr := .wireRef 1 }
-      let w4 : WireAssign :=
-        { wireIdx := 4
-        , name    := "done"
-        , expr    := .mux (.alu .ult (.regRead 0) (.wireRef 0)) (.const 0#64) (.const 1#64) }
-      let r0 : RegSpec :=
-        { regIdx         := 0
-        , name           := "reg_idx"
-        , domain         := .coreClk
-        , resetKind      := .syncReset 0#64
-        , isSynchronizer := false
-        , nextExpr       :=
-            .mux (.alu .ult (.regRead 0) (.wireRef 0))
-              (.alu .add (.regRead 0) (.const 1#64))
-              (.regRead 0) }
-      let r1 : RegSpec :=
-        { regIdx         := 1
-        , name           := "reg_acc"
-        , domain         := .coreClk
-        , resetKind      := .syncReset 0#64
-        , isSynchronizer := false
-        , nextExpr       :=
-            .mux (.alu .ult (.regRead 0) (.wireRef 0))
-              (.wireRef 2)
-              (.regRead 1) }
-      some {
-        name       := modName
-        inputNames := ["arg"]
-        wires      := [w0, w1, w2, w3, w4]
-        regs       := [r0, r1]
-        outputs    := [
-          { name := s!"out_{d.member}", expr := .wireRef 3 },
-          { name := "out_done",         expr := .wireRef 4 }
-        ]
-      }
+/-- An extracted recurrence describes state, simultaneous updates, iteration count,
+and output projection independently of the source declaration's name. -/
+structure TailFsmSpec where
+  initialValues : List RtlExpr
+  stepExpressions : List RtlExpr
+  countExpr : RtlExpr
+  outputProjection : Nat := 0
+
+/-- The two adjacent calls in the sliding window of a structurally recursive fix. -/
+def extractFixWindowCoeff : Term → Option (Bool × Nat)
+  | .app (.bound 10) (.bound 0) => some (false,1)
+  | .app (.bound 10) (.binary .add (.bound 0) (.nat 1)) => some (true,1)
+  | .binary .multiply (.nat k) t | .binary .multiply t (.nat k) =>
+    (extractFixWindowCoeff t).map fun (b,c) => (b,k*c)
   | _ => none
+
+def extractFixWindowComb : Term → Option (Nat × Nat)
+  | .binary .add a b => match extractFixWindowCoeff a, extractFixWindowCoeff b with
+    | some (true,x), some (false,y) | some (false,y), some (true,x) => some (x,y)
+    | _,_ => none
+  | _ => none
+
+def natRecCases : Term → Option (Term × Term)
+  | .app (.fix (.lam (.lam (.lam (.ifZero (.bound 0) z s)))) (.record [])) (.bound 0) => some (z,s)
+  | _ => none
+
+/-- Recognize the actual `recSpec` wrapper emitted for two predecessor recursion. -/
+def extractFixLinearRec (d : LeafDef) : Option (Nat × Nat × Nat × Nat) := do
+  let .lam (.lam (.fix (.lam (.lam (.lam body))) (.record []))) := d.code | none
+  let (.nat a, successor) ← natRecCases body | none
+  let (.nat b, step) ← natRecCases successor | none
+  let (curr,prev) ← extractFixWindowComb step
+  return (a,b,curr,prev)
+
+def extractTailFsmSpec (d : LeafDef) : Option TailFsmSpec :=
+  match extractTwoStateLinearRec d.code <|> extractFixLinearRec d with
+  | some (a,b,curr,prev) => some
+      { initialValues := [.const (BitVec.ofNat 64 a),.const (BitVec.ofNat 64 b)]
+        stepExpressions := [.regRead 2, .alu .add
+          (.alu .mul (.const (BitVec.ofNat 64 curr)) (.regRead 2))
+          (.alu .mul (.const (BitVec.ofNat 64 prev)) (.regRead 1))]
+        countExpr := .inputPort 0 }
+  | none => match extractSeqNatRecDefSat d with
+    | some (z,step,count) => some { initialValues := [z], stepExpressions := [step], countExpr := count }
+    | none => none
+
+/-- General register-vector emission, with the existing two-register datapath as
+an optimization of the weighted sliding-window form. Effective initial wires
+make cycle zero observable even for input-dependent base values. -/
+def compileTailFsmSpec (modName member : String) (s : TailFsmSpec) : Option RtlModule := do
+  if s.initialValues.length != s.stepExpressions.length || s.outputProjection ≥ s.initialValues.length then none else
+  match s.initialValues,s.stepExpressions,s.countExpr,s.outputProjection with
+  | [.const a,.const b],[.regRead 2,.alu .add
+      (.alu .mul (.const curr) (.regRead 2)) (.alu .mul (.const prev) (.regRead 1))],.inputPort 0,0 =>
+    some { (compileLinearRec2StateSat member 0 a.toNat b.toNat curr.toNat prev.toNat) with name := modName }
+  | _,_,_,_ =>
+    let running := RtlExpr.alu .ult (.regRead 0) (.wireRef 0)
+    let initial := RtlExpr.alu .eq (.regRead 0) (.const 0#64)
+    let values := s.initialValues.zipIdx.map fun (v,i) =>
+      ({ wireIdx := i+1, name := s!"state_{i}", expr := .mux initial v (.regRead (i+1)) } : WireAssign)
+    let states := s.stepExpressions.zipIdx.map fun (step,i) =>
+      ({ regIdx := i+1, name := s!"reg_state_{i}", domain := .coreClk,
+         resetKind := .syncReset 0#64, isSynchronizer := false,
+         nextExpr := .mux running step (.regRead (i+1)) } : RegSpec)
+    let counter : RegSpec :=
+      { regIdx := 0
+      , name := "reg_idx"
+      , domain := .coreClk
+      , resetKind := .syncReset 0#64
+      , isSynchronizer := false
+      , nextExpr := .mux running (.alu .add (.regRead 0) (.const 1#64)) (.regRead 0) }
+    some
+      { name := modName
+      , inputNames := ["arg"]
+      , wires := { wireIdx := 0, name := "w_count", expr := s.countExpr } :: values
+      , regs := counter :: states
+      , outputs := [{ name := "out_" ++ member, expr := .wireRef (s.outputProjection+1) },
+          { name := "out_done", expr := .mux running (.const 0#64) (.const 1#64) }] }
+
+/-- Inline only earlier slots; recursive references cannot form an inlining cycle. -/
+def inlineSeqHelpers : Nat → List LeafDef → Nat → Term → Term
+  | 0,_,_,t => t
+  | fuel+1,defs,depth,t =>
+    let go := inlineSeqHelpers fuel defs depth
+    match t with
+    | .lam b => .lam (inlineSeqHelpers fuel defs (depth+1) b)
+    | .app f a => match go f with
+      | .lam b => go (instantiate b (go a))
+      | f => .app f (go a)
+    | .get (.bound i) name =>
+      if i+1 == depth then match defs.find? (fun d => d.member == name) with
+        | some d => go (.app d.code (.bound i))
+        | none => t
+      else t
+    | .get (.record fs) name => match fs.find? (fun f => f.1 == name) with
+      | some (_,v) => go v | none => t
+    | .binary op a b => .binary op (go a) (go b)
+    | .ifZero a z s => .ifZero (go a) (go z) (inlineSeqHelpers fuel defs (depth+1) s)
+    | .ifBool c a b => .ifBool (go c) (go a) (go b)
+    | .fix f a => .fix (go f) (go a)
+    | _ => t
+
+/-- Search entry-first, retaining helper slots for acyclic inlining. -/
+def compileBookToSeqRtlSat (modName : String) (B : Book) : Option RtlModule :=
+  B.defs.reverse.findSome? fun d =>
+    let helpers := B.defs.filter fun h => h.slot < d.slot
+    let spec := (extractTailFsmSpec d).orElse fun _ =>
+      extractTailFsmSpec { d with code := inlineSeqHelpers 128 helpers 0 d.code }
+    spec >>= compileTailFsmSpec modName d.member
 
 /-- The compiled form of `stepSeqModuleN` (`stepSeqModuleN_eq_impl`, `@[csimp]`): the same
 cycles as one `runModuleTrace`, whose compiled form keeps the register file in an array between
@@ -2555,7 +2609,7 @@ Verifies a 2-group sequential Calyx accelerator schedule `[g0, g1]` where:
 Running `runCalyxSeqFsm` for 2 cycles with `inputPort 0 = 10#64` transitions `activeGroupIdx : 0 → 1 → 2`,
 asserts `doneSignal = true`, and produces `reg 0 = 15#64` and `reg 1 = 45#64`, matching the
 hierarchical `CalyxControl` schedule `.seq (.enable 0) (.enable 1)`! -/
-theorem calyx_seq_two_group_pipeline_sound :
+theorem calyx_seq_two_group_pipeline_sound (x : BitVec 64) :
     let g0 : CalyxGroup :=
       { groupName := "load_add5", latencyCycles := 1
       , datapathExpr := .alu .add (.inputPort 0) (.const 5#64), targetRegIdx := 0 }
@@ -2563,7 +2617,7 @@ theorem calyx_seq_two_group_pipeline_sound :
       { groupName := "scale_mul3", latencyCycles := 1
       , datapathExpr := .alu .mul (.regRead 0) (.const 3#64), targetRegIdx := 1 }
     let groups := [g0, g1]
-    let inputs : Nat → BitVec 64 := fun i => if i == 0 then 10#64 else 0#64
+    let inputs : Nat → BitVec 64 := fun i => if i == 0 then x else 0#64
     let wires  : Nat → BitVec 64 := fun _ => 0#64
     let st0 := initCalyxSeqFsmState groups (fun _ => 0#64)
     let st1 := stepCalyxSeqFsm groups inputs wires st0
@@ -2572,17 +2626,18 @@ theorem calyx_seq_two_group_pipeline_sound :
     st0.goSignal = true ∧
     st0.doneSignal = false ∧
     st1.activeGroupIdx = 1 ∧
-    st1.regState 0 = 15#64 ∧
+    st1.regState 0 = (x + 5#64) ∧
     st2.activeGroupIdx = 2 ∧
     st2.goSignal = false ∧
     st2.doneSignal = true ∧
-    st2.regState 0 = 15#64 ∧
-    st2.regState 1 = 45#64 ∧
+    st2.regState 0 = (x + 5#64) ∧
+    st2.regState 1 = ((x + 5#64) * 3#64) ∧
     ctrlRegs 0 = st2.regState 0 ∧
     ctrlRegs 1 = st2.regState 1 := by
-  decide +kernel
+  dsimp
+  repeat' first | apply And.intro | rfl
 
-/-- **Theorem (`golden_multi_arg_and_pipelined_rtl_verified`)**:
+/-- **Theorem (`multi_arg_and_pipelined_rtl_verified`)**:
 1. Verifies 3-argument port compilation (`compileMultiArgMethod`) on the ternary hardware MAC
    `λself. λx0. λx1. λx2. x0 * x1 + x2`, confirming that it binds `.bound 2 ↦ .inputPort 0`,
    `.bound 1 ↦ .inputPort 1`, `.bound 0 ↦ .inputPort 2` and evaluates `(6, 7, 8) ↦ 50#64`,
@@ -2594,7 +2649,7 @@ theorem calyx_seq_two_group_pipeline_sound :
    slot 1's wire, substitutes `arg + 5` into slot 0's compiled body `(arg + 5) + 1` in slot 2's wire,
    and latches `reg_inc = 11#64` and `reg_shiftedInc = 16#64` on Cycle 1 followed by
    `reg_doubleInc = 22#64` on Cycle 2! -/
-theorem golden_multi_arg_and_pipelined_rtl_verified :
+theorem multi_arg_and_pipelined_rtl_verified (a b c x : BitVec 64) :
     let mac3Code : Term :=
       .lam (.lam (.lam (.lam (.binary .add (.binary .multiply (.bound 2) (.bound 1)) (.bound 0)))))
     let expectedMacExpr : RtlExpr :=
@@ -2603,7 +2658,7 @@ theorem golden_multi_arg_and_pipelined_rtl_verified :
       .lam (.lam (.lam (.lam
         (.app (.app (.app (.get (.bound 3) "mac3") (.bound 2)) (.bound 1)) (.bound 0)))))
     let macInputs : Nat → BitVec 64 := fun i =>
-      match i with | 0 => 6#64 | 1 => 7#64 | 2 => 8#64 | _ => 0#64
+      match i with | 0 => a | 1 => b | 2 => c | _ => 0#64
     let pipeBook : Book :=
       { items :=
           [ .slot { member := "inc", slot := 0, kind := .method
@@ -2616,10 +2671,10 @@ theorem golden_multi_arg_and_pipelined_rtl_verified :
                   , reads := [0] } ] }
     compileMultiArgMethod [] [] 3 mac3Code = some expectedMacExpr ∧
     compileMultiArgMethod ["mac3"] [expectedMacExpr] 3 macCallerCode = some expectedMacExpr ∧
-    evalRtlExpr macInputs (fun _ => 0#64) (fun _ => 0#64) expectedMacExpr = 50#64 ∧
+    evalRtlExpr macInputs (fun _ => 0#64) (fun _ => 0#64) expectedMacExpr = a * b + c ∧
     (match compileBookToPipelinedRtl "pipelined_book_mod" pipeBook with
      | some m =>
-       let pipeIn : Nat → BitVec 64 := fun _ => 10#64
+       let pipeIn : Nat → BitVec 64 := fun _ => x
        let regs0  : Nat → BitVec 64 := fun _ => 0#64
        let regs1  := stepModuleRegs m false pipeIn regs0
        let regs2  := stepModuleRegs m false pipeIn regs1
@@ -2628,11 +2683,13 @@ theorem golden_multi_arg_and_pipelined_rtl_verified :
          [ .alu .add (.inputPort 0) (.const 1#64)
          , .alu .mul (.regRead 0) (.const 2#64)
          , .alu .add (.alu .add (.inputPort 0) (.const 5#64)) (.const 1#64) ]) &&
-       (regs1 0 == 11#64) &&
-       (regs1 2 == 16#64) &&
-       (regs2 1 == 22#64)
+       (regs1 0 == x + 1#64) &&
+       (regs1 2 == (x + 5#64) + 1#64) &&
+       (regs2 1 == (x + 1#64) * 2#64)
      | none => false) = true := by
-  decide +kernel
+  cbv
+  all_goals simp [Bool.and_eq_true, beq_iff_eq]
+  repeat' first | apply And.intro | rfl | simp only [BitVec.zero_add]
 
 /-! ## 14. Rich Struct/Union/Multi-Arg Term Compiler (`compileRichTerm`) & Stateful `always_ff` Step Compiler (`compileStatefulStepToRtl`) -/
 
@@ -3024,13 +3081,16 @@ def compileStatefulTermsToRtl
       , stateRegs   := regDecls
       , outputExprs := outExprs })
 
-/-- **Theorem (`golden_richTerm_and_statefulStep_rtl_verified`)**:
+section
+attribute [local cbv_opaque] BitVec.add Nat.beq
+
+/-- **Theorem (`richTerm_and_statefulStep_rtl_verified`)**:
 1. Verifies `compileRichTerm` on a struct `.record`, `.extend`, `.get`, and `.inject` / `.case`
    under a concrete `RtlLayoutCtx` (`lo` at `(0, 32)`, `hi` at `(32, 32)`; sum arms `Left` tag `0`,
    `Right` tag `1`),
 2. Verifies `compileStatefulTermsToRtl` on a 2-register synchronous accumulator (`acc_lo`, `acc_hi`),
    confirming `checkRtlModule m = true` and exact 2-cycle state progression under `stepModuleRegs`. -/
-theorem golden_richTerm_and_statefulStep_rtl_verified :
+theorem richTerm_and_statefulStep_rtl_verified (x : BitVec 64) :
     let ctx : RtlLayoutCtx :=
       { structSlices := [("lo", (0, 32)), ("hi", (32, 32))]
       , unionTagBits := 8
@@ -3054,17 +3114,19 @@ theorem golden_richTerm_and_statefulStep_rtl_verified :
              [("sum_out", outSumTerm)] with
      | some eLo, some eHi, some eCase, some m =>
        let env0 : Nat → BitVec 64 := fun _ => 0#64
-       let inCycle : Nat → BitVec 64 := fun i => if i == 0 then 7#64 else 1#64
+       let inCycle : Nat → BitVec 64 := fun i => if i == 0 then x else 1#64
        let regs1 := stepModuleRegs m false inCycle env0
        let regs2 := stepModuleRegs m false inCycle regs1
        (evalRtlExpr env0 env0 env0 eLo == 99#64) &&
        (evalRtlExpr env0 env0 env0 eHi == 20#64) &&
        (evalRtlExpr env0 env0 env0 eCase == 84#64) &&
        checkRtlModule m &&
-       (regs1 0 == 7#64) && (regs1 1 == 1#64) &&
-       (regs2 0 == 14#64) && (regs2 1 == 2#64)
+       (regs1 0 == x) && (regs1 1 == 1#64) &&
+       (regs2 0 == x + x) && (regs2 1 == 2#64)
      | _, _, _, _ => false) = true := by
-  decide +kernel
+  cbv
+  simp [BitVec.zero_add]
+end
 
 /-- **Theorem (`compileRichTerm_struct_union_and_stateful_verified`)**:
 End-to-end verification of:
@@ -3075,7 +3137,7 @@ End-to-end verification of:
    (`checkRtlModule = true`, `inputNames = ["arg0", "arg1"]`), and
 5. Whole-book `compileRichBookToRtl` on a `Book` combining a packed struct cell, a 2-argument method
    with curried `super` $\beta$-redex, and a slot calling `self.blend((self.pair).lo, (self.pair).hi)`. -/
-theorem compileRichTerm_struct_union_and_stateful_verified :
+theorem compileRichTerm_struct_union_and_stateful_verified (x y : BitVec 64) :
     let ctx : RtlLayoutCtx :=
       { structSlices := [("lo", (0, 32)), ("hi", (32, 32))]
       , unionTagBits := 8
@@ -3131,7 +3193,7 @@ theorem compileRichTerm_struct_union_and_stateful_verified :
            compileRichBookToRtl "rich_book" ctx richBook with
      | some eBeta, some eSplit, some eFull, some mWrap, some mSat, some mRich =>
        let env0 : Nat → BitVec 64 := fun _ => 0#64
-       let in2 : Nat → BitVec 64 := fun i => if i == 0 then 7#64 else if i == 1 then 8#64 else 0#64
+       let in2 : Nat → BitVec 64 := fun i => if i == 0 then x else if i == 1 then y else 0#64
        (evalRtlExpr env0 env0 env0 eBeta == 35#64) &&
        (evalRtlExpr env0 env0 env0 eSplit == 28#64) &&
        (evalRtlExpr env0 env0 env0 eFull == 0xFEDCBA9876543210#64) &&
@@ -3139,11 +3201,13 @@ theorem compileRichTerm_struct_union_and_stateful_verified :
        checkRtlModule mSat &&
        checkRtlModule mRich &&
        (mSat.inputNames == ["arg0", "arg1"]) &&
-       (evalModuleOutputs mSat in2 env0 == [("out_base", 100#64), ("out_combine", 115#64)]) &&
-       (evalModuleOutputs mWrap in2 env0 == [("out_base", 100#64), ("out_combine", 115#64)]) &&
+       (evalModuleOutputs mSat in2 env0 == [("out_base", 100#64), ("out_combine", 100#64 + (x + y))]) &&
+       (evalModuleOutputs mWrap in2 env0 == [("out_base", 100#64), ("out_combine", 100#64 + (x + y))]) &&
        ((evalModuleOutputs mRich env0 env0).lookup "out_sumPair" == some 30#64)
      | _, _, _, _, _, _ => false) = true := by
-  decide +kernel
+  cbv
+  all_goals simp [Bool.and_eq_true, beq_iff_eq]
+  repeat' first | apply And.intro | rfl | simp only [BitVec.zero_add]
 
 end Obend.Hardware.Compiler
 end

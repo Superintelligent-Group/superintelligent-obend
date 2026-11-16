@@ -1,4 +1,5 @@
 module
+import all Obend.Hardware.ArrayKernel
 public import Obend.Hardware.Gpu.NttSpec
 public import Obend.Hardware.Gpu.PhaseSemantics
 public import Obend.Hardware.Gpu.BlockLower

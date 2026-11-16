@@ -399,8 +399,8 @@ theorem groebner_negative_and_positive_ast :
 theorem rtl_synth_wire_roundtrips :
     decodeRtlSynthObj (encodeRtlSynthObj "test_rtl_synth") = Except.ok "test_rtl_synth" ∧
     decodeRtlSynthCert (encodeRtlSynthCert goldenFlatRtlModule) = Except.ok goldenFlatRtlModule :=
-  ⟨decodeRtlSynthObj_encodeRtlSynthObj_roundtrip.1,
-   decodeRtlSynthCert_encodeRtlSynthCert_roundtrip.1⟩
+  ⟨decodeRtlSynthObj_encodeRtlSynthObj_roundtrip "test_rtl_synth",
+   decodeRtlSynthCert_encodeRtlSynthCert_roundtrip goldenFlatRtlModule⟩
 
 /-- Closed 1-slot `Leaf.Book` (`out := x * 2 + 1`) for fast kernel `decide +kernel` synthesis proof,
     plus VM `#guard` check on the 4-slot open-recursive `StdlibCell.versionedCell_book`. -/

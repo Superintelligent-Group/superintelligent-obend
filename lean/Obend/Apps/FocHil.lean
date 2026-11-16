@@ -11,6 +11,7 @@ public import Obend.Leaf.Specialize
 public import Obend.Leaf.Static
 public import Obend.Hardware.HDL
 public import Obend.Hardware.Compiler
+import all Obend.Hardware.Compiler
 public import Obend.Hardware.Synth
 public import Obend.Hardware.Types
 public import Obend.Hardware.CurrentLoop

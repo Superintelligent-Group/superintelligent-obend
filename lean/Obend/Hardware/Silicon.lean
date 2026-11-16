@@ -5,7 +5,7 @@ module
 public import Obend.Core.Ty
 public import Obend.Equiv.Demand
 public import Obend.Hardware.HDL
-@[expose] public section
+public section
 
 namespace Obend.Hardware.Silicon
 open Obend.Core.Ty (Ty Quantity)
@@ -137,10 +137,10 @@ def lowerTy (wordW : Nat := 64) : Ty → Option HwTy
   | _ => none
 
 theorem lowerTy_prototype_erases_cold_spine (wordW : Nat) (spec target : Ty) :
-    lowerTy wordW (.prototype spec target) = lowerTy wordW target := rfl
+    lowerTy wordW (.prototype spec target) = lowerTy wordW target := by rfl
 
 theorem lowerTy_custody_zero_bits (wordW id : Nat) :
-    ((lowerTy wordW (.custody id)).map HwTy.width) = some 0 := rfl
+    ((lowerTy wordW (.custody id)).map HwTy.width) = some 0 := by rfl
 
 /-! ## 2. `Silicon` — Adversarial physical FPGA/ASIC primitives (SRL, DSP48/58, URAM/SRAM, SkidBuffer) -/
 
@@ -148,7 +148,7 @@ def stepDataReg {w : Nat} (state : BitVec w) (ce : Bool) (d : BitVec w) : BitVec
   if ce then d else state
 
 theorem stepDataReg_latch_and_hold {w : Nat} (garbage₀ v d_next : BitVec w) :
-    stepDataReg (stepDataReg garbage₀ true v) false d_next = v := rfl
+    stepDataReg (stepDataReg garbage₀ true v) false d_next = v := by rfl
 
 structure Pipe2State (w : Nat) where
   s1 : BitVec w
@@ -159,13 +159,14 @@ def stepPipe2 {w : Nat} (st : Pipe2State w) (din : BitVec w) : Pipe2State w :=
   { s1 := din, s2 := st.s1 }
 
 theorem pipe2_x_free {w : Nat} (st₀ : Pipe2State w) (x₀ x₁ : BitVec w) :
-    (stepPipe2 (stepPipe2 st₀ x₀) x₁).s2 = x₀ := rfl
+    (stepPipe2 (stepPipe2 st₀ x₀) x₁).s2 = x₀ := by rfl
 
 structure DspMacState (w : Nat) where
   a1 : BitVec w
   b1 : BitVec w
   a2 : BitVec w
   b2 : BitVec w
+  c1 : BitVec w := 0#w
   c2 : BitVec w
   mreg : BitVec w
   c3 : BitVec w
@@ -177,7 +178,8 @@ def stepDspMac {w : Nat} (st : DspMacState w) (a_in b_in c_in : BitVec w) : DspM
   , b1 := b_in
   , a2 := st.a1
   , b2 := st.b1
-  , c2 := c_in
+  , c1 := c_in
+  , c2 := st.c1
   , mreg := st.a2 * st.b2
   , c3 := st.c2
   , preg := st.mreg + st.c3 }
@@ -188,7 +190,12 @@ theorem dspMac_latency_4 {w : Nat} (st₀ : DspMacState w)
     let s2 := stepDspMac s1  a₁ b₁ c₁
     let s3 := stepDspMac s2  a₂ b₂ c₂
     let s4 := stepDspMac s3  a₃ b₃ c₃
-    s4.preg = a₀ * b₀ + c₁ := rfl
+    s4.preg = a₀ * b₀ + c₀ := by rfl
+
+theorem stepDspMac_c_port_two_cycle_aligned {w : Nat} (st : DspMacState w)
+    (a₀ b₀ c₀ a₁ b₁ c₁ a₂ b₂ c₂ : BitVec w) :
+    let s := stepDspMac (stepDspMac (stepDspMac st a₀ b₀ c₀) a₁ b₁ c₁) a₂ b₂ c₂
+    s.mreg = a₀ * b₀ ∧ s.c3 = c₀ := by exact ⟨rfl, rfl⟩
 
 structure SyncRAMState (w : Nat) where
   mem : Nat → BitVec w
@@ -284,7 +291,7 @@ def SkidState.sReady {w : Nat} (st : SkidState w) : Bool := !st.sValid
 def SkidState.mValid {w : Nat} (st : SkidState w) : Bool := st.pValid
 def SkidState.mData  {w : Nat} (st : SkidState w) : BitVec w := st.pData
 
-def SkidState.init {w : Nat} (g₁ g₂ : BitVec w) : SkidState w :=
+@[expose] def SkidState.init {w : Nat} (g₁ g₂ : BitVec w) : SkidState w :=
   { pValid := false, pData := g₁, sValid := false, sData := g₂ }
 
 def stepSkid {w : Nat} (st : SkidState w) (sValidIn : Bool) (sDataIn : BitVec w) (mReadyIn : Bool) :
@@ -508,7 +515,7 @@ theorem wfBank_nil (fs : List (String × FE)) : WfBank fs [] := by
   intro x u h; simp at h
 
 theorem wfBank_tick {fs : List (String × FE)} (nd : (fs.map Prod.fst).Nodup)
-    {κ : List (String × Nat)} (_hwf : WfBank fs κ) : WfBank fs (tickNamed fs κ) := by
+    {κ : List (String × Nat)} : WfBank fs (tickNamed fs κ) := by
   intro x u h
   rw [lookup_tickNamed nd] at h
   cases hl : look fs x with
@@ -522,7 +529,7 @@ theorem wfBank_tick {fs : List (String × FE)} (nd : (fs.map Prod.fst).Nodup)
 theorem wfBank_run {fs : List (String × FE)} (nd : (fs.map Prod.fst).Nodup) :
     ∀ k, WfBank fs (runNamed fs k)
   | 0 => wfBank_nil fs
-  | k + 1 => wfBank_tick nd (wfBank_run nd k)
+  | _ + 1 => wfBank_tick nd
 
 theorem latch_stable_tick {fs : List (String × FE)} (nd : (fs.map Prod.fst).Nodup)
     {κ : List (String × Nat)} (hwf : WfBank fs κ) {x : String} {u : Nat}
@@ -668,7 +675,7 @@ theorem checkAllChannelHops_sound (channels : List PlacedChannel)
 
 /-- Golden floorplanned channel list exercising intra-tile combinational wiring, 1-hop pipelined
 tile routing, and 2-stage Laguna SLR crossing. -/
-def goldenPlacedChannels : List PlacedChannel :=
+def referencePlacedChannels : List PlacedChannel :=
   [ { name := "local_comb",   src := ⟨0, 0, 0⟩, dst := ⟨0, 0, 0⟩, bitWidth := 64, regStages := 0 }
   , { name := "adj_tile_hop", src := ⟨0, 0, 0⟩, dst := ⟨0, 0, 1⟩, bitWidth := 64, regStages := 1 }
   , { name := "slr_laguna",   src := ⟨0, 0, 1⟩, dst := ⟨1, 0, 1⟩, bitWidth := 64, regStages := 2 } ]
