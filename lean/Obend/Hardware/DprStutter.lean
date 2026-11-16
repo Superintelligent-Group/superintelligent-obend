@@ -115,7 +115,15 @@ theorem decodeTileFrames_encodeTileFrames (tiles : Array TechmappedTile) :
 this tile's register. All combinational paths end at inputs or registered edges. -/
 def tileInputs (inputs regs : Array Bool) (i : Nat) : Nat → Bool := fun p =>
   if p < 4 then inputs[p]?.getD false
-  else if p = 4 then regs[i - 1]?.getD false else regs[i]?.getD false
+  else if p = 4 then (if i = 0 then false else regs[i - 1]?.getD false)
+  else regs[i]?.getD false
+
+theorem tileInputs_zero_west_boundary_zero (inputs regs : Array Bool) :
+    tileInputs inputs regs 0 4 = false := by rfl
+
+theorem tileInputs_succ_west_eq (inputs regs : Array Bool) (i : Nat) :
+    tileInputs inputs regs (i + 1) 4 = regs[i]?.getD false := by
+  simp [tileInputs]
 
 def evalTechmappedTile (t : TechmappedTile) (inp : Nat → Bool) (reg : Bool) : Bool :=
   if t.registered then reg else

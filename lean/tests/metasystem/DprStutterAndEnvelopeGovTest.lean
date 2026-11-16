@@ -304,3 +304,12 @@ set_option interpreter.prefer_native false in
   IO.println "DPR / physical-envelope integration: receipt, 8-of-16 VRAM, forged-page rejection, envelope, meter and hot-swap passed"
 
 end Obend.Tests.DprStutterAndEnvelopeGov
+
+namespace Obend.Tests.DprBoundary
+open Obend.Hardware.DprStutter
+def unguardedWest (inputs regs : Array Bool) (i : Nat) : Nat → Bool := fun p =>
+  if p < 4 then inputs[p]?.getD false
+  else if p = 4 then regs[i - 1]?.getD false else regs[i]?.getD false
+#tooth tileInputs_zero_west_boundary_zero by mutation tileInputs := unguardedWest
+example : tileInputs #[] #[true] 0 4 = false := rfl
+end Obend.Tests.DprBoundary

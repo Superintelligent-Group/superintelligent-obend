@@ -1,4 +1,5 @@
 module
+import all Obend.Hardware.ArrayKernel
 public import Obend.Hardware.Gpu.BlockLower
 public import Obend.Hardware.ArrayKernelOwnership
 @[expose] public section

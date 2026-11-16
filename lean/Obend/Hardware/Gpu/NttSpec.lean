@@ -1,4 +1,5 @@
 module
+import all Obend.Hardware.ArrayKernel
 public import Std
 public import Obend.Hardware.ArrayKernel
 public import Obend.Hardware.Gpu.GoldilocksSource

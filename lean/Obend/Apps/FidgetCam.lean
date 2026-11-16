@@ -15,6 +15,7 @@ motion, and a theorem relating the RTL to `evalFRepPoint` for every input.
 -/
 public import Lean
 public import Obend.Hardware.Compiler
+import all Obend.Hardware.Compiler
 public import Obend.Hardware.Accelerators
 public import Obend.Hardware.Synth
 public import Obend.Hardware.GeometryCAM

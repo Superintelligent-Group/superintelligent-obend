@@ -1,4 +1,6 @@
 module
+import all Obend.Hardware.Compiler
+import all Obend.Hardware.ReductionMachine
 /-
 # Obend.Lower.Proofs.SiliconKernel — End-to-End Silicon Lean Kernel & Elaborator on `ReductionMachine`
 

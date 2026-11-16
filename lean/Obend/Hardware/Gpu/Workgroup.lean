@@ -1,4 +1,5 @@
 module
+import all Obend.Hardware.ArrayKernel
 /-
 # Barrier-separated workgroup kernels
 

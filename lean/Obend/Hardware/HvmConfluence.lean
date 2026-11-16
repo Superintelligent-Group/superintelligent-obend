@@ -577,7 +577,8 @@ def deltaInteract : DTree → DTree → Option (List DRedex)
   | .lit n, .rep _ _ ts => some (ts.map fun t => (.lit n, t))
   | .fan a1 a2, .fan b1 b2 => some [(a1, b1), (a2, b2)]
   | .rep l1 d1 as, .rep l2 d2 bs =>
-    if replicatorsAnnihilate l1 d1 l2 d2 = true then some (as.zip bs) else none
+    if replicatorsAnnihilate l1 d1 l2 d2 && as.length == d1.length &&
+        bs.length == d2.length then some (as.zip bs) else none
   | _, _ => none
 
 /-- `n` fresh wire ends `f s, f (s+1), …`. -/
@@ -1010,21 +1011,20 @@ theorem normalize_sound (fuel : Nat) (c : DCfg) : DSteps c (normalize fuel c) :=
 level, same deltas. Unequal ones commute (different levels) or are stuck. -/
 theorem rep_interacts_iff_equal (l1 : Nat) (d1 : List Int) (as : List DTree) (l2 : Nat)
     (d2 : List Int) (bs : List DTree) :
-    (deltaInteract (.rep l1 d1 as) (.rep l2 d2 bs)).isSome = true ↔ l1 = l2 ∧ d1 = d2 := by
-  simp only [deltaInteract, replicatorsAnnihilate, Bool.and_eq_true, beq_iff_eq]
-  constructor
-  · intro h
-    by_cases hc : l1 = l2 ∧ d1 = d2
-    · exact hc
-    · simp only [hc, ite_false, Option.isSome_none] at h
-      cases h
-  · intro h
-    simp only [h, and_self, ite_true, Option.isSome_some]
+    (deltaInteract (.rep l1 d1 as) (.rep l2 d2 bs)).isSome = true ↔
+      (l1 = l2 ∧ d1 = d2) ∧ as.length = d1.length ∧ bs.length = d2.length := by
+  simp [deltaInteract, replicatorsAnnihilate, Bool.and_eq_true, and_assoc]
 
-/-- Equal replicators connect their ports pairwise. -/
-theorem rep_annihilates (l : Nat) (d : List Int) (as bs : List DTree) :
+/-- Equal, well-formed replicators connect every port pairwise. -/
+theorem rep_annihilates (l : Nat) (d : List Int) (as bs : List DTree)
+    (ha : as.length = d.length) (hb : bs.length = d.length) :
     deltaInteract (.rep l d as) (.rep l d bs) = some (as.zip bs) := by
-  simp only [deltaInteract, replicatorsAnnihilate, beq_self_eq_true, Bool.and_self, ite_true]
+  simp [deltaInteract, replicatorsAnnihilate, ha, hb]
+
+theorem rep_arity_mismatch_refused (l1 l2 : Nat) (d1 d2 : List Int) (as bs : List DTree)
+    (h : as.length ≠ d1.length ∨ bs.length ≠ d2.length) :
+    deltaInteract (.rep l1 d1 as) (.rep l2 d2 bs) = none := by
+  rcases h with h | h <;> simp [deltaInteract, h]
 
 /-! ### λ-terms as Δ-nets -/
 

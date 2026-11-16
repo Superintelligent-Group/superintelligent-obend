@@ -30,7 +30,9 @@ public import Obend.Lower.Proofs.Book
 public import Obend.Lower.Inductive
 public import Obend.Hardware.Compiler
 public import Obend.Hardware.HDL
-@[expose] public section
+import all Obend.Hardware.Compiler
+import all Obend.Lower.Fragment
+public section
 namespace Obend.Lower
 open Obend.Core.Term Obend.Core.Ty
 open Obend.Equiv Obend.Leaf
@@ -308,7 +310,7 @@ theorem inlinePass_direct_idempotent :
 /-! ## 6. Contextual Equivalence (`Ahead` and `≈b`) of Beta + Record + Split Dictionary Inlining -/
 
 /-- Static beta-resolution: `(.lam b) a ↦ instantiate b a`. -/
-def resolveApp : Term → Term → Term
+@[expose] def resolveApp : Term → Term → Term
   | .lam b, a => instantiate b a
   | f, a => .app f a
 
@@ -500,11 +502,38 @@ def sumToLExpr : LExpr :=
 
 /-! ## 9. Sequential 2-State Recurrence FSM Compilation (`fibLExpr` → `Book` → `fibSeqRtl`) -/
 
+/-- Simultaneous Fibonacci specification; the pair avoids exponential evaluation. -/
+def fibState : Nat → Nat × Nat
+  | 0 => (0,1)
+  | n+1 => let p := fibState n; (p.2,p.1+p.2)
+
+/-- Natural Fibonacci numbers, with the standard zero and successor recurrence. -/
+def _root_.Nat.fib (n : Nat) : Nat := (fibState n).1
+
+private theorem fibState_second (n : Nat) : (fibState n).2 = Nat.fib (n+1) := rfl
+
+@[simp] theorem fib_zero : Nat.fib 0 = 0 := by simp [Nat.fib, fibState]
+@[simp] theorem fib_one : Nat.fib 1 = 1 := by simp [Nat.fib, fibState]
+
+theorem fib_add_two (n : Nat) : Nat.fib (n+2) = Nat.fib n + Nat.fib (n+1) := by simp [Nat.fib, fibState]
+
+private theorem fibState_ordered (n : Nat) : (fibState n).1 ≤ (fibState n).2 := by
+  cases n with
+  | zero => decide
+  | succ n => simp only [fibState]; omega
+
+private theorem fib_monotone {a b : Nat} (h : a ≤ b) : Nat.fib a ≤ Nat.fib b := by
+  induction h with
+  | refl => exact Nat.le_refl _
+  | @step b h ih => exact Nat.le_trans ih (fibState_ordered b)
+
+theorem _root_.Nat.fib_lt_two_pow_64 {n : Nat} (h : n < 93) : Nat.fib n < 2^64 := by
+  have hle := fib_monotone (a := n) (b := 92) (by omega)
+  have hb : Nat.fib 92 < 2^64 := by decide +kernel
+  omega
+
 /-- Reference Fibonacci specification (`fib` in `tests/lower/Programs.lean`). -/
-def fibSpec : Nat → Nat
-  | 0 => 0
-  | 1 => 1
-  | n + 2 => fibSpec n + fibSpec (n + 1)
+abbrev fibSpec := Nat.fib
 
 /-- `fib` recurrence in `LExpr` (lowered into a `Leaf.Book` with member `"fib"`). -/
 def fibLExpr : LExpr :=
@@ -519,17 +548,76 @@ def fibLExpr : LExpr :=
           (.bvar 1))))
       (.bvar 0))
 
-/-- Synthesize the sequential multi-cycle 2-state FSM (`RtlModule`) for `fib` via
-`compileBookToSeqRtlSat` on `emit (leanComposition "fib" (lowerT fibLExpr))` (specialized to
-iteration bound `n`). -/
-def fibSeqRtl (n : Nat) : Option RtlModule :=
-  let C := leanComposition "fib" (lowerT fibLExpr)
-  let B := emit C
-  match compileBookToSeqRtlSat "lean_fib_seq_rtl" B with
-  | some m =>
-    if n == 0 then some m
-    else some { (compileNatRec2StateSat "fib" n 0 1) with name := "lean_fib_seq_rtl" }
-  | none => none
+/-- One static module; the iteration count enters exclusively through port zero. -/
+def fibSeqRtl : Option RtlModule :=
+  compileBookToSeqRtlSat "lean_fib_seq_rtl" (emit (leanComposition "fib" (lowerT fibLExpr)))
+
+private theorem fibSeqRtl_eq : fibSeqRtl =
+    some { (compileNatRec2StateSat "fib" 0 0 1) with name := "lean_fib_seq_rtl" } := by
+  cbv
+
+private theorem stepSeqModuleN_succ_right (m : RtlModule) (inputs st : Nat → BitVec 64) (k : Nat) :
+    stepSeqModuleN m inputs (k+1) st = stepModuleRegs m false inputs (stepSeqModuleN m inputs k st) := by
+  induction k generalizing st with
+  | zero => rfl
+  | succ k ih => simp only [stepSeqModuleN]; exact ih _
+
+private theorem fib_loop_invariant (n k : Nat) (hn : n < 93) (hk : k ≤ n) :
+    let m := compileNatRec2StateSat "fib" 0 0 1
+    let ins := fun _ : Nat => BitVec.ofNat 64 n
+    let st := stepSeqModuleN m ins k (stepModuleRegs m true ins (fun _ => 0#64))
+    st 0 = BitVec.ofNat 64 k ∧ st 1 = BitVec.ofNat 64 (Nat.fib k) ∧
+      st 2 = BitVec.ofNat 64 (Nat.fib (k+1)) := by
+  induction k with
+  | zero =>
+    simp [stepSeqModuleN, compileNatRec2StateSat, stepModuleRegs, Nat.fib, fibState]
+  | succ k ih =>
+    have prev := ih (by omega)
+    dsimp only at prev ⊢
+    rw [stepSeqModuleN_succ_right]
+    have hn64 : n < 2^64 := by omega
+    have hk64 : k < 2^64 := by omega
+    have run : BitVec.ult
+        (stepSeqModuleN (compileNatRec2StateSat "fib" 0 0 1) (fun _ => BitVec.ofNat 64 n) k
+          (stepModuleRegs (compileNatRec2StateSat "fib" 0 0 1) true (fun _ => BitVec.ofNat 64 n) (fun _ => 0#64)) 0)
+        (BitVec.ofNat 64 n ||| BitVec.ofNat 64 0) = true := by
+      rw [prev.1]
+      simp [BitVec.ult, Nat.mod_eq_of_lt hn64, Nat.mod_eq_of_lt hk64]
+      omega
+    have step := compileNatRec2StateSat_running_step_universal "fib" 0 0 1
+      (fun _ => BitVec.ofNat 64 n) _ run
+    rw [step.1,step.2.1,step.2.2,prev.1,prev.2.1,prev.2.2]
+    simp [fib_add_two, BitVec.ofNat_add]
+
+/-- The same input-driven module computes Fibonacci for every n < 93, including
+the zero-cycle case, and asserts completion after exactly n cycles. -/
+theorem fibSeqRtl_computes_fib (n : Nat) (hn : n < 93) :
+    ∃ m, fibSeqRtl = some m ∧
+      evalSeqModuleAfterCycles m (BitVec.ofNat 64 n) n =
+        [("out_fib", BitVec.ofNat 64 (Nat.fib n)), ("out_done",1#64)] := by
+  refine ⟨_, fibSeqRtl_eq, ?_⟩
+  have inv := fib_loop_invariant n n hn (Nat.le_refl _)
+  dsimp only at inv
+  have state_name : ∀ (rst : Bool) ins st,
+      stepModuleRegs { (compileNatRec2StateSat "fib" 0 0 1) with name := "lean_fib_seq_rtl" } rst ins st =
+        stepModuleRegs (compileNatRec2StateSat "fib" 0 0 1) rst ins st := by intros; rfl
+  have trace_name : ∀ k st,
+      stepSeqModuleN { (compileNatRec2StateSat "fib" 0 0 1) with name := "lean_fib_seq_rtl" }
+        (fun _ => BitVec.ofNat 64 n) k st =
+      stepSeqModuleN (compileNatRec2StateSat "fib" 0 0 1) (fun _ => BitVec.ofNat 64 n) k st := by
+    intro k; induction k with
+    | zero => intros; rfl
+    | succ k ih => intro st; simp only [stepSeqModuleN, state_name, ih]
+  simp only [evalSeqModuleAfterCycles, state_name, trace_name]
+  have out : ∀ st : Nat → BitVec 64,
+      st 0 = BitVec.ofNat 64 n → st 1 = BitVec.ofNat 64 (Nat.fib n) →
+      evalModuleOutputs { (compileNatRec2StateSat "fib" 0 0 1) with name := "lean_fib_seq_rtl" }
+        (fun _ => BitVec.ofNat 64 n) st =
+          [("out_fib", BitVec.ofNat 64 (Nat.fib n)), ("out_done",1#64)] := by
+    intro st h0 h1
+    simp [evalModuleOutputs, compileNatRec2StateSat, evalWireTable, evalRtlExpr, evalAluOp, h0,h1, BitVec.ult]
+    decide
+  exact out _ inv.1 inv.2.1
 
 /-! ## 10. Multi-Constructor & Nested `compileMultiCtorIota` Eliminator Bridge to `Core4` & Hardware -/
 

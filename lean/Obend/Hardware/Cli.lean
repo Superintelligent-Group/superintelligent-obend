@@ -41,6 +41,7 @@ namespace Obend.Hardware.Cli
 open Lean (Json toJson)
 open Obend.Judge
 open Obend.Hardware.Judge
+open Obend.Hardware.Process Obend.Hardware.Synth Obend.Hardware.Retiming Obend.Hardware.PlaceRoute
 
 /-- Construct a JSON hardware receipt for `formatName` (`e.g. "hw-pnr-bitstream@1"`). -/
 def mkHwReceiptJson (formatName : String) (objJson certJson : Json) : Json :=
@@ -101,17 +102,12 @@ def cmdVerifyPnr (args : List String) : IO UInt32 := do
   let (modeOpt, args1) := extractFlag "--mode" args
   let (outOpt, _)      := extractFlag "--out" args1
   let mode := modeOpt.getD "valid"
-  let cell1TileY : Nat := if mode == "collision" then 0 else 1
-  let net1Dst    : Nat := if mode == "short" then 11 else 21
-  let objJson  := Json.mkObj [("periodPs", toJson (2000 : Nat))]
-  let certJson := Json.mkObj
-    [ ("designName",   toJson "obend_routed_adder2")
-    , ("sinkCapFf",    toJson (5 : Nat))
-    , ("cell1TileY",   toJson cell1TileY)
-    , ("cell0BelSlot", toJson (0 : Nat))
-    , ("cell1BelSlot", toJson (0 : Nat))
-    , ("net0DstWire",  toJson (12 : Nat))
-    , ("net1DstWire",  toJson net1Dst) ]
+  let cert := if mode == "collision" then collidingBelPnrCert
+    else if mode == "short" then shortedWirePnrCert else validAdderPnrCert
+  let objJson ← match Json.parse (encodePnrProblem (validAdderBelNetlist, corner7nm_SS, 2000)) with
+    | .ok j => pure j | .error e => throw (IO.userError e)
+  let certJson ← match Json.parse (encodePnrWireCert cert) with
+    | .ok j => pure j | .error e => throw (IO.userError e)
   let recJson  := mkHwReceiptJson "hw-pnr-bitstream@1" objJson certJson
   if let some outPath := outOpt then
     IO.FS.writeFile outPath (recJson.pretty ++ "\n")
@@ -125,11 +121,10 @@ def cmdVerifyRetime (args : List String) : IO UInt32 := do
   let lag1 : Int := match lagOpt.bind String.toInt? with
     | some k => k
     | none   => 1
-  let objJson  := Json.mkObj [("periodPs", toJson (2000 : Nat))]
-  let certJson := Json.mkObj
-    [ ("lag0",           toJson (0 : Int))
-    , ("lag1",           toJson lag1)
-    , ("ioLatencyShift", toJson (0 : Int)) ]
+  let objJson ← match Json.parse (encodeRetimeObj (macUnretimedGraph, 2000)) with
+    | .ok j => pure j | .error e => throw (IO.userError e)
+  let certJson ← match Json.parse (encodeRetimeCert { vertexLags := [(0,0),(1,lag1),(2,0)], ioLatencyShift := 0 }) with
+    | .ok j => pure j | .error e => throw (IO.userError e)
   let recJson  := mkHwReceiptJson "hw-retime-sta@1" objJson certJson
   if let some outPath := outOpt then
     IO.FS.writeFile outPath (recJson.pretty ++ "\n")

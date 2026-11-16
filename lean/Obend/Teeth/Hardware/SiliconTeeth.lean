@@ -24,6 +24,7 @@ import all Obend.Hardware.NotebookProjection
 import all Obend.Hardware.HDL
 import all Obend.Hardware.Types
 import all Obend.Hardware.Compiler
+import all Obend.Lower.Proofs.Hardware
 import all Obend.Hardware.Synth
 import all Obend.Hardware.Retiming
 import all Obend.Hardware.PlaceRoute
@@ -164,15 +165,16 @@ def stepPipe2Broken {w : Nat} (_st : Pipe2State w) (d : BitVec w) : Pipe2State w
 
 #tooth Obend.Hardware.Silicon.pipe2_x_free by mutation Obend.Hardware.Silicon.stepPipe2 := stepPipe2Broken
 
-/-- 2. Broken `DSP48E2` MAC that forgets the `c2` pipeline register stage (`c3 := c_in` instead of `st.c2`). -/
+/-- 2. Broken `DSP48E2` MAC that bypasses the `c1` pipeline register stage (`c2 := c_in` instead of `st.c1`). -/
 def stepDspMacBroken {w : Nat} (st : DspMacState w) (a_in b_in c_in : BitVec w) : DspMacState w :=
   { a1   := a_in
   , b1   := b_in
   , a2   := st.a1
   , b2   := st.b1
+  , c1   := c_in
   , c2   := c_in
   , mreg := st.a2 * st.b2
-  , c3   := c_in
+  , c3   := st.c2
   , preg := st.mreg + st.c3 }
 
 #tooth Obend.Hardware.Silicon.dspMac_latency_4 by mutation Obend.Hardware.Silicon.stepDspMac := stepDspMacBroken
@@ -547,3 +549,37 @@ open Obend.Hardware.Device in
 #tooth sky130Diode_recipe_implant_inhabited by
   mutation sky130DiodeRecipe := fun _ nPlusDose =>
     [.implant .boron 160 1.3e13, .implant .arsenic 50 nPlusDose]
+
+open Obend.Hardware.ReductionMachine in
+#tooth flitConservation by
+  mutation stepNocCreditRouter := fun t => { t with inbox := [] }
+
+open Obend.Hardware.ReductionMachine in
+#tooth stepNocCreditRouter_stalls by
+  mutation stepNocCreditRouter := stepNocRouter
+
+open Obend.Hardware.ReductionMachine in
+#tooth dprController_bad_crc_refused by
+  mutation stepDprController := fun s _ => s.enter .running
+
+open Obend.Hardware.ReductionMachine in
+#tooth dprController_isolation_clamps by
+  mutation effectiveDprOutput := fun s => s.activeOutput
+
+#tooth Obend.Lower.fibSeqRtl_computes_fib by
+  mutation Obend.Hardware.Compiler.evalSeqModuleAfterCycles := fun _ _ _ => []
+
+#tooth Obend.Hardware.Judge.decodeRtlSynthCert_encodeRtlSynthCert_roundtrip by
+  mutation Obend.Hardware.Judge.encodeRtlSynthCert := fun _ => "{}"
+
+#tooth Obend.Hardware.Judge.decodeRetimeObj_encodeRetimeObj_roundtrip by
+  mutation Obend.Hardware.Judge.encodeRetimeObj := fun _ => "{}"
+
+#tooth Obend.Hardware.Judge.decodePnrProblem_encodePnrProblem_roundtrip by
+  mutation Obend.Hardware.Judge.encodePnrProblem := fun _ => "{}"
+
+#tooth Obend.Hardware.Judge.checkRetimeSta_ok_iff by
+  mutation Obend.Hardware.Judge.checkRetimeSta := fun _ _ _ => .ok
+
+#tooth Obend.Hardware.Judge.checkPnrProblemJudge_ok_iff by
+  mutation Obend.Hardware.Judge.checkPnrProblemJudge := fun _ _ _ => .ok

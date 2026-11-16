@@ -1,4 +1,5 @@
 module
+import all Obend.Hardware.ArrayKernel
 public import Obend.Hardware.ArrayKernel
 @[expose] public section
 

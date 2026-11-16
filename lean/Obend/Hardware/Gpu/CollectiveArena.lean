@@ -1,4 +1,5 @@
 module
+import all Obend.Hardware.ArrayKernel
 public import Obend.Hardware.Gpu.ArrayEmit
 public import Obend.Hardware.Gpu.PhaseSemantics
 @[expose] public section

@@ -34,7 +34,8 @@ public import Obend.Leaf.Emit
 public import Obend.Leaf.Specialize
 public import Obend.Lower.Fragment
 public import Obend.Hardware.Compiler
-@[expose] public section
+import all Obend.Hardware.Compiler
+public section
 
 namespace Obend.Hardware.ReductionMachine
 open Obend.Core.Term
@@ -167,7 +168,7 @@ theorem automaton_simulates_book
 /-- Structural first-order lowering of scalar `Lean-lite` (`Obend.Lower.LExpr`) terms to `Obend.Core.Term`
 (matching `Obend.Lower.lowerT` on all scalar/control forms without `WellFounded.fix` so kernel
 `rfl` and `decide` reduce lowered hardware datapaths directly). -/
-def lowerLiteScalar : LExpr → Term
+@[expose] def lowerLiteScalar : LExpr → Term
   | .bvar i          => .bound i
   | .erased          => box
   | .const _ b       => lowerLiteScalar b
@@ -225,11 +226,61 @@ structure ReconfigTileState where
   skidHeldOutput : BitVec 64
   deriving DecidableEq, Repr
 
+/-- Clocked ICAP controller: loading and verification are separate fenced states. -/
+inductive DprPhase where
+  | running | isolating | loading | verifying
+  deriving DecidableEq, Repr
+
+structure DprControllerState where
+  phase : DprPhase
+  loadCyclesLeft : Nat
+  crcOk : Bool
+  activeOutput : BitVec 64
+  liveTile : ReconfigTileState
+  deriving DecidableEq, Repr
+
+def effectiveDprOutput (s : DprControllerState) : BitVec 64 :=
+  if s.phase == .running then s.activeOutput else 0#64
+
+/-- Keep the physical fence synchronized with the controller phase. -/
+def DprControllerState.enter (s : DprControllerState) (phase : DprPhase) : DprControllerState :=
+  { s with
+    phase := phase
+    liveTile := { s.liveTile with isolated := phase != .running, skidHeldOutput := 0#64 } }
+
+def stepDprController (s : DprControllerState) (trigger : Bool) : DprControllerState :=
+  match s.phase with
+  | .running => if trigger || !s.crcOk then s.enter .isolating else s.enter .running
+  | .isolating => s.enter .loading
+  | .loading => match s.loadCyclesLeft with
+    | 0 => s.enter .verifying
+    | k + 1 => { s.enter .loading with loadCyclesLeft := k }
+  | .verifying => if s.crcOk then s.enter .running else s.enter .isolating
+
+theorem dprController_isolation_clamps (s : DprControllerState) (h : s.phase ≠ .running) :
+    effectiveDprOutput s = 0#64 := by simp [effectiveDprOutput, h]
+
+/-- A failed CRC cannot release the fence, including an invalid running input state. -/
+theorem dprController_bad_crc_refused (s : DprControllerState) (trigger : Bool)
+    (h : s.crcOk = false) :
+    (stepDprController s trigger).phase ≠ .running ∧
+    (stepDprController s trigger).liveTile.isolated = true ∧
+    effectiveDprOutput (stepDprController s trigger) = 0#64 := by
+  cases hp : s.phase <;> cases hn : s.loadCyclesLeft <;>
+    simp [stepDprController, hp, hn, h, DprControllerState.enter, effectiveDprOutput]
+
+/-- The hardware fence and phase remain synchronized at every clock edge. -/
+theorem dprController_fence_consistent (s : DprControllerState) (trigger : Bool) :
+    (stepDprController s trigger).liveTile.isolated =
+      ((stepDprController s trigger).phase != .running) := by
+  cases hp : s.phase <;> cases hn : s.loadCyclesLeft <;>
+    simp [stepDprController, hp, hn, DprControllerState.enter] <;> split <;> rfl
+
 /-- Evaluate the combinational output of a `ReconfigTileState`:
 * When the PR isolation fence is active (`tile.isolated = true`), the output is strictly clamped
   to `tile.skidHeldOutput` regardless of any transient bitstream mutations inside `activeTile`,
 * When unisolated (`tile.isolated = false`), the tile evaluates `tile.activeTile.datapath`. -/
-def evalReconfigTile
+@[expose] def evalReconfigTile
     (tile : ReconfigTileState)
     (wireEnv regEnv : Nat → BitVec 64)
     (argVal : BitVec 64) : BitVec 64 :=
@@ -321,7 +372,7 @@ structure EfpgaDprArray where
 /-- **DPR Phase 1 (`dprPhase1Isolate`)**:
 Assert the hardware Region Isolation Fence (`isolated := true`) on `targetTileId` while leaving
 all other tiles `t.tileId ≠ targetTileId` untouched. -/
-def dprPhase1Isolate (targetTileId : Nat) (t : ReconfigTileState) : ReconfigTileState :=
+@[expose] def dprPhase1Isolate (targetTileId : Nat) (t : ReconfigTileState) : ReconfigTileState :=
   if t.tileId == targetTileId then
     { t with isolated := true }
   else
@@ -331,7 +382,7 @@ def dprPhase1Isolate (targetTileId : Nat) (t : ReconfigTileState) : ReconfigTile
 Write `frame.newTile` via the `ICAP` port ONLY if `t.tileId == frame.targetTileId`, the tile is
 currently isolated (`t.isolated = true`), and the bitstream frame CRC matches
 (`frame.computedCrc64 == frame.expectedCrc64`). -/
-def dprPhase2LoadFrame (frame : IcapBitstreamFrame) (t : ReconfigTileState) : ReconfigTileState :=
+@[expose] def dprPhase2LoadFrame (frame : IcapBitstreamFrame) (t : ReconfigTileState) : ReconfigTileState :=
   if t.tileId == frame.targetTileId then
     if t.isolated && (frame.computedCrc64 == frame.expectedCrc64) then
       { t with
@@ -346,7 +397,7 @@ def dprPhase2LoadFrame (frame : IcapBitstreamFrame) (t : ReconfigTileState) : Re
 After verifying that the loaded frame CRC matches `frame.expectedCrc64`, release the Region
 Isolation Fence (`isolated := false`) so the newly specialized tile goes live on the next clock edge.
 If the CRC check failed, the tile remains safely isolated (`isolated := true`). -/
-def dprPhase3ReleaseFence (frame : IcapBitstreamFrame) (t : ReconfigTileState) : ReconfigTileState :=
+@[expose] def dprPhase3ReleaseFence (frame : IcapBitstreamFrame) (t : ReconfigTileState) : ReconfigTileState :=
   if t.tileId == frame.targetTileId then
     if frame.computedCrc64 == frame.expectedCrc64 then
       { t with isolated := false }
@@ -357,7 +408,7 @@ def dprPhase3ReleaseFence (frame : IcapBitstreamFrame) (t : ReconfigTileState) :
 
 /-- Execute the complete 3-phase Glitch-Free DPR sequence on a single `ReconfigTileState`:
 $$\text{Phase 1 (Isolate)} \longrightarrow \text{Phase 2 (ICAP Load)} \longrightarrow \text{Phase 3 (Verify CRC \& Release)}.$$ -/
-def runTileGlitchFreeDpr (frame : IcapBitstreamFrame) (t : ReconfigTileState) : ReconfigTileState :=
+@[expose] def runTileGlitchFreeDpr (frame : IcapBitstreamFrame) (t : ReconfigTileState) : ReconfigTileState :=
   dprPhase3ReleaseFence frame (dprPhase2LoadFrame frame (dprPhase1Isolate frame.targetTileId t))
 
 /-- Execute the 3-phase Glitch-Free DPR transaction across an entire `EfpgaDprArray`. -/
@@ -535,7 +586,7 @@ inductive INetRewriteOutcome where
 auxiliary ports, two copies of `l` (ids `n + 2`, `n + 3`) those of `r`'s, and auxiliary port `j` of
 the `k`-th copy of `r` is wired to auxiliary port `k` of the `j`-th copy of `l`. The copies keep
 kind, label and immediate. The principal ports are wired by `commuteSplices`. -/
-def commuteSpawnedNodes (l r : INetNode) (nextFreeId : Nat) : List INetNode :=
+@[expose] def commuteSpawnedNodes (l r : INetNode) (nextFreeId : Nat) : List INetNode :=
   let n := nextFreeId
   [ { r with id := n,     aux1 := ⟨n + 2, 1⟩, aux2 := ⟨n + 3, 1⟩ }
   , { r with id := n + 1, aux1 := ⟨n + 2, 2⟩, aux2 := ⟨n + 3, 2⟩ }
@@ -544,7 +595,7 @@ def commuteSpawnedNodes (l r : INetNode) (nextFreeId : Nat) : List INetNode :=
 
 /-- The principal port of each copy faces the port across the wire from the auxiliary port it
 replaces: `l.aux1`, `l.aux2`, `r.aux1`, `r.aux2`. -/
-def commuteSplices (l r : INetNode) (nextFreeId : Nat) : List (PortRef × PortRef) :=
+@[expose] def commuteSplices (l r : INetNode) (nextFreeId : Nat) : List (PortRef × PortRef) :=
   let n := nextFreeId
   [(⟨n, 0⟩, l.aux1), (⟨n + 1, 0⟩, l.aux2), (⟨n + 2, 0⟩, r.aux1), (⟨n + 3, 0⟩, r.aux2)]
 
@@ -606,7 +657,7 @@ theorem commute_wellformed (l r : INetNode) (n : Nat)
 * **Annihilation vs. Commutation**: two combinators (`dup`, `sup`, `con`) with identical `label` annihilate;
   distinct labels (`l.label ≠ r.label`) commute: four copies, Lafont's rule (`commuteSpawnedNodes`,
   `commuteSplices`, `commute_wellformed`). -/
-def reduceActivePair (pair : ActivePair) (nextFreeId : Nat) : INetRewriteOutcome :=
+@[expose] def reduceActivePair (pair : ActivePair) (nextFreeId : Nat) : INetRewriteOutcome :=
   let l := pair.left
   let r := pair.right
   match l.kind, r.kind with
@@ -985,7 +1036,7 @@ theorem decode_encode_icap_words_roundtrip
     bitvec_toNat_ofNat_lt 32 slotIdx hSlot
   have h3 : (BitVec.ofNat 32 immVal).toNat = immVal :=
     bitvec_toNat_ofNat_lt 32 immVal hImm
-  have hSync : (icapSyncWord == icapSyncWord) = true := rfl
+  have hSync : (icapSyncWord == icapSyncWord) = true := by rfl
   dsimp only [t, encodeTileIcapWords]
   rw [extractTileRuleAndImm_mkIcapRuleTile]
   dsimp only [mkIcapRuleTile, decodeTileIcapWords]
@@ -995,7 +1046,7 @@ theorem decode_encode_icap_words_roundtrip
 /-! ## 8. Multi-Cycle `BendTT` Interaction-Net Active-Pair Hardware Processing Element (`stepInteractionNetPe`, `runInteractionNetCycles`) -/
 
 /-- Construct a `BendTT` Eraser (`ERA`) interaction-net node. -/
-def mkEraNode (id : Nat) : INetNode where
+@[expose] def mkEraNode (id : Nat) : INetNode where
   id     := id
   kind   := .era
   label  := 0
@@ -1148,6 +1199,8 @@ structure InteractionNetPeState where
   bramSlots        : List InertNodeSlot := []
   allocCount       : Nat := 0
   commutationCount : Nat := 0
+  freeList : List Nat := []
+  mismatchedPairs : List ActivePair := []
   deriving DecidableEq, Repr
 
 /-- Initialize an `InteractionNetPeState` with an initial active-pair queue and starting free node ID. -/
@@ -1358,6 +1411,35 @@ def stepNocFlitXy (f : NocFlit) : NocFlit :=
   else
     f
 
+/-- Independent downstream capacities for the four links and local ejection. -/
+structure LinkCredits where
+  north : Nat := 4
+  south : Nat := 4
+  east : Nat := 4
+  west : Nat := 4
+  localEject : Nat := 4
+  deriving DecidableEq, Repr
+
+inductive NocEgress where
+  | north | south | east | west | localEject
+  deriving DecidableEq, Repr
+
+def LinkCredits.get (c : LinkCredits) : NocEgress → Nat
+  | .north => c.north | .south => c.south | .east => c.east
+  | .west => c.west | .localEject => c.localEject
+
+def LinkCredits.consume (c : LinkCredits) : NocEgress → LinkCredits
+  | .north => { c with north := c.north - 1 }
+  | .south => { c with south := c.south - 1 }
+  | .east => { c with east := c.east - 1 }
+  | .west => { c with west := c.west - 1 }
+  | .localEject => { c with localEject := c.localEject - 1 }
+
+def NocFlit.egress (f : NocFlit) : NocEgress :=
+  if f.curX < f.dstX then .east else if f.dstX < f.curX then .west
+  else if f.curY < f.dstY then .north else if f.dstY < f.curY then .south
+  else .localEject
+
 /-- Spatial NoC Tile & Router State (`NocTileState`):
 * `tileId`: linear tile identifier,
 * `tileX`, `tileY`: 2D mesh coordinates on the die,
@@ -1373,6 +1455,7 @@ structure NocTileState where
   outbox  : List NocFlit
   credits : Nat
   rules   : List AutomatonTile
+  linkCredits : LinkCredits := {}
   deriving DecidableEq, Repr
 
 /-- Evaluate the matching `AutomatonTile` rule in `rules` for `targetSlot` on `argVal`. -/
@@ -1427,6 +1510,28 @@ def stepNocRouter (t : NocTileState) : NocTileState :=
             inbox   := rest
             outbox  := t.outbox ++ [f]
             credits := t.credits - 1 }
+
+/-- Credit gating retains the complete input wait queue on backpressure. The
+existing router performs the rule transition; a successful hop consumes only the
+chosen directional credit. Scalar credits continue to account for host ejection. -/
+def stepNocCreditRouter (t : NocTileState) : NocTileState :=
+  match t.inbox with
+  | [] => t
+  | f :: _ =>
+    if t.linkCredits.get f.egress > 0 && t.credits > 0 then
+      { stepNocRouter t with linkCredits := t.linkCredits.consume f.egress }
+    else t
+
+theorem stepNocCreditRouter_stalls (t : NocTileState) (f : NocFlit) (rest : List NocFlit)
+    (hi : t.inbox = f :: rest) (hc : t.linkCredits.get f.egress = 0) :
+    stepNocCreditRouter t = t := by simp [stepNocCreditRouter, hi, hc]
+
+theorem stepNocCreditRouter_consumes_selected (t : NocTileState) (f : NocFlit)
+    (rest : List NocFlit) (hi : t.inbox = f :: rest)
+    (hc : 0 < t.linkCredits.get f.egress) (he : 0 < t.credits) :
+    (stepNocCreditRouter t).linkCredits.get f.egress + 1 = t.linkCredits.get f.egress := by
+  simp only [stepNocCreditRouter, hi, hc, he, decide_true, Bool.true_and, ↓reduceIte]
+  cases hp : f.egress <;> simp_all [LinkCredits.get, LinkCredits.consume] <;> omega
 
 /-- Return an ejected response flit from `outbox` to the host and restore 1 egress credit (`credits + 1`). -/
 def consumeNocOutboxFlit (t : NocTileState) : Option NocFlit × NocTileState :=
@@ -1536,6 +1641,17 @@ theorem stepNocRouter_conserves_flits_and_credits (t : NocTileState) :
           split <;> simp <;> omega
         | response =>
           simp; omega
+
+/-- Backpressure never drops a flit: waiting plus ejected occupancy is conserved. -/
+theorem flitConservation (t : NocTileState) :
+    tileTotalFlits (stepNocCreditRouter t) = tileTotalFlits t := by
+  cases hi : t.inbox with
+  | nil => simp [stepNocCreditRouter, hi]
+  | cons f rest =>
+    simp only [stepNocCreditRouter, hi]
+    split
+    · exact (stepNocRouter_conserves_flits_and_credits t).1
+    · rfl
 
 theorem deliverFlitToTiles_conserves (f : NocFlit) :
     ∀ (tiles tiles' : List NocTileState),
@@ -1895,58 +2011,97 @@ def countActiveBramSlots : List InertNodeSlot → Nat
 def activeNodeCount (st : InteractionNetPeState) : Nat :=
   countActiveBramSlots st.bramSlots
 
-/-- Free one active BRAM slot in-place by redirecting it to `.wire target` (`active := false`). -/
-def freeOneActiveBramSlot (target : Nat) : List InertNodeSlot → List InertNodeSlot
+/-- Free only the addressed active slot; an absent ID is a no-op. -/
+def freeSlotById (slotId target : Nat) : List InertNodeSlot → List InertNodeSlot
   | [] => []
   | s :: rest =>
-    if s.active then
+    if s.slotId == slotId && s.active then
       { s with kind := .wire target, active := false } :: rest
-    else
-      s :: freeOneActiveBramSlot target rest
+    else s :: freeSlotById slotId target rest
 
-/-- Free two active BRAM slots in-place by redirecting them to `.wire target0` and `.wire target1` (`active := false`). -/
-def freeTwoActiveBramSlots (target0 target1 : Nat) (slots : List InertNodeSlot) : List InertNodeSlot :=
-  freeOneActiveBramSlot target1 (freeOneActiveBramSlot target0 slots)
+def hasActiveSlot (id : Nat) (slots : List InertNodeSlot) : Bool :=
+  slots.any fun s => s.slotId == id && s.active
 
-theorem freeOneActiveBramSlot_length (target : Nat) :
-    ∀ (slots : List InertNodeSlot),
-      (freeOneActiveBramSlot target slots).length = slots.length
-  | [] => rfl
-  | s :: rest => by
-    unfold freeOneActiveBramSlot
-    cases s.active <;> simp [freeOneActiveBramSlot_length target rest]
+theorem freeSlotById_length (id target : Nat) (slots : List InertNodeSlot) :
+    (freeSlotById id target slots).length = slots.length := by
+  induction slots with
+  | nil => rfl
+  | cons s ss ih => simp only [freeSlotById]; split <;> simp_all
 
-theorem freeTwoActiveBramSlots_length (target0 target1 : Nat) (slots : List InertNodeSlot) :
-    (freeTwoActiveBramSlots target0 target1 slots).length = slots.length := by
-  unfold freeTwoActiveBramSlots
-  rw [freeOneActiveBramSlot_length, freeOneActiveBramSlot_length]
+theorem freeSlotById_other (id target other : Nat) (slots : List InertNodeSlot)
+    (hne : id ≠ other) :
+    hasActiveSlot other (freeSlotById id target slots) = hasActiveSlot other slots := by
+  induction slots with
+  | nil => rfl
+  | cons s ss ih =>
+    simp only [freeSlotById]
+    split
+    · rename_i h
+      have hid : s.slotId = id := (Bool.and_eq_true_iff.mp h).1 |> beq_iff_eq.mp
+      simp [hasActiveSlot, hid, hne]
+    · simp only [hasActiveSlot, List.any_cons] at *
+      rw [ih]
 
-theorem countActiveBramSlots_append :
-    ∀ (xs ys : List InertNodeSlot),
-      countActiveBramSlots (xs ++ ys) = countActiveBramSlots xs + countActiveBramSlots ys
-  | [], _ => by simp [countActiveBramSlots]
-  | x :: rest, ys => by
-    simp only [List.cons_append, countActiveBramSlots, countActiveBramSlots_append rest ys]
-    omega
+theorem countActiveBramSlots_freeSlot (id target : Nat) (slots : List InertNodeSlot)
+    (h : hasActiveSlot id slots = true) :
+    countActiveBramSlots (freeSlotById id target slots) + 1 = countActiveBramSlots slots := by
+  induction slots with
+  | nil => simp [hasActiveSlot] at h
+  | cons s ss ih =>
+    simp only [freeSlotById]
+    split
+    · rename_i hc
+      have ha := (Bool.and_eq_true_iff.mp hc).2
+      simp [countActiveBramSlots, ha, Nat.add_comm]
+    · rename_i hc
+      have ht : hasActiveSlot id ss = true := by simpa [hasActiveSlot, hc] using h
+      have := ih ht
+      simp only [countActiveBramSlots]
+      omega
 
-theorem countActiveBramSlots_freeOne (target : Nat) :
-    ∀ (slots : List InertNodeSlot),
-      countActiveBramSlots (freeOneActiveBramSlot target slots) =
-        countActiveBramSlots slots - 1
-  | [] => rfl
-  | ⟨id, kind, aux0, aux1, false⟩ :: rest => by
-    simp only [freeOneActiveBramSlot, countActiveBramSlots, Bool.false_eq_true, ↓reduceIte, Nat.zero_add]
-    exact countActiveBramSlots_freeOne target rest
-  | ⟨id, kind, aux0, aux1, true⟩ :: rest => by
-    simp only [freeOneActiveBramSlot, countActiveBramSlots, Bool.false_eq_true, ↓reduceIte]
-    omega
+/-- Freed addresses are reused before extending the BRAM arena. -/
+def allocBramSlotId (st : InteractionNetPeState) : Nat × InteractionNetPeState :=
+  match st.freeList with
+  | id :: rest => (id, { st with freeList := rest })
+  | [] => (st.nextFreeId, { st with nextFreeId := st.nextFreeId + 1 })
 
-theorem countActiveBramSlots_freeTwo (target0 target1 : Nat) (slots : List InertNodeSlot) :
-    countActiveBramSlots (freeTwoActiveBramSlots target0 target1 slots) =
-      countActiveBramSlots slots - 2 := by
-  unfold freeTwoActiveBramSlots
-  rw [countActiveBramSlots_freeOne, countActiveBramSlots_freeOne]
-  omega
+theorem allocBramSlotId_reuses (st : InteractionNetPeState) (id : Nat) (rest : List Nat)
+    (h : st.freeList = id :: rest) :
+    (allocBramSlotId st).1 = id ∧ (allocBramSlotId st).2.nextFreeId = st.nextFreeId := by
+  simp [allocBramSlotId, h]
+
+private theorem allocBramSlotId_commutationCount (st : InteractionNetPeState) :
+    (allocBramSlotId st).2.commutationCount = st.commutationCount := by
+  cases h : st.freeList <;> simp [allocBramSlotId, h]
+
+/-- Remove a reused tombstone before installing its new occupant. -/
+def installBramNode (st : InteractionNetPeState) (node : INetNode) : InteractionNetPeState :=
+  { st with bramSlots := st.bramSlots.filter (fun s => s.slotId != node.id) ++ [inetNodeToInertSlot node]
+            arenaNodes := st.arenaNodes.filter (fun n => n.id != node.id) ++ [node]
+            allocCount := st.allocCount + 1 }
+
+def releaseBramSlot (st : InteractionNetPeState) (id target : Nat) : InteractionNetPeState :=
+  { st with bramSlots := freeSlotById id target st.bramSlots
+            arenaNodes := st.arenaNodes.filter (fun n => n.id != id)
+            freeList := if hasActiveSlot id st.bramSlots then id :: st.freeList else st.freeList }
+
+/-- Existing arena nodes retain complete port addresses. BRAM-only nodes have
+principal-port links in their compact aux fields. -/
+def bramSlotNode (s : InertNodeSlot) : INetNode :=
+  { id := s.slotId
+    kind := match s.kind with | .con _ => .con | .dup _ => .dup | .num _ => .nat64 | _ => .era
+    label := match s.kind with | .con l | .dup l => l | _ => 0
+    immVal := match s.kind with | .num v => v | _ => 0
+    aux1 := ⟨s.aux0, 0⟩, aux2 := ⟨s.aux1, 0⟩ }
+
+def spliceEndpointsAndEnqueue (st : InteractionNetPeState)
+    (splices : List (PortRef × PortRef)) : InteractionNetPeState :=
+  let missing := st.bramSlots.filter fun s => s.active &&
+    !(st.arenaNodes.any fun n => n.id == s.slotId) &&
+    !(st.activeQueue.any fun p => p.left.id == s.slotId || p.right.id == s.slotId)
+  let (arena, pairs) := resolveWireSplices (st.arenaNodes ++ missing.map bramSlotNode) splices
+  { st with arenaNodes := arena, activeQueue := st.activeQueue ++ pairs
+            rewiredPorts := st.rewiredPorts ++ splices }
 
 /-- Check whether an `InertNodeKind` is a fan/duplicator `.dup`. -/
 def isDupInertKind : InertNodeKind → Bool
@@ -2028,239 +2183,89 @@ def initBramInteractionNetPe
   allocCount       := 0
   commutationCount := 0
 
-/-- Single-cycle hardware active-pair interaction-net reducer (`stepActivePair`):
-Reduces `pair : ActivePair` on `st : InteractionNetPeState`:
-1. **Matching-Label Annihilation (`labelA == labelB` for `CON-CON` or `DUP-DUP`)**:
-   rewires `nodeA.aux0 ↔ nodeB.aux0` and `nodeA.aux1 ↔ nodeB.aux1` in 1 cycle with **zero**
-   new BRAM node allocations (`allocCount` unchanged, freeing the 2 annihilated slots in `bramSlots`).
-2. **Distinct-Label Commutation (`labelA != labelB` for `CON-DUP` / `DUP-CON` / `DUP-DUP`)**:
-   allocates 2 `CON(labelA)` nodes and 2 `DUP(labelB)` nodes in `bramSlots` and cross-wires
-   their auxiliary ports (`allocCount + 4`, `commutationCount + 1`).
-3. **Erasure (`ERA-CON` / `ERA-DUP` / `ERA-NUM` / `ERA-ERA`)**:
-   propagates `.era` to both auxiliary ports (`aux0, aux1`) or erases `.num` in 1 cycle (`allocCount` unchanged,
-   freeing the 2 interacting slots).
-4. **Arithmetic (`NUM-NUM` / `CON-NUM`)**:
-   reduces binary arithmetic in 1 cycle, freeing the 2 operand slots and allocating 1 `.num` result slot (`allocCount + 1`). -/
+/-- Execute one BRAM interaction, releasing the actual pair IDs and recycling
+addresses. Mismatched constructors are retained as explicit rejected work. -/
 def stepActivePair (st : InteractionNetPeState) (pair : ActivePair) : InteractionNetPeState :=
-  let slotA := inetNodeToInertSlot pair.left
-  let slotB := inetNodeToInertSlot pair.right
-  let w1 : PortRef × PortRef := (pair.left.aux1, pair.right.aux1)
-  let w2 : PortRef × PortRef := (pair.left.aux2, pair.right.aux2)
-  match slotA.kind, slotB.kind with
-  | .era, .era =>
-    { st with
-      bramSlots  := freeTwoActiveBramSlots 0 0 st.bramSlots
-      cycleCount := st.cycleCount + 1 }
-  | .era, .num _ | .num _, .era =>
-    { st with
-      bramSlots  := freeTwoActiveBramSlots 0 0 st.bramSlots
-      cycleCount := st.cycleCount + 1 }
-  | .era, _ =>
-    { st with
-      bramSlots   := freeTwoActiveBramSlots slotB.aux0 slotB.aux1 st.bramSlots
-      erasedPorts := st.erasedPorts ++ [pair.right.aux1, pair.right.aux2]
-      cycleCount  := st.cycleCount + 1 }
-  | _, .era =>
-    { st with
-      bramSlots   := freeTwoActiveBramSlots slotA.aux0 slotA.aux1 st.bramSlots
-      erasedPorts := st.erasedPorts ++ [pair.left.aux1, pair.left.aux2]
-      cycleCount  := st.cycleCount + 1 }
-  | .num valA, .num valB =>
-    let resVal := valA + valB
-    let resSlot : InertNodeSlot :=
-      { slotId := st.nextFreeId, kind := .num resVal, aux0 := slotA.aux0, aux1 := slotB.aux0, active := true }
-    let resNode : INetNode :=
-      { id := st.nextFreeId, kind := .nat64, label := 0, immVal := resVal
-      , aux1 := pair.left.aux1, aux2 := pair.right.aux1 }
-    { st with
-      bramSlots     := freeTwoActiveBramSlots st.nextFreeId st.nextFreeId st.bramSlots ++ [resSlot]
-      scalarResults := st.scalarResults ++ [resNode]
-      nextFreeId    := st.nextFreeId + 1
-      allocCount    := st.allocCount + 1
-      cycleCount    := st.cycleCount + 1 }
-  | .con slope, .num valB =>
-    let resVal := slope * valB + pair.left.immVal
-    let resSlot : InertNodeSlot :=
-      { slotId := st.nextFreeId, kind := .num resVal, aux0 := slotA.aux0, aux1 := slotA.aux1, active := true }
-    let resNode : INetNode :=
-      { id := st.nextFreeId, kind := .nat64, label := 0, immVal := resVal
-      , aux1 := pair.left.aux1, aux2 := pair.left.aux2 }
-    { st with
-      bramSlots     := freeTwoActiveBramSlots st.nextFreeId st.nextFreeId st.bramSlots ++ [resSlot]
-      scalarResults := st.scalarResults ++ [resNode]
-      nextFreeId    := st.nextFreeId + 1
-      allocCount    := st.allocCount + 1
-      cycleCount    := st.cycleCount + 1 }
-  | .num valA, .con slope =>
-    let resVal := slope * valA + pair.right.immVal
-    let resSlot : InertNodeSlot :=
-      { slotId := st.nextFreeId, kind := .num resVal, aux0 := slotB.aux0, aux1 := slotB.aux1, active := true }
-    let resNode : INetNode :=
-      { id := st.nextFreeId, kind := .nat64, label := 0, immVal := resVal
-      , aux1 := pair.right.aux1, aux2 := pair.right.aux2 }
-    { st with
-      bramSlots     := freeTwoActiveBramSlots st.nextFreeId st.nextFreeId st.bramSlots ++ [resSlot]
-      scalarResults := st.scalarResults ++ [resNode]
-      nextFreeId    := st.nextFreeId + 1
-      allocCount    := st.allocCount + 1
-      cycleCount    := st.cycleCount + 1 }
-  | .con _labelA, .con _labelB =>
-    { st with
-      bramSlots    := freeTwoActiveBramSlots slotB.aux0 slotB.aux1 st.bramSlots
-      rewiredPorts := st.rewiredPorts ++ [w1, w2]
-      cycleCount   := st.cycleCount + 1
-      annihilations := st.annihilations + 1 }
-  | .dup labelA, .dup labelB =>
-    if labelA == labelB then
-      { st with
-        bramSlots     := freeTwoActiveBramSlots slotB.aux0 slotB.aux1 st.bramSlots
-        rewiredPorts  := st.rewiredPorts ++ [w1, w2]
-        cycleCount    := st.cycleCount + 1
-        annihilations := st.annihilations + 1 }
-    else
-      let id0 := st.nextFreeId
-      let id1 := st.nextFreeId + 1
-      let id2 := st.nextFreeId + 2
-      let id3 := st.nextFreeId + 3
-      let newSlots : List InertNodeSlot :=
-        [ { slotId := id0, kind := .con labelA, aux0 := id2, aux1 := id3, active := true }
-        , { slotId := id1, kind := .con labelA, aux0 := id2, aux1 := id3, active := true }
-        , { slotId := id2, kind := .dup labelB, aux0 := slotA.aux0, aux1 := slotB.aux0, active := true }
-        , { slotId := id3, kind := .dup labelB, aux0 := slotA.aux1, aux1 := slotB.aux1, active := true } ]
-      let spawned := commuteSpawnedNodes pair.left pair.right st.nextFreeId
-      { st with
-        bramSlots        := freeTwoActiveBramSlots id0 id2 st.bramSlots ++ newSlots
-        arenaNodes       := st.arenaNodes ++ spawned
-        nextFreeId       := st.nextFreeId + 4
-        allocCount       := st.allocCount + 4
-        commutations     := st.commutations + 1
-        commutationCount := st.commutationCount + 1
-        cycleCount       := st.cycleCount + 1 }
-  | .con labelA, .dup labelB =>
-    if labelA == labelB then
-      { st with
-        bramSlots     := freeTwoActiveBramSlots slotB.aux0 slotB.aux1 st.bramSlots
-        rewiredPorts  := st.rewiredPorts ++ [w1, w2]
-        cycleCount    := st.cycleCount + 1
-        annihilations := st.annihilations + 1 }
-    else
-      let id0 := st.nextFreeId
-      let id1 := st.nextFreeId + 1
-      let id2 := st.nextFreeId + 2
-      let id3 := st.nextFreeId + 3
-      let newSlots : List InertNodeSlot :=
-        [ { slotId := id0, kind := .con labelA, aux0 := id2, aux1 := id3, active := true }
-        , { slotId := id1, kind := .con labelA, aux0 := id2, aux1 := id3, active := true }
-        , { slotId := id2, kind := .dup labelB, aux0 := slotA.aux0, aux1 := slotB.aux0, active := true }
-        , { slotId := id3, kind := .dup labelB, aux0 := slotA.aux1, aux1 := slotB.aux1, active := true } ]
-      let spawned := commuteSpawnedNodes pair.left pair.right st.nextFreeId
-      { st with
-        bramSlots        := freeTwoActiveBramSlots id0 id2 st.bramSlots ++ newSlots
-        arenaNodes       := st.arenaNodes ++ spawned
-        nextFreeId       := st.nextFreeId + 4
-        allocCount       := st.allocCount + 4
-        commutations     := st.commutations + 1
-        commutationCount := st.commutationCount + 1
-        cycleCount       := st.cycleCount + 1 }
-  | .dup labelB, .con labelA =>
-    if labelB == labelA then
-      { st with
-        bramSlots     := freeTwoActiveBramSlots slotB.aux0 slotB.aux1 st.bramSlots
-        rewiredPorts  := st.rewiredPorts ++ [w1, w2]
-        cycleCount    := st.cycleCount + 1
-        annihilations := st.annihilations + 1 }
-    else
-      let id0 := st.nextFreeId
-      let id1 := st.nextFreeId + 1
-      let id2 := st.nextFreeId + 2
-      let id3 := st.nextFreeId + 3
-      let newSlots : List InertNodeSlot :=
-        [ { slotId := id0, kind := .con labelA, aux0 := id2, aux1 := id3, active := true }
-        , { slotId := id1, kind := .con labelA, aux0 := id2, aux1 := id3, active := true }
-        , { slotId := id2, kind := .dup labelB, aux0 := slotA.aux0, aux1 := slotB.aux0, active := true }
-        , { slotId := id3, kind := .dup labelB, aux0 := slotA.aux1, aux1 := slotB.aux1, active := true } ]
-      let spawned := commuteSpawnedNodes pair.left pair.right st.nextFreeId
-      { st with
-        bramSlots        := freeTwoActiveBramSlots id0 id2 st.bramSlots ++ newSlots
-        arenaNodes       := st.arenaNodes ++ spawned
-        nextFreeId       := st.nextFreeId + 4
-        allocCount       := st.allocCount + 4
-        commutations     := st.commutations + 1
-        commutationCount := st.commutationCount + 1
-        cycleCount       := st.cycleCount + 1 }
-  | .num valA, .dup labelB | .dup labelB, .num valA =>
-    let id0 := st.nextFreeId
-    let id1 := st.nextFreeId + 1
-    let newSlots : List InertNodeSlot :=
-      [ { slotId := id0, kind := .num valA, aux0 := slotA.aux0, aux1 := slotB.aux0, active := true }
-      , { slotId := id1, kind := .dup labelB, aux0 := slotA.aux1, aux1 := slotB.aux1, active := true } ]
-    { st with
-      bramSlots        := freeTwoActiveBramSlots id0 id1 st.bramSlots ++ newSlots
-      nextFreeId       := st.nextFreeId + 2
-      allocCount       := st.allocCount + 2
-      commutations     := st.commutations + 1
-      commutationCount := st.commutationCount + 1
-      cycleCount       := st.cycleCount + 1 }
-  | .wire _, _ | _, .wire _ =>
-    { st with
-      bramSlots    := freeTwoActiveBramSlots slotB.aux0 slotB.aux1 st.bramSlots
-      rewiredPorts := st.rewiredPorts ++ [w1, w2]
-      cycleCount   := st.cycleCount + 1 }
+  let ka := inetNodeToInertKind pair.left
+  let kb := inetNodeToInertKind pair.right
+  if (match ka, kb with | .con a, .con b => a != b | _, _ => false) then
+    { st with mismatchedPairs := st.mismatchedPairs ++ [pair], cycleCount := st.cycleCount + 1 }
+  else
+    let released := releaseBramSlot (releaseBramSlot st pair.left.id pair.right.aux1.nodeId)
+      pair.right.id pair.right.aux2.nodeId
+    let tick := { released with cycleCount := st.cycleCount + 1 }
+    match ka, kb with
+    | .era, .era | .era, .num _ | .num _, .era => tick
+    | .era, _ => { tick with erasedPorts := st.erasedPorts ++ [pair.right.aux1, pair.right.aux2] }
+    | _, .era => { tick with erasedPorts := st.erasedPorts ++ [pair.left.aux1, pair.left.aux2] }
+    | .con a, .con b | .dup a, .dup b | .con a, .dup b | .dup a, .con b =>
+      if a == b then
+        spliceEndpointsAndEnqueue { tick with annihilations := st.annihilations + 1 }
+          [(pair.left.aux1, pair.right.aux1), (pair.left.aux2, pair.right.aux2)]
+      else
+        let (id0, s0) := allocBramSlotId tick
+        let (id1, s1) := allocBramSlotId s0
+        let (id2, s2) := allocBramSlotId s1
+        let (id3, s3) := allocBramSlotId s2
+        let n0 := { pair.left with id := id0, aux1 := ⟨id2, 1⟩, aux2 := ⟨id3, 1⟩ }
+        let n1 := { pair.left with id := id1, aux1 := ⟨id2, 2⟩, aux2 := ⟨id3, 2⟩ }
+        let n2 := { pair.right with id := id2, aux1 := ⟨id0, 1⟩, aux2 := ⟨id1, 1⟩ }
+        let n3 := { pair.right with id := id3, aux1 := ⟨id0, 2⟩, aux2 := ⟨id1, 2⟩ }
+        let s4 := installBramNode (installBramNode (installBramNode (installBramNode s3 n0) n1) n2) n3
+        spliceEndpointsAndEnqueue
+          { s4 with commutations := st.commutations + 1, commutationCount := st.commutationCount + 1 }
+          [(⟨id0, 0⟩, pair.right.aux1), (⟨id1, 0⟩, pair.right.aux2),
+           (⟨id2, 0⟩, pair.left.aux1), (⟨id3, 0⟩, pair.left.aux2)]
+    | .num x, .num y | .con x, .num y | .num y, .con x =>
+      let value := match ka, kb with
+        | .num _, .num _ => x + y
+        | .con _, _ => x * y + pair.left.immVal
+        | _, _ => x * y + pair.right.immVal
+      let (id, allocated) := allocBramSlotId tick
+      let node := { pair.left with id := id, kind := .nat64, label := 0, immVal := value }
+      let result := installBramNode allocated node
+      { result with scalarResults := st.scalarResults ++ [node] }
+    | .num value, .dup _ | .dup _, .num value =>
+      let dup := if pair.left.kind == .nat64 then pair.right else pair.left
+      let (id0, s0) := allocBramSlotId tick
+      let (id1, s1) := allocBramSlotId s0
+      let n0 := { pair.left with id := id0, kind := .nat64, label := 0, immVal := value }
+      let n1 := { n0 with id := id1 }
+      spliceEndpointsAndEnqueue
+        { (installBramNode (installBramNode s1 n0) n1) with
+          commutations := st.commutations + 1, commutationCount := st.commutationCount + 1 }
+        [(⟨id0, 0⟩, dup.aux1), (⟨id1, 0⟩, dup.aux2)]
+    | .wire _, _ | _, .wire _ => tick
 
-/-- **Theorem (`interaction_net_annihilation_zero_alloc_and_involutive`, Universally Quantified)**:
-For every `st : InteractionNetPeState` with `activeNodeCount st ≥ 2`, combinator label `lbl : Nat`,
-node IDs `idA idB : Nat`, and auxiliary ports `a1 a2 b1 b2 : PortRef`:
-1. **Zero BRAM Node Allocation**: Matching-label `CON-CON` and `DUP-DUP` annihilation in `stepActivePair`
-   allocate `0` new BRAM nodes (`allocCount` and `bramSlots.length` are strictly unchanged),
-2. **Active Node Shrinkage by 2**: Both `CON-CON` and `DUP-DUP` annihilation shrink `activeNodeCount`
-   by `2` (`activeNodeCount (stepActivePair st pair) + 2 = activeNodeCount st`), and
-3. **Port Connectivity Equivalence & Involutivity (`evalWireHop` / `evalPortConnection`)**:
-   Every emitted wire splice `w` is an involution (`evalWireHop w (evalWireHop w p) = p`) and
-   `evalPortConnection` on the annihilated state bidirectionally connects `a1 ↔ b1` and `a2 ↔ b2`. -/
+/-- Matching constructors release their own slots, allocate nothing, and emit
+involutive wire splices. The active-slot premises identify actual resident nodes. -/
 theorem interaction_net_annihilation_zero_alloc_and_involutive
-    (st : InteractionNetPeState)
-    (idA idB lbl : Nat)
-    (a1 a2 b1 b2 : PortRef)
-    (splice : PortRef × PortRef) (p : PortRef)
-    (hActive : activeNodeCount st ≥ 2) :
-    let conPair : ActivePair :=
-      { left := mkConNode idA lbl a1 a2, right := mkConNode idB lbl b1 b2 }
-    let dupPair : ActivePair :=
-      { left := mkDupNode idA lbl a1 a2, right := mkDupNode idB lbl b1 b2 }
-    let stCon := stepActivePair st conPair
-    let stDup := stepActivePair st dupPair
-    stCon.allocCount = st.allocCount ∧
-    stDup.allocCount = st.allocCount ∧
-    stCon.bramSlots.length = st.bramSlots.length ∧
-    stDup.bramSlots.length = st.bramSlots.length ∧
-    activeNodeCount stCon + 2 = activeNodeCount st ∧
-    activeNodeCount stDup + 2 = activeNodeCount st ∧
-    evalWireHop splice (evalWireHop splice p) = p ∧
-    evalPortConnection [(⟨1, 1⟩, ⟨2, 1⟩), (⟨1, 2⟩, ⟨2, 2⟩)] ⟨1, 1⟩ = ⟨2, 1⟩ ∧
-    evalPortConnection [(⟨1, 1⟩, ⟨2, 1⟩), (⟨1, 2⟩, ⟨2, 2⟩)] ⟨2, 1⟩ = ⟨1, 1⟩ ∧
-    evalPortConnection [(⟨1, 1⟩, ⟨2, 1⟩), (⟨1, 2⟩, ⟨2, 2⟩)] ⟨1, 2⟩ = ⟨2, 2⟩ ∧
-    evalPortConnection [(⟨1, 1⟩, ⟨2, 1⟩), (⟨1, 2⟩, ⟨2, 2⟩)] ⟨2, 2⟩ = ⟨1, 2⟩ := by
-  intro conPair dupPair stCon stDup
-  have hFreeLen : (freeTwoActiveBramSlots b1.nodeId b2.nodeId st.bramSlots).length = st.bramSlots.length :=
-    freeTwoActiveBramSlots_length b1.nodeId b2.nodeId st.bramSlots
-  have hFreeCnt : activeNodeCount stCon + 2 = activeNodeCount st := by
-    unfold stCon stepActivePair conPair mkConNode inetNodeToInertSlot inetNodeToInertKind activeNodeCount
-    dsimp only
-    rw [countActiveBramSlots_freeTwo]
-    unfold activeNodeCount at hActive
-    omega
-  have hFreeCntDup : activeNodeCount stDup + 2 = activeNodeCount st := by
-    unfold stDup stepActivePair dupPair mkDupNode inetNodeToInertSlot inetNodeToInertKind activeNodeCount
-    simp only [beq_self_eq_true, ↓reduceIte]
-    rw [countActiveBramSlots_freeTwo]
-    unfold activeNodeCount at hActive
-    omega
-  refine ⟨rfl, ?_, hFreeLen, ?_, hFreeCnt, hFreeCntDup,
-          evalWireHop_involutive splice p, rfl, rfl, rfl, rfl⟩
-  · unfold stDup stepActivePair dupPair mkDupNode inetNodeToInertSlot inetNodeToInertKind
-    simp
-  · unfold stDup stepActivePair dupPair mkDupNode inetNodeToInertSlot inetNodeToInertKind
-    simp [hFreeLen]
+    (st : InteractionNetPeState) (idA idB lbl : Nat) (a1 a2 b1 b2 : PortRef)
+    (hne : idA ≠ idB) (ha : hasActiveSlot idA st.bramSlots = true)
+    (hb : hasActiveSlot idB st.bramSlots = true) (splice : PortRef × PortRef) (p : PortRef) :
+    let pair : ActivePair := ⟨mkConNode idA lbl a1 a2, mkConNode idB lbl b1 b2⟩
+    let next := stepActivePair st pair
+    next.allocCount = st.allocCount ∧ next.bramSlots.length = st.bramSlots.length ∧
+    activeNodeCount next + 2 = activeNodeCount st ∧
+    evalWireHop splice (evalWireHop splice p) = p := by
+  have hb' := (freeSlotById_other idA b1.nodeId idB st.bramSlots hne).trans hb
+  have h1 := countActiveBramSlots_freeSlot idA b1.nodeId st.bramSlots ha
+  have h2 := countActiveBramSlots_freeSlot idB b2.nodeId
+    (freeSlotById idA b1.nodeId st.bramSlots) hb'
+  dsimp [stepActivePair, mkConNode, inetNodeToInertKind, releaseBramSlot,
+    spliceEndpointsAndEnqueue, activeNodeCount]
+  simp only [bne_self_eq_false, beq_self_eq_true, Bool.false_eq_true, ↓reduceIte]
+  refine ⟨trivial, ?_, ?_, evalWireHop_involutive splice p⟩
+  · simp only [freeSlotById_length]
+  · omega
+
+/-- Distinct constructor labels cannot be annihilated. -/
+theorem con_label_mismatch_refused (st : InteractionNetPeState) (a b : INetNode)
+    (ha : a.kind = .con) (hb : b.kind = .con) (hne : a.label ≠ b.label) :
+    (stepActivePair st ⟨a, b⟩).annihilations = st.annihilations ∧
+    (stepActivePair st ⟨a, b⟩).bramSlots = st.bramSlots ∧
+    (stepActivePair st ⟨a, b⟩).mismatchedPairs = st.mismatchedPairs ++ [⟨a, b⟩] := by
+  simp [stepActivePair, inetNodeToInertKind, ha, hb, hne]
 
 /-- Lemma: if `st.activeQueue.any hasDupInPair = false` and `p ∈ st.activeQueue`, then `hasDupInPair p = false`. -/
 theorem hasDupInPair_false_of_hasDupNode_false
@@ -2272,51 +2277,23 @@ theorem hasDupInPair_false_of_hasDupNode_false
   simp only [Bool.or_eq_false_iff, List.any_eq_false] at hAffine
   exact Bool.eq_false_iff.mpr (hAffine.1.2 p hMem)
 
-/-- **Theorem (`affine_bendtt_net_zero_commutations`, Universally Quantified)**:
-For every affine `BendTT` interaction net (`hasDupNode st = false`, corresponding to `BendTT.isAffineBendTerm`)
-and every affine active pair `p : ActivePair` (`hasDupInPair p = false`, which holds automatically
-for all `p ∈ st.activeQueue` when `hasDupNode st = false`) with `activeNodeCount st ≥ 2`:
-1. `stepActivePair st p` **never** triggers `CON-DUP` commutation (`(stepActivePair st p).commutationCount = st.commutationCount`,
-   and equals `0` whenever `st.commutationCount = 0`), and
-2. `stepActivePair st p` **strictly decreases** the active node count at every step:
-   `activeNodeCount (stepActivePair st p) < activeNodeCount st`! -/
+/-- An affine queued pair never commutes, including a refused label mismatch.
+Refusal leaves storage unchanged, so strict shrinkage is reserved for admitted interactions. -/
 theorem affine_bendtt_net_zero_commutations
     (st : InteractionNetPeState) (p : ActivePair)
-    (_hAffine : hasDupNode st = false)
-    (hPairAffine : hasDupInPair p = false)
-    (hComm0 : st.commutationCount = 0)
-    (hActive : activeNodeCount st ≥ 2) :
-    (stepActivePair st p).commutationCount = 0 ∧
-    activeNodeCount (stepActivePair st p) < activeNodeCount st := by
+    (hAffine : hasDupNode st = false) (hMem : p ∈ st.activeQueue)
+    (hComm0 : st.commutationCount = 0) :
+    (stepActivePair st p).commutationCount = 0 := by
+  have hPair := hasDupInPair_false_of_hasDupNode_false st p hAffine hMem
   rcases p with ⟨l, r⟩
-  unfold hasDupInPair isDupINetKind at hPairAffine
-  simp only [Bool.or_eq_false_iff] at hPairAffine
-  rcases hPairAffine with ⟨hl, hr⟩
-  have hFree2 : ∀ (t0 t1 : Nat),
-      countActiveBramSlots (freeTwoActiveBramSlots t0 t1 st.bramSlots) < activeNodeCount st := by
-    intro t0 t1
-    rw [countActiveBramSlots_freeTwo]
-    unfold activeNodeCount at hActive ⊢
-    omega
-  have hFree2Plus1 : ∀ (t0 t1 : Nat) (s : InertNodeSlot),
-      s.active = true →
-      countActiveBramSlots (freeTwoActiveBramSlots t0 t1 st.bramSlots ++ [s]) < activeNodeCount st := by
-    intro t0 t1 s hs
-    rw [countActiveBramSlots_append, countActiveBramSlots_freeTwo]
-    unfold activeNodeCount at hActive ⊢
-    have hSingle : countActiveBramSlots [s] = 1 := by
-      simp [countActiveBramSlots, hs]
-    rw [hSingle]
-    omega
-  cases hlk : l.kind <;> rw [hlk] at hl <;> try contradiction
+  simp only [hasDupInPair, Bool.or_eq_false_iff] at hPair
+  obtain ⟨hl, hr⟩ := hPair
+  by_cases he : l.label = r.label
   all_goals
-    cases hrk : r.kind <;> rw [hrk] at hr <;> try contradiction
-    all_goals
-      unfold stepActivePair inetNodeToInertSlot inetNodeToInertKind activeNodeCount
-      simp only [hlk, hrk, hComm0, true_and]
-      first
-      | exact hFree2 _ _
-      | exact hFree2Plus1 _ _ _ rfl
+    cases hlk : l.kind <;> cases hrk : r.kind <;>
+      simp [isDupINetKind, hlk, hrk] at hl hr <;>
+      simp [stepActivePair, inetNodeToInertKind, hlk, hrk, releaseBramSlot,
+        spliceEndpointsAndEnqueue, installBramNode, allocBramSlotId_commutationCount, hComm0, he]
 
 /-- Construct a `NocFlit` request packet injected at origin tile `(0, 0)` targeting Book compute
 tile `(1, 1)` for `targetSlot` with argument `argVal`. -/

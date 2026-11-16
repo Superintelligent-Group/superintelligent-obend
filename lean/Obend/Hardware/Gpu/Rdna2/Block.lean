@@ -15,6 +15,7 @@ outside the buffer is refused. `blockSpec_sound` is `Spec.Sound` for it, and `ce
 the certificate over every dispatch with `BlockLower.lowerProgram`.
 -/
 module
+import all Obend.Hardware.ArrayKernel
 
 public import Obend.Hardware.Gpu.Rdna2.CertSound
 public import Obend.Hardware.Gpu.BlockLower
