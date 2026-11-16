@@ -1,16 +1,13 @@
 module
 /-
 # Obend.Receipt.Merkle — a positional Merkle map: the commitment a view's root is
-
 `lean/docs/REPORT-JUDGE-20261031.md` (the decision: the ledger's view commits pins). A VIEW is a
 list of values at the positions of a public schema (`Commit`: the keys, and each key's value at a
 world). Its root is a binary Merkle tree over the leaves `digestWith H j v` (position `j`, value
 `v`), each inner node one `digestWith H left right` (`Obend.Core.Digest`, cSHAKE256 at `deployed`).
 The tree splits a list at half its length, so the shape is a function of the size alone.
-
 An OPENING of position `j` is the value and the siblings on the way up (`Opening`); `opens` climbs
 from the leaf to a root, checking every sibling and the position are digest-sized.
-
 - `opens_complete`: the honest opening of every position opens against the root (`mapPath`).
 - `climb_binds`: two openings of one position to one root have one leaf, or the hash has a
   collision; `opens_binds`: they have one VALUE, or a collision. Nothing about cSHAKE256 is assumed:
@@ -22,24 +19,18 @@ from the leaf to a root, checking every sibling and the position are digest-size
   value opens against the same root.
 -/
 public import Obend.Core.Digest
-
 public section
 namespace Obend.Receipt.Merkle
 open Obend.Core.Digest (digestWith Admissible admissible_of_lt binds_or_collides deployed digest_lt preimage lengthHash)
 open Obend.Digest.HashBytes (Hash CollisionAmong be ofBE be_injective ofBE_lt)
 set_option autoImplicit false
-
 /-- A digest-sized natural: what every node of the tree is. -/
 def Small (n : Nat) : Bool := decide (n < 2 ^ 256)
-
 /-- A hash whose digests are digest-sized. -/
 @[expose] def Bounded (H : Hash) : Prop := ∀ a b, digestWith H a b < 2 ^ 256
-
 /-- The deployed hash is bounded (32 bytes out). -/
 theorem deployed_bounded : Bounded deployed := fun a b => digest_lt a b
-
 /-! ## The tree -/
-
 /-- The root of a list of leaves: a lone leaf is its own root, an empty list's root is 0, and a
 longer list's is the node over the roots of its halves. -/
 def root (H : Hash) (l : List Nat) : Nat :=
@@ -47,7 +38,6 @@ def root (H : Hash) (l : List Nat) : Nat :=
   else digestWith H (root H (l.take (l.length / 2))) (root H (l.drop (l.length / 2)))
 termination_by l.length
 decreasing_by all_goals simp only [List.length_take, List.length_drop]; omega
-
 /-- The siblings on the way from leaf `i` to the root, top first. -/
 def path (H : Hash) (l : List Nat) (i : Nat) : List Nat :=
   if l.length < 2 then []
@@ -55,7 +45,6 @@ def path (H : Hash) (l : List Nat) (i : Nat) : List Nat :=
   else root H (l.take (l.length / 2)) :: path H (l.drop (l.length / 2)) (i - l.length / 2)
 termination_by l.length
 decreasing_by all_goals simp only [List.length_take, List.length_drop]; omega
-
 /-- Climb from leaf `x` at position `i` of a tree of `n` leaves along the siblings `p`, top first. -/
 def climb (H : Hash) : (n i x : Nat) → List Nat → Option Nat
   | n, _, x, [] => if n = 1 then some x else none
@@ -63,7 +52,6 @@ def climb (H : Hash) : (n i x : Nat) → List Nat → Option Nat
     if n < 2 || !Small s then none
     else if i < n / 2 then (climb H (n / 2) i x ss).map fun l => digestWith H l s
     else (climb H (n - n / 2) (i - n / 2) x ss).map fun r => digestWith H s r
-
 /-- The root of a nonempty list of digest-sized leaves is digest-sized. -/
 theorem root_lt {H : Hash} (hb : Bounded H) (l : List Nat) (hl : ∀ x ∈ l, x < 2 ^ 256) (hne : l ≠ []) :
     root H l < 2 ^ 256 := by
@@ -71,13 +59,10 @@ theorem root_lt {H : Hash} (hb : Bounded H) (l : List Nat) (hl : ∀ x ∈ l, x 
   · match l, hne with
     | x :: _, _ => exact hl x (by simp)
   · exact hb _ _
-
 theorem getD_take (l : List Nat) {k i : Nat} (h : i < k) : (l.take k).getD i 0 = l.getD i 0 := by
   simp only [List.getD_eq_getElem?_getD, List.getElem?_take, h, ↓reduceIte]
-
 theorem getD_drop (l : List Nat) (k i : Nat) : (l.drop k).getD i 0 = l.getD (k + i) 0 := by
   simp only [List.getD_eq_getElem?_getD, List.getElem?_drop]
-
 /-- **Every leaf's honest path climbs to the root.** -/
 theorem climb_path {H : Hash} (hb : Bounded H) :
     ∀ (l : List Nat), (∀ x ∈ l, x < 2 ^ 256) → ∀ (i : Nat), i < l.length →
@@ -118,7 +103,6 @@ theorem climb_path {H : Hash} (hb : Bounded H) :
       rw [hld, getD_drop, show l.length / 2 + (i - l.length / 2) = i by omega] at ihr
       simp only [climb, hst, Bool.not_true, Bool.or_false, decide_eq_true_eq, h2, decide_false,
         hi', ↓reduceIte, ihr, Option.map_some, Bool.false_eq_true]
-
 /-- What a climb reaches is the leaf, or a node: digest-sized when the leaf is. -/
 theorem climb_small {H : Hash} (hb : Bounded H) :
     ∀ (p : List Nat) (n i x r : Nat), x < 2 ^ 256 → climb H n i x p = some r → r < 2 ^ 256
@@ -133,7 +117,6 @@ theorem climb_small {H : Hash} (hb : Bounded H) :
     · split at h
       · obtain ⟨l, _, rfl⟩ := Option.map_eq_some_iff.1 h; exact hb _ _
       · obtain ⟨l, _, rfl⟩ := Option.map_eq_some_iff.1 h; exact hb _ _
-
 /-- Finite list of `preimage` byte strings hashed along `climb H n i x p`. -/
 def climbPreimages (H : Hash) : (n i x : Nat) → List Nat → List (List UInt8)
   | _, _, _, [] => []
@@ -144,7 +127,6 @@ def climbPreimages (H : Hash) : (n i x : Nat) → List Nat → List (List UInt8)
     else
       let rest := climbPreimages H (n - n / 2) (i - n / 2) x ss
       match climb H (n - n / 2) (i - n / 2) x ss with | some r => preimage s r :: rest | none => rest
-
 /-- **Scoped Binding**: two climbs from one position of one tree to one root start at one leaf, or `H`
 collides among the finite preimages those two climbs actually hashed. -/
 theorem climb_binds {H : Hash} (hb : Bounded H) :
@@ -202,24 +184,18 @@ theorem climb_binds {H : Hash} (hb : Bounded H) :
             · exact .inr (.inr hm))
       · exact .inr (c.mono fun m hm => by
           rcases hm with rfl | rfl <;> simp [climbPreimages, hi, hl, hl'])
-
 /-! ## The map: values at positions -/
-
 /-- The leaf of value `v` at position `j`. -/
 def leaf (H : Hash) (j v : Nat) : Nat := digestWith H j v
-
 theorem leaf_binds_scoped {H : Hash} {j a b : Nat} (hj : j < 2 ^ 256) (h : leaf H j a = leaf H j b) :
     a = b ∨ CollisionAmong H (fun m => m = preimage j a ∨ m = preimage j b) := by
   rcases binds_or_collides H (admissible_of_lt hj) (admissible_of_lt hj) h with ⟨_, hv⟩ | c
   · exact .inl hv
   · exact .inr c
-
 /-- The leaves of a list of values. -/
 @[expose] def leaves (H : Hash) (vs : List Nat) : List Nat := vs.mapIdx fun j v => leaf H j v
-
 /-- The root of a list of values. -/
 @[expose] def mapRoot (H : Hash) (vs : List Nat) : Nat := root H (leaves H vs)
-
 /-- An opening: the map's size, the position, the value claimed there, and the siblings. -/
 structure Opening where
   size : Nat
@@ -227,39 +203,31 @@ structure Opening where
   value : Nat
   path : List Nat
   deriving DecidableEq, Repr
-
 /-- The honest opening of position `j`. -/
 @[expose] def mapOpening (H : Hash) (vs : List Nat) (j : Nat) : Opening :=
   ⟨vs.length, j, vs.getD j 0, path H (leaves H vs) j⟩
-
 /-- **An opening opens against a root.** -/
 @[expose] def opens (H : Hash) (o : Opening) (r : Nat) : Bool :=
   Small o.index && climb H o.size o.index (leaf H o.index o.value) o.path == some r
-
 theorem leaves_length (H : Hash) (vs : List Nat) : (leaves H vs).length = vs.length := by
   simp [leaves]
-
 theorem leaves_small {H : Hash} (hb : Bounded H) (vs : List Nat) : ∀ x ∈ leaves H vs, x < 2 ^ 256 := by
   intro x hx
   obtain ⟨j, hj, rfl⟩ := List.mem_iff_getElem.1 hx
   simp only [leaves, List.getElem_mapIdx, leaf]
   exact hb _ _
-
 theorem leaves_getD (H : Hash) (vs : List Nat) {j : Nat} (hj : j < vs.length) :
     (leaves H vs).getD j 0 = leaf H j (vs.getD j 0) := by
   simp [leaves, List.getD_eq_getElem?_getD, List.getElem?_mapIdx, List.getElem?_eq_getElem hj]
-
 /-- **The honest opening of every position opens against the root.** -/
 theorem opens_complete {H : Hash} (hb : Bounded H) (vs : List Nat) (j : Nat) (hj : j < vs.length)
     (hjs : j < 2 ^ 256) : opens H (mapOpening H vs j) (mapRoot H vs) = true := by
   have hc := climb_path hb (leaves H vs) (leaves_small hb vs) j (by rw [leaves_length]; exact hj)
   rw [leaves_length, leaves_getD H vs hj] at hc
   simp only [opens, mapOpening, mapRoot, hc, Small, hjs, decide_true, Bool.true_and, beq_self_eq_true]
-
 /-- Finite list of `preimage` byte strings hashed when verifying `Opening` `o`. -/
 def openingPreimages (H : Hash) (o : Opening) : List (List UInt8) :=
   preimage o.index o.value :: climbPreimages H o.size o.index (leaf H o.index o.value) o.path
-
 theorem opens_binds_scoped {H : Hash} (hb : Bounded H) {o o' : Opening} {r : Nat} (h : opens H o r = true)
     (h' : opens H o' r = true) (hn : o.size = o'.size) (hi : o.index = o'.index) :
     o.value = o'.value ∨ CollisionAmong H (fun m => m ∈ openingPreimages H o ++ openingPreimages H o') := by
@@ -277,7 +245,6 @@ theorem opens_binds_scoped {H : Hash} (hb : Bounded H) {o o' : Opening} {r : Nat
       rcases hm with hm | hm
       · exact .inl (.inr hm)
       · rw [hn, hi] at hm; exact .inr (.inr hm))
-
 /-- **An opening against a view's root carries the view's value**, or `H` collides on the finite
 opening preimages. -/
 theorem opens_view {H : Hash} (hb : Bounded H) (vs : List Nat) {o : Opening}
@@ -290,27 +257,20 @@ theorem opens_view {H : Hash} (hb : Bounded H) (vs : List Nat) {o : Opening}
   rcases opens_binds_scoped hb h hc (by simp [mapOpening, hn]) rfl with he | c
   · left; rw [he]; simp [mapOpening, List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hj]
   · exact .inr c
-
 /-! ## The commitment of a world's view -/
-
 /-- A view committed by position: a public schema of keys, and each key's value at a world. -/
 structure Commit (W Key : Type) where
   keys : List Key
   val : W → Key → Nat
-
 namespace Commit
 variable {W Key : Type}
-
 /-- The view's values, in schema order. -/
 @[expose] def values (C : Commit W Key) (w : W) : List Nat := C.keys.map (C.val w)
-
 /-- **The view's root**: what a receipt is dated by. -/
 @[expose] def dated (H : Hash) (C : Commit W Key) (w : W) : Nat := mapRoot H (C.values w)
-
 /-- The opening of key `k`, if the schema has it. -/
 @[expose] def opening [BEq Key] (H : Hash) (C : Commit W Key) (w : W) (k : Key) : Option Opening :=
   (C.keys.idxOf? k).map fun j => mapOpening H (C.values w) j
-
 /-- **An honest opening opens against the dated root.** -/
 theorem opening_opens [BEq Key] [LawfulBEq Key] {H : Hash} (hb : Bounded H) (C : Commit W Key) (w : W) (k : Key)
     {o : Opening} (h : C.opening H w k = some o) (hs : C.keys.length < 2 ^ 256) :
@@ -318,7 +278,6 @@ theorem opening_opens [BEq Key] [LawfulBEq Key] {H : Hash} (hb : Bounded H) (C :
   obtain ⟨j, hj, rfl⟩ := Option.map_eq_some_iff.1 h
   have hjl : j < C.keys.length := (List.idxOf?_eq_some_iff.1 hj).1
   exact opens_complete hb _ j (by simp [values]; exact hjl) (Nat.lt_trans hjl hs)
-
 /-- **An opening that opens against a world's dated root carries that world's value at that key**,
 or the hash collides among the finite opening preimages. -/
 theorem opens_val {H : Hash} (hb : Bounded H) (C : Commit W Key) (w : W) {o : Opening}
@@ -328,11 +287,8 @@ theorem opens_val {H : Hash} (hb : Bounded H) (C : Commit W Key) (w : W) {o : Op
   rcases opens_view hb (C.values w) h (by simp [values, hn]) (by simp [values, hj]) with he | c
   · left; rw [he]; simp [values]
   · exact .inr c
-
 end Commit
-
 /-! ## The refutable pole -/
-
 /-- **Under the length hash, an opening lies**: the openings of values 1 and 3 at position 0 open
 against the same roots. Binding is carried by the hash, not by the tree. -/
 theorem lengthHash_opens_lie (n : Nat) (p : List Nat) (r : Nat) :
@@ -340,35 +296,29 @@ theorem lengthHash_opens_lie (n : Nat) (p : List Nat) (r : Nat) :
   have : leaf lengthHash 0 1 = leaf lengthHash 0 3 :=
     Obend.Core.Digest.lengthHash_binding_fails 0 1 3 (by decide)
   simp only [opens, this]
-
 /-! ## Batch Merkle Multi-Proof Inclusion Verification (`MerkleBatchProof`, `verifyMerkleBatchProof`) -/
-
 /-- A single `(leafIndex, leafDigest, auditPath)` entry in a batch Merkle inclusion proof. -/
 structure MerkleBatchEntry where
   leafIndex : Nat
   leafDigest : Nat
   auditPath : List Nat
   deriving DecidableEq, Repr
-
 /-- A batch Merkle inclusion proof for a tree of `treeSize` leaves, carrying a list of
 `(leafIndex, leafDigest, auditPath)` entries verified against a shared `expectedRoot`. -/
 structure MerkleBatchProof where
   treeSize : Nat
   entries : List MerkleBatchEntry
   deriving DecidableEq, Repr
-
 /-- Single-leaf Merkle inclusion verifier for a `MerkleBatchEntry` against `expectedRoot`
 in a tree of `treeSize` leaves. -/
 @[expose] def verifySingleMerkleLeaf (H : Hash) (treeSize : Nat) (e : MerkleBatchEntry)
     (expectedRoot : Nat) : Bool :=
   Small e.leafIndex && Small e.leafDigest &&
     (climb H treeSize e.leafIndex e.leafDigest e.auditPath == some expectedRoot)
-
 /-- Check that a list of leaf indices is pairwise distinct (contains no duplicate index). -/
 def indicesPairwiseDistinct : List Nat → Bool
   | [] => true
   | idx :: rest => !rest.contains idx && indicesPairwiseDistinct rest
-
 /-- `indicesPairwiseDistinct` decides `List.Nodup`. -/
 theorem indicesPairwiseDistinct_iff_nodup (idxs : List Nat) :
     indicesPairwiseDistinct idxs = true ↔ idxs.Nodup := by
@@ -385,14 +335,12 @@ theorem indicesPairwiseDistinct_iff_nodup (idxs : List Nat) :
         · rfl
         · exfalso; exact hx (List.contains_iff_mem.1 hc)
     simp only [indicesPairwiseDistinct, Bool.and_eq_true, hNotMem, List.nodup_cons, ih]
-
 /-- **Batch Merkle Inclusion Verification (`verifyMerkleBatchProof`)**:
 verifies that a list of `(leafIndex, leafDigest, auditPath)` entries in `batch` have pairwise
 distinct `leafIndex`es and all resolve to the same `expectedRoot`. -/
 @[expose] def verifyMerkleBatchProof (H : Hash) (batch : MerkleBatchProof) (expectedRoot : Nat) : Bool :=
   indicesPairwiseDistinct (batch.entries.map MerkleBatchEntry.leafIndex) &&
   batch.entries.all (fun e => verifySingleMerkleLeaf H batch.treeSize e expectedRoot)
-
 /-- **Soundness of Batch Merkle Verification (`verifyMerkleBatchProof_sound`)**:
 If `verifyMerkleBatchProof H batch expectedRoot = true`, then:
 1. All `leafIndex` values across `batch.entries` are pairwise distinct (`List.Nodup`), and
@@ -411,13 +359,11 @@ theorem verifyMerkleBatchProof_sound (H : Hash) (batch : MerkleBatchProof) (expe
   refine ⟨hSingle, ?_⟩
   simp only [verifySingleMerkleLeaf, Bool.and_eq_true, beq_iff_eq] at hSingle
   exact hSingle.2
-
 /-- Construct the honest `MerkleBatchEntry` for leaf position `i` of leaf list `l`. -/
 @[expose] def honestBatchEntry (H : Hash) (l : List Nat) (i : Nat) : MerkleBatchEntry :=
   { leafIndex := i
     leafDigest := l.getD i 0
     auditPath := path H l i }
-
 /-- Honest single-leaf completeness for `honestBatchEntry`. -/
 theorem verifySingleMerkleLeaf_honest {H : Hash} (hb : Bounded H) (l : List Nat)
     (hl : ∀ x ∈ l, x < 2 ^ 256) (i : Nat) (hi : i < l.length) (his : i < 2 ^ 256) :
@@ -428,12 +374,10 @@ theorem verifySingleMerkleLeaf_honest {H : Hash} (hb : Bounded H) (l : List Nat)
     exact hl l[i] (List.getElem_mem hi)
   simp only [verifySingleMerkleLeaf, honestBatchEntry, Small, his, hlt, decide_true,
     Bool.true_and, hc, beq_self_eq_true]
-
 /-- Construct an honest `MerkleBatchProof` for a list of leaf positions `idxs` in leaf list `l`. -/
 @[expose] def honestBatchProof (H : Hash) (l : List Nat) (idxs : List Nat) : MerkleBatchProof :=
   { treeSize := l.length
     entries := idxs.map (honestBatchEntry H l) }
-
 /-- **Batch Completeness (`verifyMerkleBatchProof_honest`)**:
 For any bounded hash `H`, digest-sized leaf list `l` (`l.length < 2 ^ 256`), and pairwise-distinct
 leaf positions `idxs` (`idxs.Nodup`, `∀ i ∈ idxs, i < l.length`), `honestBatchProof H l idxs`
@@ -450,7 +394,6 @@ theorem verifyMerkleBatchProof_honest {H : Hash} (hb : Bounded H) (l : List Nat)
   refine ⟨hNodup, fun i hi => ?_⟩
   have hlt : i < l.length := hBounds i hi
   exact verifySingleMerkleLeaf_honest hb l hl i hlt (Nat.lt_trans hlt hs)
-
 theorem verifyMerkleBatchProof_binds_scoped {H : Hash} (hb : Bounded H) (l : List Nat)
     (hl : ∀ x ∈ l, x < 2 ^ 256) {batch : MerkleBatchProof}
     (hBatch : verifyMerkleBatchProof H batch (root H l) = true) (hSize : batch.treeSize = l.length)
@@ -471,9 +414,7 @@ theorem verifyMerkleBatchProof_binds_scoped {H : Hash} (hb : Bounded H) (l : Lis
       e.leafDigest (l.getD e.leafIndex 0) (root H l) hDigestSmall hLeafSmall hClimb hHonestClimb with hEq | hCol
   · left; rw [hEq, List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hi]; rfl
   · exact .inr hCol
-
 /-! ## 256-Bit `cSHAKE256` Length-Framed Salted Blinded Merkle Multiproofs & Constructive Collision Extractors -/
-
 /-- Fuel-bounded LEB128 variable-length natural encoding. -/
 def leb128Aux : Nat → Nat → List UInt8
   | 0, v => [UInt8.ofNat (v % 128)]
@@ -559,7 +500,111 @@ theorem encodeFields_injective : ∀ (fs₁ fs₂ : List (List UInt8)),
   | a :: as, b :: bs, h => by
     simp only [encodeFields, List.flatMap_cons] at h
     obtain ⟨hab, hrest⟩ := encodeListField_prefix_inj h; rw [hab, encodeFields_injective as bs hrest]
-abbrev Digest256 := BitVec 256
+abbrev Digest256 := Obend.Core.Digest.Digest256
+/-! Fixed-width positional tree. Path shape is determined by size and index. -/
+open Obend.Core.Digest (digest256With preimage256 binds256_or_collides)
+def root256 (H : Hash) (ls : List Digest256) : Digest256 :=
+  if ls.length < 2 then ls.headD 0
+  else digest256With H (root256 H (ls.take (ls.length/2))) (root256 H (ls.drop (ls.length/2)))
+termination_by ls.length
+decreasing_by all_goals simp only [List.length_take, List.length_drop]; omega
+def path256 (H : Hash) (ls : List Digest256) (i : Nat) : List Digest256 :=
+  if ls.length < 2 then []
+  else if i < ls.length/2 then root256 H (ls.drop (ls.length/2)) :: path256 H (ls.take (ls.length/2)) i
+  else root256 H (ls.take (ls.length/2)) :: path256 H (ls.drop (ls.length/2)) (i-ls.length/2)
+termination_by ls.length
+decreasing_by all_goals simp only [List.length_take, List.length_drop]; omega
+def climb256 (H : Hash) : Nat → Nat → Digest256 → List Digest256 → Option Digest256
+  | n, _, x, [] => if n = 1 then some x else none
+  | n, i, x, s::ss =>
+    if n < 2 then none
+    else if i < n/2 then (climb256 H (n/2) i x ss).map fun l => digest256With H l s
+    else (climb256 H (n-n/2) (i-n/2) x ss).map fun r => digest256With H s r
+theorem climb256_path256 (H : Hash) (ls : List Digest256) (i : Nat) (hi : i < ls.length) :
+    climb256 H ls.length i (ls.getD i 0) (path256 H ls i) = some (root256 H ls) := by
+  by_cases h2 : ls.length < 2
+  · have h1 : ls.length = 1 := by omega
+    rw [path256, if_pos h2, root256, if_pos h2]
+    simp only [climb256, h1, ite_true]
+    match ls,h1 with | [x],_ => simp at hi; subst hi; rfl
+  · have hlt : (ls.take (ls.length/2)).length = ls.length/2 := by simp; omega
+    have hld : (ls.drop (ls.length/2)).length = ls.length-ls.length/2 := List.length_drop
+    rw [path256, if_neg h2]
+    conv => rhs; rw [root256, if_neg h2]
+    by_cases hl : i < ls.length/2
+    · rw [if_pos hl]
+      have hh := climb256_path256 H (ls.take (ls.length/2)) i (by rw [hlt]; exact hl)
+      have hg : (ls.take (ls.length/2)).getD i 0 = ls.getD i 0 := by
+        simp only [List.getD_eq_getElem?_getD, List.getElem?_take, hl, ite_true]
+      rw [hlt,hg] at hh
+      simp only [climb256,h2,hl,ite_false,ite_true,hh,Option.map_some]
+    · rw [if_neg hl]
+      have hh := climb256_path256 H (ls.drop (ls.length/2)) (i-ls.length/2) (by rw [hld]; omega)
+      have hg : (ls.drop (ls.length/2)).getD (i-ls.length/2) 0 = ls.getD i 0 := by
+        simp only [List.getD_eq_getElem?_getD, List.getElem?_drop, show ls.length/2+(i-ls.length/2)=i by omega]
+      rw [hld,hg] at hh
+      simp only [climb256,h2,hl,ite_false,hh,Option.map_some]
+termination_by ls.length
+decreasing_by all_goals simp only [List.length_take, List.length_drop]; omega
+def climbPreimages256 (H : Hash) : Nat → Nat → Digest256 → List Digest256 → List (List UInt8)
+  | _,_,_,[] => []
+  | n,i,x,s::ss =>
+    if i < n/2 then
+      let rest := climbPreimages256 H (n/2) i x ss
+      match climb256 H (n/2) i x ss with | some l => preimage256 l s :: rest | none => rest
+    else
+      let rest := climbPreimages256 H (n-n/2) (i-n/2) x ss
+      match climb256 H (n-n/2) (i-n/2) x ss with | some r => preimage256 s r :: rest | none => rest
+theorem opens256_binds_or_collides {H : Hash} (hlen : ∀ m, (H m).length = 32) :
+    ∀ (p p' : List Digest256) (n i : Nat) (x x' r : Digest256),
+      climb256 H n i x p = some r → climb256 H n i x' p' = some r →
+      x = x' ∨ CollisionAmong H (fun m => m ∈ climbPreimages256 H n i x p ++ climbPreimages256 H n i x' p') := by
+  intro p
+  induction p with
+  | nil =>
+    intro p' n i x x' r h h'
+    cases p' with
+    | nil =>
+        simp only [climb256] at h h'
+        by_cases hn : n=1
+        · simp only [hn,ite_true,Option.some.injEq] at h h'; exact .inl (h.trans h'.symm)
+        · simp [hn] at h
+    | cons s' ss' =>
+        simp only [climb256] at h h'; split at h
+        · rename_i hn; subst hn; simp at h'
+        · cases h
+  | cons s ss ih =>
+    intro p' n i x x' r h h'
+    cases p' with
+    | nil =>
+        simp only [climb256] at h h'; split at h'
+        · rename_i hn; subst hn; simp at h
+        · cases h'
+    | cons s' ss' =>
+        simp only [climb256] at h h'
+        split at h; · cases h
+        rename_i hn; simp only [hn,ite_false] at h'
+        split at h
+        · rename_i hi; simp only [hi,ite_true] at h'
+          obtain ⟨l,hl,rfl⟩ := Option.map_eq_some_iff.1 h
+          obtain ⟨l',hl',he⟩ := Option.map_eq_some_iff.1 h'
+          rcases binds256_or_collides H ⟨hlen _,hlen _⟩ he with ⟨hll,_⟩ | hc
+          · rcases ih ss' _ _ x x' l hl (hll ▸ hl') with heq | hc
+            · exact .inl heq
+            · exact .inr (hc.mono fun m hm => by
+                simp only [climbPreimages256,hi,ite_true,hl,hl',List.mem_append,List.mem_cons] at hm ⊢
+                exact hm.elim (fun h => .inl (.inr h)) (fun h => .inr (.inr h)))
+          · exact .inr (hc.mono fun m hm => by rcases hm with rfl | rfl <;> simp [climbPreimages256,hi,hl,hl'])
+        · rename_i hi; simp only [hi,ite_false] at h'
+          obtain ⟨l,hl,rfl⟩ := Option.map_eq_some_iff.1 h
+          obtain ⟨l',hl',he⟩ := Option.map_eq_some_iff.1 h'
+          rcases binds256_or_collides H ⟨hlen _,hlen _⟩ he with ⟨_,hll⟩ | hc
+          · rcases ih ss' _ _ x x' l hl (hll ▸ hl') with heq | hc
+            · exact .inl heq
+            · exact .inr (hc.mono fun m hm => by
+                simp only [climbPreimages256,hi,ite_false,hl,hl',List.mem_append,List.mem_cons] at hm ⊢
+                exact hm.elim (fun h => .inl (.inr h)) (fun h => .inr (.inr h)))
+          · exact .inr (hc.mono fun m hm => by rcases hm with rfl | rfl <;> simp [climbPreimages256,hi,hl,hl'])
 def bytesOfDigest256 (d : Digest256) : List UInt8 := be 32 d.toNat
 theorem bytesOfDigest256_injective {d₁ d₂ : Digest256} (h : bytesOfDigest256 d₁ = bytesOfDigest256 d₂) : d₁ = d₂ := by
   have h32 : (2 : Nat) ^ 256 = 256 ^ 32 := by decide
@@ -620,18 +665,14 @@ theorem leaf_ne_empty_preimage256 (idx : Nat) (salt : Digest256) (payload : List
 theorem internal_ne_empty_preimage256 (spanSize startIdx : Nat) (left right : Digest256) :
     internalPreimage256 spanSize startIdx left right ≠ emptyPreimage256 := by
   intro h; have hf := encodeFields_injective _ _ h; simp at hf
-
 /-! ### Salted 256-Bit Merkle Tree & Salted Blinded Multiproofs -/
-
 /-- A salted leaf carrying a 32-byte (`Digest256`) blinding salt and arbitrary byte payload. -/
 structure SaltedLeaf256 where
   salt : Digest256
   payload : List UInt8
   deriving DecidableEq, Repr
-
 /-- Default leaf fallback for total indexing. -/
 def defaultSaltedLeaf256 : SaltedLeaf256 := ⟨0#256, []⟩
-
 /-- Compute the 256-bit salted subtree root over `entries` starting at global leaf offset `startIdx`. -/
 def saltedSubtreeRoot256 (H : Hash) (startIdx : Nat) (entries : List SaltedLeaf256) : Digest256 :=
   if entries.length = 0 then
@@ -646,11 +687,9 @@ def saltedSubtreeRoot256 (H : Hash) (startIdx : Nat) (entries : List SaltedLeaf2
     hashBytes256 H (internalPreimage256 entries.length startIdx lRoot rRoot)
 termination_by entries.length
 decreasing_by all_goals simp only [List.length_take, List.length_drop]; omega
-
 /-- Canonical 256-bit salted Merkle root of `entries`. -/
 def saltedTreeRoot256 (H : Hash) (entries : List SaltedLeaf256) : Digest256 :=
   saltedSubtreeRoot256 H 0 entries
-
 /-- Multiproof tree with shared internal nodes and redacted (`.blinded`) 32-byte sibling commitments. -/
 inductive BlindedNode256 where
   | empty : BlindedNode256
@@ -658,7 +697,6 @@ inductive BlindedNode256 where
   | openedLeaf (idx : Nat) (salt : Digest256) (payload : List UInt8) : BlindedNode256
   | branch (left right : BlindedNode256) : BlindedNode256
   deriving DecidableEq, Repr
-
 /-- Count shared internal `.branch` hash evaluations in a `BlindedNode256`. -/
 def BlindedNode256.branchCount : BlindedNode256 → Nat
   | .empty | .blinded _ | .openedLeaf _ _ _ => 0
@@ -692,7 +730,6 @@ def strictlyAscending : List Nat → Bool
 /-- Check that `idxs` is strictly ascending and every index is `< treeSize`. -/
 def strictlyAscendingInBounds (treeSize : Nat) (idxs : List Nat) : Bool :=
   strictlyAscending idxs && idxs.all (fun i => decide (i < treeSize))
-
 theorem strictlyAscending_iff_pairwise :
     ∀ (idxs : List Nat), strictlyAscending idxs = true ↔ idxs.Pairwise (· < ·)
   | [] | [_] => by simp [strictlyAscending]
@@ -704,11 +741,9 @@ theorem strictlyAscending_iff_pairwise :
     rcases List.mem_cons.1 hx with rfl | hmem
     · exact hij
     · exact Nat.lt_trans hij (hjr x hmem)
-
 theorem strictlyAscending_nodup {idxs : List Nat} (h : strictlyAscending idxs = true) :
     idxs.Nodup :=
   ((strictlyAscending_iff_pairwise idxs).1 h).imp (fun hlt heq => by subst heq; exact Nat.lt_irrefl _ hlt)
-
 theorem filter_lt_append_filter_ge (cut : Nat) :
     ∀ (q : List Nat), q.Pairwise (· < ·) →
       q.filter (fun i => decide (i < cut)) ++ q.filter (fun i => decide (cut ≤ i)) = q
@@ -726,7 +761,6 @@ theorem filter_lt_append_filter_ge (cut : Nat) :
         List.filter_eq_self.2 fun y hy => by have := hx y hy; simp; omega
       simp only [List.filter_cons, decide_eq_false hlt, decide_eq_true hge, Bool.false_eq_true,
         ↓reduceIte, hnone, hall, List.nil_append]
-
 /-- Structurally evaluate a `BlindedNode256` against `(spanSize, startIdx)`, enforcing exact
 binary split geometry and non-empty branch demand (rejecting uncollapsed all-blinded branches). -/
 def evalBlindedNode256 (H : Hash) :
@@ -751,7 +785,6 @@ def evalBlindedNode256 (H : Hash) :
           some (hashBytes256 H (internalPreimage256 spanSize startIdx lRoot rRoot),
                 lOpened ++ rOpened)
       | _, _ => none
-
 /-- **Salted Blinded 256-Bit Merkle Multiproof Verifier (`verifyBlindedMultiproof256`)**:
 verifies strict index ordering/bounds, structural span-bound tree evaluation against `expectedRoot`,
 and exact index-set agreement between opened leaves and `proof.queriedIndices`. -/
@@ -761,7 +794,6 @@ def verifyBlindedMultiproof256 (H : Hash) (proof : BlindedMultiproof256)
   match evalBlindedNode256 H proof.tree proof.treeSize 0 with
   | some (r, opened) => r == expectedRoot && opened.map Prod.fst == proof.queriedIndices
   | none => false
-
 /-- Inhabitedness witness for `verifyBlindedMultiproof256` (holds symbolically for every `H : Hash`,
 including `cshakeMultiproofHash` and `deployed`). -/
 theorem verifyBlindedMultiproof256_inhabited (H : Hash) :
@@ -773,7 +805,6 @@ theorem verifyBlindedMultiproof256_inhabited (H : Hash) :
   unfold verifyBlindedMultiproof256 saltedTreeRoot256 saltedSubtreeRoot256
     evalBlindedNode256 strictlyAscendingInBounds strictlyAscending defaultSaltedLeaf256
   simp
-
 /-- Duplicate leaf indices in `proof.queriedIndices` are unconditionally rejected. -/
 theorem verifyBlindedMultiproof256_rejects_duplicates (H : Hash) (proof : BlindedMultiproof256)
     (expectedRoot : Digest256) (hDup : ¬ proof.queriedIndices.Nodup) :
@@ -784,7 +815,6 @@ theorem verifyBlindedMultiproof256_rejects_duplicates (H : Hash) (proof : Blinde
     unfold verifyBlindedMultiproof256 strictlyAscendingInBounds at hv
     simp only [Bool.and_eq_true] at hv
     exact absurd (strictlyAscending_nodup hv.1.1) hDup
-
 /-- Build the canonical minimal `BlindedNode256` over `entries` at offset `startIdx` for `queried`,
 folding every unqueried sibling subtree into a single 32-byte `.blinded` commitment and sharing
 internal `.branch` nodes across multi-leaf queries ($O(k \log(N/k))$). -/
@@ -806,19 +836,16 @@ def buildBlindedNode256 (H : Hash) (startIdx : Nat) (entries : List SaltedLeaf25
       (buildBlindedNode256 H (startIdx + mid) (entries.drop mid) qRight)
 termination_by entries.length
 decreasing_by all_goals simp only [List.length_take, List.length_drop]; omega
-
 /-- Build the canonical `BlindedMultiproof256` for `queriedIndices` over `entries`. -/
 def buildBlindedMultiproof256 (H : Hash) (entries : List SaltedLeaf256)
     (queriedIndices : List Nat) : BlindedMultiproof256 :=
   { treeSize := entries.length
     queriedIndices := queriedIndices
     tree := buildBlindedNode256 H 0 entries queriedIndices }
-
 @[simp] theorem buildBlindedMultiproof256_treeSize (H : Hash) (entries : List SaltedLeaf256)
     (q : List Nat) : (buildBlindedMultiproof256 H entries q).treeSize = entries.length := by rfl
 @[simp] theorem buildBlindedMultiproof256_queriedIndices (H : Hash) (entries : List SaltedLeaf256)
     (q : List Nat) : (buildBlindedMultiproof256 H entries q).queriedIndices = q := by rfl
-
 /-- Every nonempty unqueried subtree compresses to a single `.blinded` 32-byte commitment
 (`branchCount = 0`, `blindedCount = 1`). -/
 theorem buildBlindedNode256_unqueried_eq_blinded (H : Hash) (startIdx : Nat)
@@ -829,7 +856,6 @@ theorem buildBlindedNode256_unqueried_eq_blinded (H : Hash) (startIdx : Nat)
     intro h0; exact hne (List.eq_nil_of_length_eq_zero h0)
   rw [buildBlindedNode256]
   simp [hlen]
-
 /-- **Shared-Internal-Node Deduplication (`buildBlindedNode256_shared_root_dedup`)**:
 When `queried` spans both halves of `entries` (`entries.length ≥ 2`), the root internal node is
 materialized **once** (`branchCount = 1 + left.branchCount + right.branchCount`), strictly saving
@@ -849,15 +875,12 @@ theorem buildBlindedNode256_shared_root_dedup (H : Hash) (startIdx : Nat)
   dsimp only
   conv => lhs; rw [buildBlindedNode256]
   simp [h0, h1, hq, BlindedNode256.branchCount]
-
 private theorem getD_take_salted (entries : List SaltedLeaf256) {k i : Nat} (h : i < k) :
     (entries.take k).getD i defaultSaltedLeaf256 = entries.getD i defaultSaltedLeaf256 := by
   simp only [List.getD_eq_getElem?_getD, List.getElem?_take, h, ↓reduceIte]
-
 private theorem getD_drop_salted (entries : List SaltedLeaf256) (k i : Nat) :
     (entries.drop k).getD i defaultSaltedLeaf256 = entries.getD (k + i) defaultSaltedLeaf256 := by
   simp only [List.getD_eq_getElem?_getD, List.getElem?_drop]
-
 /-- Subtree evaluation completeness for `buildBlindedNode256`. -/
 theorem evalBlindedNode256_build (H : Hash) :
     ∀ (entries : List SaltedLeaf256) (startIdx : Nat) (queried : List Nat),
@@ -973,7 +996,6 @@ theorem evalBlindedNode256_build (H : Hash) :
           simp only [h0, h1, hqEmpty, Bool.false_eq_true, ↓reduceIte, evalBlindedNode256,
             hlt2_false, ihL, ihR, hNotBothEmpty]
           rw [← List.map_append, hAppendQ]
-
 /-- **Completeness of 256-Bit Salted Blinded Multiproofs (`verifyBlindedMultiproof256_complete`)**:
 For every hash `H` (including `cshakeMultiproofHash`), salted leaf table `entries`, and strictly
 ascending in-bounds `queriedIndices`, `buildBlindedMultiproof256 H entries queriedIndices` verifies
@@ -996,9 +1018,7 @@ theorem verifyBlindedMultiproof256_complete (H : Hash) (entries : List SaltedLea
   have hFst : (Prod.fst ∘ fun i : Nat => (i, entries.getD (i - 0) defaultSaltedLeaf256)) = id := by
     funext i; rfl
   rw [hFst, List.map_id, beq_self_eq_true]
-
 /-! ### Constructive `Type`-Valued `PSum` Collision Extraction (`0 Classical.choice`) -/
-
 /-- Finite list of preimages hashed in the honest `saltedSubtreeRoot256 H startIdx entries`. -/
 def honestSubtreePreimages (H : Hash) (startIdx : Nat) (entries : List SaltedLeaf256) :
     List (List UInt8) :=
@@ -1016,7 +1036,6 @@ def honestSubtreePreimages (H : Hash) (startIdx : Nat) (entries : List SaltedLea
        honestSubtreePreimages H (startIdx + mid) (entries.drop mid))
 termination_by entries.length
 decreasing_by all_goals simp only [List.length_take, List.length_drop]; omega
-
 /-- Finite list of preimages hashed during `evalBlindedNode256 H node spanSize startIdx`. -/
 def proofNodePreimages (H : Hash) : BlindedNode256 → Nat → Nat → List (List UInt8)
   | .empty, _, _ => [emptyPreimage256]
@@ -1033,17 +1052,14 @@ def proofNodePreimages (H : Hash) : BlindedNode256 → Nat → Nat → List (Lis
     | some (lRoot, _), some (rRoot, _) =>
       internalPreimage256 spanSize startIdx lRoot rRoot :: children
     | _, _ => children
-
 /-- Combined finite preimage scope for a subtree and multiproof node. -/
 def subtreeScopePreimages (H : Hash) (startIdx : Nat) (entries : List SaltedLeaf256)
     (node : BlindedNode256) : List (List UInt8) :=
   honestSubtreePreimages H startIdx entries ++ proofNodePreimages H node entries.length startIdx
-
 /-- Combined finite preimage scope for a full tree and `BlindedMultiproof256`. -/
 def multiproofScopePreimages (H : Hash) (entries : List SaltedLeaf256)
     (proof : BlindedMultiproof256) : List (List UInt8) :=
   subtreeScopePreimages H 0 entries proof.tree
-
 private theorem evalBlindedNode256_range {H : Hash} (node : BlindedNode256) :
     ∀ (spanSize startIdx : Nat) (r : Digest256) (opened : List (Nat × SaltedLeaf256)),
       evalBlindedNode256 H node spanSize startIdx = some (r, opened) →
@@ -1093,14 +1109,12 @@ private theorem evalBlindedNode256_range {H : Hash} (node : BlindedNode256) :
           · cases h
     · cases h
 termination_by structural node
-
 private theorem branch_ge2_of_eval {H : Hash} {l r : BlindedNode256} {sz st : Nat} {x : Digest256 × List (Nat × SaltedLeaf256)}
     (h : evalBlindedNode256 H (.branch l r) sz st = some x) : 2 ≤ sz := by
   unfold evalBlindedNode256 at h
   cases hlt2 : decide (sz < 2) <;> rw [hlt2] at h
   · exact Nat.not_lt.1 (decide_eq_false_iff_not.1 hlt2)
   · cases h
-
 /-- Constructive `Type`-valued subtree collision extractor (`0 Classical.choice`):
 either every opened `(idx, leaf)` equals the true leaf in `entries`, or an explicit
 `ScopedCollision256` pair of distinct preimages is returned. -/
@@ -1268,7 +1282,6 @@ def extractSubtreeCollision (H : Hash) :
         cases hlt2 : decide (entries.length < 2) <;> rw [hlt2] at hEval
         · dsimp only [mid] at hL hR; dsimp only at hEval; rw [hL, hR] at hEval; cases hEval
         · cases hEval)
-
 /-- **Constructive `Type`-Valued Multiproof Binding & Collision Extractor (`extractMultiproofCollision`)**:
 With **`0 Classical.choice`** and **zero pigeonhole vacuity**, any `proof` accepted by
 `verifyBlindedMultiproof256 H proof (saltedTreeRoot256 H entries) = true` with
@@ -1298,15 +1311,12 @@ def extractMultiproofCollision (H : Hash) (entries : List SaltedLeaf256)
     | .inr col => PSum.inr col
   | none =>
     PSum.inl (by exfalso; unfold verifyBlindedMultiproof256 at hVer; rw [hSize, hEv] at hVer; rw [Bool.and_false] at hVer; cases hVer)
-
 /-! ### Redaction Non-Leakage & Zero-Access Commitment Simulation -/
-
 /-- Collect all `(idx, salt, payload)` triples syntactically present in `.openedLeaf` nodes. -/
 def BlindedNode256.syntacticOpenedLeaves : BlindedNode256 → List (Nat × SaltedLeaf256)
   | .empty | .blinded _ => []
   | .openedLeaf idx salt payload => [(idx, ⟨salt, payload⟩)]
   | .branch l r => l.syntacticOpenedLeaves ++ r.syntacticOpenedLeaves
-
 theorem evalBlindedNode256_syntacticOpened {H : Hash} :
     ∀ (node : BlindedNode256) (sz st : Nat) (r : Digest256) (opened : List (Nat × SaltedLeaf256)),
       evalBlindedNode256 H node sz st = some (r, opened) → node.syntacticOpenedLeaves = opened
@@ -1333,7 +1343,6 @@ theorem evalBlindedNode256_syntacticOpened {H : Hash} :
             evalBlindedNode256_syntacticOpened l _ _ lr lo hl,
             evalBlindedNode256_syntacticOpened r _ _ rr ro hr]
       · cases h
-
 /-- **Syntactic Redaction Non-Presence (`buildBlindedNode256_opened_only_queried`)**:
 Every `.openedLeaf` node syntactically present anywhere inside `buildBlindedNode256` belongs to
 `queried`. Unqueried indices have **zero** `.openedLeaf` payloads or salts in the multiproof. -/
@@ -1350,7 +1359,6 @@ theorem buildBlindedNode256_opened_only_queried (H : Hash)
   obtain ⟨i, hi, hEq⟩ := hMem
   obtain ⟨rfl, rfl⟩ := Prod.mk.inj hEq
   exact ⟨hi, rfl⟩
-
 /-- Zero-access redacted simulator: constructs a `BlindedNode256` from **only**
 (1) `openedOracle`, queried solely at indices `i ∈ queried`, and
 (2) `blindedCommitmentOracle`, queried solely for 32-byte commitments of unqueried spans
@@ -1375,7 +1383,6 @@ def simulateBlindedNode256
       (simulateBlindedNode256 openedOracle blindedCommitmentOracle (startIdx + mid) (spanSize - mid) qRight)
 termination_by spanSize
 decreasing_by all_goals omega
-
 /-- **Zero-Access Redaction Non-Leakage (`blindedMultiproof_redaction_nonleakage`)**:
 `buildBlindedMultiproof256` is bit-for-bit identical to the zero-access simulator
 `simulateBlindedNode256` whose `openedOracle` returns `defaultSaltedLeaf256` on **all** redacted
@@ -1465,7 +1472,5 @@ theorem blindedMultiproof_redaction_nonleakage (H : Hash) (entries : List Salted
             (startIdx + mid) qRight hSliceR (hqSort.filter _) hSubR
           rw [hTakeLen] at ihL; rw [hDropLen] at ihR; dsimp only [mid, qLeft, qRight] at ihL ihR
           rw [buildBlindedNode256, simulateBlindedNode256]; simp [h0, h1, hqEmpty, ihL, ihR]
-
 end Obend.Receipt.Merkle
 end
-

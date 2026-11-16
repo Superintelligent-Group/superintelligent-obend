@@ -1,6 +1,6 @@
 module
 /- Cubical Kan carriers, ternary cofibration classifiers, staged erasure, and gain-aware adapter fusion.
-CofibLUT16 is retained as a legacy vertex classifier; CofibCube27 includes generic interior faces. -/
+Face ideals classify all 81 ternary points and retain the generic interior separately from the boundary. -/
 public import Obend.Logic.Obligation
 import all Obend.Logic.Obligation
 public import Obend.Category.GradedLogic
@@ -18,42 +18,17 @@ inductive IntervalPt where
 namespace IntervalPt
 def rev : IntervalPt → IntervalPt | .ep0 => .ep1 | .interior => .interior | .ep1 => .ep0
 theorem rev_involutive (t : IntervalPt) : t.rev.rev = t := by cases t <;> rfl
+def toFin3 : IntervalPt → Fin 3 | .ep0 => 0 | .ep1 => 1 | .interior => 2
+def ofFin3 (i : Fin 3) : IntervalPt := if i = 0 then .ep0 else if i = 1 then .ep1 else .interior
+@[simp] theorem ofFin3_toFin3 (t : IntervalPt) : ofFin3 t.toFin3 = t := by cases t <;> rfl
+@[simp] theorem toFin3_ofFin3 (i : Fin 3) : (ofFin3 i).toFin3 = i := by decide +revert
+def le (a b : IntervalPt) : Bool := (b == .interior) || (a == b)
+theorem le_refl (a : IntervalPt) : le a a = true := by cases a <;> rfl
+theorem le_trans (a b c : IntervalPt) : le a b = true → le b c = true → le a c = true := by
+  cases a <;> cases b <;> cases c <;> decide
+theorem le_antisymm (a b : IntervalPt) : le a b = true → le b a = true → a = b := by
+  cases a <;> cases b <;> decide
 end IntervalPt
-/-- Binary corner assignment $(b_0, b_1, b_2, b_3) \in \{0, 1\}^4$ of the 4-cube. -/
-structure Vertex4 where
-  b0 : Bool
-  b1 : Bool
-  b2 : Bool
-  b3 : Bool
-  deriving DecidableEq, Repr
-namespace Vertex4
-def coord (pt : Vertex4) (d : Fin 4) : Bool :=
-  match d.val with | 0 => pt.b0 | 1 => pt.b1 | 2 => pt.b2 | _ => pt.b3
-def flipDim (pt : Vertex4) (d : Fin 4) : Vertex4 :=
-  match d.val with
-  | 0 => { pt with b0 := !pt.b0 } | 1 => { pt with b1 := !pt.b1 }
-  | 2 => { pt with b2 := !pt.b2 } | _ => { pt with b3 := !pt.b3 }
-def setDim (pt : Vertex4) (d : Fin 4) (ep : Bool) : Vertex4 :=
-  match d.val with
-  | 0 => { pt with b0 := ep } | 1 => { pt with b1 := ep }
-  | 2 => { pt with b2 := ep } | _ => { pt with b3 := ep }
-def toIdx (pt : Vertex4) : Fin 16 :=
-  ⟨(if pt.b0 then 1 else 0) + (if pt.b1 then 2 else 0) +
-   (if pt.b2 then 4 else 0) + (if pt.b3 then 8 else 0),
-   by cases pt.b0 <;> cases pt.b1 <;> cases pt.b2 <;> cases pt.b3 <;> decide⟩
-def ofIdx (k : Fin 16) : Vertex4 :=
-  ⟨k.val % 2 == 1, (k.val / 2) % 2 == 1, (k.val / 4) % 2 == 1, (k.val / 8) % 2 == 1⟩
-theorem ofIdx_toIdx (pt : Vertex4) : ofIdx pt.toIdx = pt := by
-  cases pt with | mk b0 b1 b2 b3 => cases b0 <;> cases b1 <;> cases b2 <;> cases b3 <;> rfl
-theorem toIdx_ofIdx (k : Fin 16) : (ofIdx k).toIdx = k := by decide +revert
-theorem flipDim_involutive (pt : Vertex4) (d : Fin 4) : (pt.flipDim d).flipDim d = pt := by
-  rcases d with ⟨dv, hdv⟩
-  cases pt with
-  | mk b0 b1 b2 b3 =>
-    match dv with
-    | 0 | 1 | 2 | 3 => simp [flipDim]
-    | n + 4 => exfalso; exact Nat.not_lt_of_ge (Nat.le_add_left 4 n) hdv
-end Vertex4
 /-- General ternary 4-cube point $(c_0, c_1, c_2, c_3) \in \{0, 1, *\}^4$ including interior faces. -/
 structure CubePt4 where
   c0 : IntervalPt
@@ -62,207 +37,168 @@ structure CubePt4 where
   c3 : IntervalPt
   deriving DecidableEq, Repr
 namespace CubePt4
-def ofVertex (v : Vertex4) : CubePt4 :=
-  ⟨if v.b0 then .ep1 else .ep0, if v.b1 then .ep1 else .ep0,
-   if v.b2 then .ep1 else .ep0, if v.b3 then .ep1 else .ep0⟩
 def interior4 : CubePt4 := ⟨.interior, .interior, .interior, .interior⟩
 def coord (pt : CubePt4) (d : Fin 4) : IntervalPt :=
   match d.val with | 0 => pt.c0 | 1 => pt.c1 | 2 => pt.c2 | _ => pt.c3
-end CubePt4
-/-- Unboxed 16-bit LUT representing a cubical cofibration truth table over $\mathbb{I}^4$. -/
-structure CofibLUT16 where
-  bits : BitVec 16
-  deriving DecidableEq, Repr
-namespace CofibLUT16
-@[ext] theorem ext {φ ψ : CofibLUT16} (h : φ.bits = ψ.bits) : φ = ψ := by
-  cases φ; cases ψ; cases h; rfl
-@[expose] def bot : CofibLUT16 := ⟨0x0000#16⟩
-@[expose] def top : CofibLUT16 := ⟨0xFFFF#16⟩
-@[expose] def meet (φ ψ : CofibLUT16) : CofibLUT16 := ⟨φ.bits &&& ψ.bits⟩
-@[expose] def join (φ ψ : CofibLUT16) : CofibLUT16 := ⟨φ.bits ||| ψ.bits⟩
-def entails (φ ψ : CofibLUT16) : Bool := (φ.bits &&& ψ.bits) == φ.bits
-def dimEq0 (d : Fin 4) : CofibLUT16 :=
-  match d.val with | 0 => ⟨0x5555#16⟩ | 1 => ⟨0x3333#16⟩ | 2 => ⟨0x0F0F#16⟩ | _ => ⟨0x00FF#16⟩
-def dimEq1 (d : Fin 4) : CofibLUT16 :=
-  match d.val with | 0 => ⟨0xAAAA#16⟩ | 1 => ⟨0xCCCC#16⟩ | 2 => ⟨0xF0F0#16⟩ | _ => ⟨0xFF00#16⟩
-def revDim (d : Fin 4) (φ : CofibLUT16) : CofibLUT16 :=
+def toIdx (p : CubePt4) : Fin 81 :=
+  ⟨p.c0.toFin3.val + 3*p.c1.toFin3.val + 9*p.c2.toFin3.val + 27*p.c3.toFin3.val, by
+    have := p.c0.toFin3.isLt; have := p.c1.toFin3.isLt
+    have := p.c2.toFin3.isLt; have := p.c3.toFin3.isLt; omega⟩
+def ofIdx (i : Fin 81) : CubePt4 :=
+  ⟨.ofFin3 ⟨i.val%3, by omega⟩, .ofFin3 ⟨i.val/3%3, by omega⟩,
+   .ofFin3 ⟨i.val/9%3, by omega⟩, .ofFin3 ⟨i.val/27, by omega⟩⟩
+@[simp] theorem ofIdx_toIdx (p : CubePt4) : ofIdx p.toIdx = p := by
+  rcases p with ⟨a,b,c,d⟩; cases a <;> cases b <;> cases c <;> cases d <;> rfl
+@[simp] theorem toIdx_ofIdx (i : Fin 81) : (ofIdx i).toIdx = i := by decide +revert
+def setDim (p : CubePt4) (d : Fin 4) (v : IntervalPt) : CubePt4 :=
   match d.val with
-  | 0 => ⟨((φ.bits &&& 0x5555#16) <<< 1) ||| ((φ.bits &&& 0xAAAA#16) >>> 1)⟩
-  | 1 => ⟨((φ.bits &&& 0x3333#16) <<< 2) ||| ((φ.bits &&& 0xCCCC#16) >>> 2)⟩
-  | 2 => ⟨((φ.bits &&& 0x0F0F#16) <<< 4) ||| ((φ.bits &&& 0xF0F0#16) >>> 4)⟩
-  | _ => ⟨((φ.bits &&& 0x00FF#16) <<< 8) ||| ((φ.bits &&& 0xFF00#16) >>> 8)⟩
-def substDim (d : Fin 4) (ep : Bool) (φ : CofibLUT16) : CofibLUT16 :=
-  match d.val, ep with
-  | 0, false => let s := φ.bits &&& 0x5555#16; ⟨s ||| (s <<< 1)⟩
-  | 0, true  => let s := φ.bits &&& 0xAAAA#16; ⟨s ||| (s >>> 1)⟩
-  | 1, false => let s := φ.bits &&& 0x3333#16; ⟨s ||| (s <<< 2)⟩
-  | 1, true  => let s := φ.bits &&& 0xCCCC#16; ⟨s ||| (s >>> 2)⟩
-  | 2, false => let s := φ.bits &&& 0x0F0F#16; ⟨s ||| (s <<< 4)⟩
-  | 2, true  => let s := φ.bits &&& 0xF0F0#16; ⟨s ||| (s >>> 4)⟩
-  | _, false => let s := φ.bits &&& 0x00FF#16; ⟨s ||| (s <<< 8)⟩
-  | _, true  => let s := φ.bits &&& 0xFF00#16; ⟨s ||| (s >>> 8)⟩
-def evalCofib (φ : CofibLUT16) (pt : Vertex4) : Bool := φ.bits.getLsbD pt.toIdx.val
-def subcubeMask (pt : CubePt4) : BitVec 16 :=
-  let m0 := match pt.c0 with | .ep0 => 0x5555#16 | .ep1 => 0xAAAA#16 | .interior => 0xFFFF#16
-  let m1 := match pt.c1 with | .ep0 => 0x3333#16 | .ep1 => 0xCCCC#16 | .interior => 0xFFFF#16
-  let m2 := match pt.c2 with | .ep0 => 0x0F0F#16 | .ep1 => 0xF0F0#16 | .interior => 0xFFFF#16
-  let m3 := match pt.c3 with | .ep0 => 0x00FF#16 | .ep1 => 0xFF00#16 | .interior => 0xFFFF#16
-  m0 &&& m1 &&& m2 &&& m3
-def evalSubcube (φ : CofibLUT16) (pt : CubePt4) : Bool :=
-  let m := subcubeMask pt; (φ.bits &&& m) == m
-private theorem bv16_eq_of_lsb {a b : BitVec 16}
-    (h : ∀ k : Fin 16, a.getLsbD k.val = b.getLsbD k.val) : a = b :=
-  BitVec.eq_of_getLsbD_eq fun i hi => h ⟨i, hi⟩
-private theorem top_getLsbD (k : Fin 16) : (0xFFFF#16).getLsbD k.val = true := by decide +revert
-private theorem oneHot_self (k : Fin 16) : (1#16 <<< k.val).getLsbD k.val = true := by decide +revert
-private theorem oneHot_ne {j k : Fin 16} (h : j ≠ k) :
-    (1#16 <<< k.val).getLsbD j.val = false := by decide +revert
-theorem meet_comm (φ ψ : CofibLUT16) : φ.meet ψ = ψ.meet φ := ext (BitVec.and_comm φ.bits ψ.bits)
-theorem meet_assoc (φ ψ χ : CofibLUT16) : (φ.meet ψ).meet χ = φ.meet (ψ.meet χ) :=
-  ext (BitVec.and_assoc φ.bits ψ.bits χ.bits)
-theorem join_comm (φ ψ : CofibLUT16) : φ.join ψ = ψ.join φ := ext (BitVec.or_comm φ.bits ψ.bits)
-theorem join_assoc (φ ψ χ : CofibLUT16) : (φ.join ψ).join χ = φ.join (ψ.join χ) :=
-  ext (BitVec.or_assoc φ.bits ψ.bits χ.bits)
-theorem meet_idem (φ : CofibLUT16) : φ.meet φ = φ := by apply ext; simp [meet]
-theorem join_idem (φ : CofibLUT16) : φ.join φ = φ := by apply ext; simp [join]
-theorem meet_distrib_join (φ ψ χ : CofibLUT16) :
-    φ.meet (ψ.join χ) = (φ.meet ψ).join (φ.meet χ) := by
-  apply ext; apply bv16_eq_of_lsb; intro k
-  dsimp only [meet, join]; rw [BitVec.getLsbD_and, BitVec.getLsbD_or, BitVec.getLsbD_or,
-    BitVec.getLsbD_and, BitVec.getLsbD_and]
-  cases φ.bits.getLsbD k.val <;> cases ψ.bits.getLsbD k.val <;> cases χ.bits.getLsbD k.val <;> rfl
-theorem join_distrib_meet (φ ψ χ : CofibLUT16) :
-    φ.join (ψ.meet χ) = (φ.join ψ).meet (φ.join χ) := by
-  apply ext; apply bv16_eq_of_lsb; intro k
-  dsimp only [meet, join]; rw [BitVec.getLsbD_or, BitVec.getLsbD_and, BitVec.getLsbD_and,
-    BitVec.getLsbD_or, BitVec.getLsbD_or]
-  cases φ.bits.getLsbD k.val <;> cases ψ.bits.getLsbD k.val <;> cases χ.bits.getLsbD k.val <;> rfl
-theorem absorb_meet_join (φ ψ : CofibLUT16) : φ.meet (φ.join ψ) = φ := by
-  apply ext; apply bv16_eq_of_lsb; intro k
-  dsimp only [meet, join]; rw [BitVec.getLsbD_and, BitVec.getLsbD_or]
-  cases φ.bits.getLsbD k.val <;> cases ψ.bits.getLsbD k.val <;> rfl
-theorem absorb_join_meet (φ ψ : CofibLUT16) : φ.join (φ.meet ψ) = φ := by
-  apply ext; apply bv16_eq_of_lsb; intro k
-  dsimp only [meet, join]; rw [BitVec.getLsbD_or, BitVec.getLsbD_and]
-  cases φ.bits.getLsbD k.val <;> cases ψ.bits.getLsbD k.val <;> rfl
-theorem bot_meet (φ : CofibLUT16) : bot.meet φ = bot := by
-  apply ext; apply bv16_eq_of_lsb; intro k; simp [bot, meet]
-theorem top_meet (φ : CofibLUT16) : top.meet φ = φ := by
-  apply ext; apply bv16_eq_of_lsb; intro k
-  dsimp only [top, meet]; rw [BitVec.getLsbD_and, top_getLsbD k, Bool.true_and]
-theorem bot_join (φ : CofibLUT16) : bot.join φ = φ := by
-  apply ext; apply bv16_eq_of_lsb; intro k; simp [bot, join]
-theorem top_join (φ : CofibLUT16) : top.join φ = top := by
-  apply ext; apply bv16_eq_of_lsb; intro k
-  dsimp only [top, join]; rw [BitVec.getLsbD_or, top_getLsbD k, Bool.true_or]
-theorem dimEq0_meet_dimEq1 (d : Fin 4) : (dimEq0 d).meet (dimEq1 d) = bot := by
-  apply ext; revert d; decide
-theorem entails_iff_meet_eq (φ ψ : CofibLUT16) : φ.entails ψ = true ↔ φ.meet ψ = φ := by
-  unfold entails meet
-  exact ⟨fun h => ext (eq_of_beq h), fun h => beq_iff_eq.mpr (congrArg CofibLUT16.bits h)⟩
-theorem entails_refl (φ : CofibLUT16) : φ.entails φ = true :=
-  (entails_iff_meet_eq φ φ).mpr (meet_idem φ)
-theorem entails_trans {φ ψ χ : CofibLUT16}
-    (h₁ : φ.entails ψ = true) (h₂ : ψ.entails χ = true) : φ.entails χ = true := by
-  rw [entails_iff_meet_eq] at h₁ h₂ ⊢
-  calc φ.meet χ = (φ.meet ψ).meet χ := by rw [h₁]
-    _ = φ.meet (ψ.meet χ) := meet_assoc φ ψ χ
-    _ = φ.meet ψ := by rw [h₂]
-    _ = φ := h₁
-theorem entails_antisymm {φ ψ : CofibLUT16}
-    (h₁ : φ.entails ψ = true) (h₂ : ψ.entails φ = true) : φ = ψ := by
-  rw [entails_iff_meet_eq] at h₁ h₂
-  exact h₁.symm.trans ((meet_comm φ ψ).trans h₂)
-theorem evalCofib_bot (pt : Vertex4) : evalCofib bot pt = false := by simp [evalCofib, bot]
-theorem evalCofib_top (pt : Vertex4) : evalCofib top pt = true := top_getLsbD pt.toIdx
-theorem evalCofib_meet (φ ψ : CofibLUT16) (pt : Vertex4) :
-    evalCofib (φ.meet ψ) pt = (evalCofib φ pt && evalCofib ψ pt) := by simp [evalCofib, meet]
-theorem evalCofib_join (φ ψ : CofibLUT16) (pt : Vertex4) :
-    evalCofib (φ.join ψ) pt = (evalCofib φ pt || evalCofib ψ pt) := by simp [evalCofib, join]
-theorem evalCofib_dimEq0 (d : Fin 4) (pt : Vertex4) : evalCofib (dimEq0 d) pt = !pt.coord d := by
-  cases pt with | mk b0 b1 b2 b3 => revert b0 b1 b2 b3 d; decide
-theorem evalCofib_dimEq1 (d : Fin 4) (pt : Vertex4) : evalCofib (dimEq1 d) pt = pt.coord d := by
-  cases pt with | mk b0 b1 b2 b3 => revert b0 b1 b2 b3 d; decide
-theorem evalCofib_revDim (d : Fin 4) (φ : CofibLUT16) (pt : Vertex4) :
-    evalCofib (revDim d φ) pt = evalCofib φ (pt.flipDim d) := by
-  rcases d with ⟨dv, hdv⟩
-  cases pt with
-  | mk b0 b1 b2 b3 =>
-    match dv with
-    | 0 | 1 | 2 | 3 =>
-      cases b0 <;> cases b1 <;> cases b2 <;> cases b3 <;>
-        (dsimp only [evalCofib, revDim, Vertex4.flipDim, Vertex4.toIdx]; simp)
-    | n + 4 => exfalso; exact Nat.not_lt_of_ge (Nat.le_add_left 4 n) hdv
-theorem revDim_involutive (d : Fin 4) (φ : CofibLUT16) : revDim d (revDim d φ) = φ := by
-  apply ext; apply bv16_eq_of_lsb; intro k
-  have h1 := evalCofib_revDim d (revDim d φ) (Vertex4.ofIdx k)
-  have h2 := evalCofib_revDim d φ ((Vertex4.ofIdx k).flipDim d)
-  rw [Vertex4.flipDim_involutive] at h2
-  unfold evalCofib at h1 h2; rw [Vertex4.toIdx_ofIdx k] at h1 h2
-  exact h1.trans h2
-theorem evalCofib_substDim (d : Fin 4) (ep : Bool) (φ : CofibLUT16) (pt : Vertex4) :
-    evalCofib (substDim d ep φ) pt = evalCofib φ (pt.setDim d ep) := by
-  rcases d with ⟨dv, hdv⟩
-  cases pt with
-  | mk b0 b1 b2 b3 =>
-    match dv with
-    | 0 | 1 | 2 | 3 =>
-      cases ep <;> cases b0 <;> cases b1 <;> cases b2 <;> cases b3 <;>
-        (dsimp only [evalCofib, substDim, Vertex4.setDim, Vertex4.toIdx]; simp)
-    | n + 4 => exfalso; exact Nat.not_lt_of_ge (Nat.le_add_left 4 n) hdv
-/-- **Semantic Completeness (`entails_iff_pointwise`)**: -/
-theorem entails_iff_pointwise (φ ψ : CofibLUT16) :
-    φ.entails ψ = true ↔ ∀ pt : Vertex4, evalCofib φ pt = true → evalCofib ψ pt = true := by
+  | 0 => {p with c0 := v} | 1 => {p with c1 := v}
+  | 2 => {p with c2 := v} | _ => {p with c3 := v}
+def flipDim (p : CubePt4) (d : Fin 4) : CubePt4 := p.setDim d (p.coord d).rev
+theorem setDim_comm (p : CubePt4) (d e : Fin 4) (u v : IntervalPt) (h : d ≠ e) : (p.setDim d u).setDim e v = (p.setDim e v).setDim d u := by
+  rcases d with ⟨d,hd⟩; rcases e with ⟨e,he⟩
+  (rcases (show d = 0 ∨ d = 1 ∨ d = 2 ∨ d = 3 from by omega) with rfl | rfl | rfl | rfl) <;> (rcases (show e = 0 ∨ e = 1 ∨ e = 2 ∨ e = 3 from by omega) with rfl | rfl | rfl | rfl) <;> simp_all [setDim]
+theorem flipDim_involutive (p : CubePt4) (d : Fin 4) : (p.flipDim d).flipDim d = p := by
+  rcases d with ⟨d,hd⟩; (rcases (show d = 0 ∨ d = 1 ∨ d = 2 ∨ d = 3 from by omega) with rfl | rfl | rfl | rfl) <;> simp [flipDim, setDim, coord, IntervalPt.rev_involutive]
+def PtLe (p q : CubePt4) : Bool :=
+  p.c0.le q.c0 && p.c1.le q.c1 && p.c2.le q.c2 && p.c3.le q.c3
+theorem PtLe_iff (p q : CubePt4) : PtLe p q = true ↔ ∀ d : Fin 4, (p.coord d).le (q.coord d) = true := by
+  simp only [PtLe, Bool.and_eq_true]
   constructor
-  · intro hent pt hφ
-    have hm : φ.meet ψ = φ := (entails_iff_meet_eq φ ψ).mp hent
-    have hev : evalCofib (φ.meet ψ) pt = evalCofib φ pt := congrArg (fun x => evalCofib x pt) hm
-    rw [evalCofib_meet, hφ, Bool.true_and] at hev; exact hev
-  · intro hpt
-    rw [entails_iff_meet_eq]; apply ext; apply bv16_eq_of_lsb; intro k
-    have hk := hpt (Vertex4.ofIdx k)
-    unfold evalCofib at hk; rw [Vertex4.toIdx_ofIdx k] at hk
-    dsimp only [meet]; rw [BitVec.getLsbD_and]
-    cases hφ : φ.bits.getLsbD k.val with
-    | false => rfl
-    | true => exact hk hφ
-private theorem subcubeMask_ofVertex (pt : Vertex4) :
-    subcubeMask (CubePt4.ofVertex pt) = 1#16 <<< pt.toIdx.val := by
-  cases pt with | mk b0 b1 b2 b3 => revert b0 b1 b2 b3; decide
-private theorem and_oneHot_beq (b : BitVec 16) (k : Fin 16) :
-    ((b &&& (1#16 <<< k.val)) == (1#16 <<< k.val)) = b.getLsbD k.val := by
-  apply Bool.eq_iff_iff.mpr; simp only [beq_iff_eq]
+  · rintro ⟨⟨⟨h0,h1⟩,h2⟩,h3⟩ ⟨d,hd⟩; (rcases (show d = 0 ∨ d = 1 ∨ d = 2 ∨ d = 3 from by omega) with rfl | rfl | rfl | rfl) <;> assumption
+  · intro h; exact ⟨⟨⟨h 0,h 1⟩,h 2⟩,h 3⟩
+theorem PtLe_refl (p : CubePt4) : PtLe p p = true :=
+  (PtLe_iff _ _).2 fun d => IntervalPt.le_refl _
+theorem PtLe_trans (p q r : CubePt4) (hpq : PtLe p q = true) (hqr : PtLe q r = true) : PtLe p r = true :=
+  (PtLe_iff _ _).2 fun d => IntervalPt.le_trans _ _ _ ((PtLe_iff _ _).1 hpq d) ((PtLe_iff _ _).1 hqr d)
+theorem PtLe_antisymm (p q : CubePt4) (hpq : PtLe p q = true) (hqp : PtLe q p = true) : p = q := by
+  have h := fun d => IntervalPt.le_antisymm _ _ ((PtLe_iff _ _).1 hpq d) ((PtLe_iff _ _).1 hqp d)
+  have h0 := h 0; have h1 := h 1; have h2 := h 2; have h3 := h 3
+  cases p; cases q; simp_all [coord]
+theorem setDim_mono (p q : CubePt4) (d : Fin 4) (v : IntervalPt) (h : PtLe p q = true) : PtLe (p.setDim d v) (q.setDim d v) = true := by
+  simp only [PtLe, Bool.and_eq_true] at h ⊢
+  rcases d with ⟨d,hd⟩; (rcases (show d = 0 ∨ d = 1 ∨ d = 2 ∨ d = 3 from by omega) with rfl | rfl | rfl | rfl) <;> simp_all [setDim, IntervalPt.le_refl]
+theorem flipDim_mono (p q : CubePt4) (d : Fin 4) (h : PtLe p q = true) : PtLe (p.flipDim d) (q.flipDim d) = true := by
+  have hr (a b : IntervalPt) : a.rev.le b.rev = a.le b := by cases a <;> cases b <;> rfl
+  rcases d with ⟨d,hd⟩; (rcases (show d = 0 ∨ d = 1 ∨ d = 2 ∨ d = 3 from by omega) with rfl | rfl | rfl | rfl) <;> simpa [PtLe, flipDim, setDim, coord, hr] using h
+end CubePt4
+/-- A mask over every face, including the interior. Cubical cofibrations are its downward-closed masks. -/
+structure FaceIdeal4 where
+  mask : BitVec 81
+  deriving DecidableEq, Repr
+namespace FaceIdeal4
+def bot : FaceIdeal4 := ⟨0#81⟩
+def top : FaceIdeal4 := ⟨BitVec.allOnes 81⟩
+def meet (φ ψ : FaceIdeal4) : FaceIdeal4 := ⟨φ.mask &&& ψ.mask⟩
+def join (φ ψ : FaceIdeal4) : FaceIdeal4 := ⟨φ.mask ||| ψ.mask⟩
+def entails (φ ψ : FaceIdeal4) : Bool := (φ.mask &&& ψ.mask) == φ.mask
+def eval (φ : FaceIdeal4) (p : CubePt4) : Bool := φ.mask.getLsbD p.toIdx.val
+def tabulate (f : CubePt4 → Bool) : FaceIdeal4 :=
+  ⟨(BitVec.ofBoolListLE (List.ofFn (fun i : Fin 81 => f (CubePt4.ofIdx i)))).cast (by simp)⟩
+@[simp] theorem eval_tabulate (f : CubePt4 → Bool) (p : CubePt4) : (tabulate f).eval p = f p := by
+  simp only [eval, tabulate, BitVec.getLsbD_cast, BitVec.getLsbD_ofBoolListLE]
+  simp only [List.getD_eq_getElem?_getD, List.getElem?_ofFn, p.toIdx.isLt, dite_true, Option.getD_some]
+  exact congrArg f (CubePt4.ofIdx_toIdx p)
+@[ext] theorem ext {φ ψ : FaceIdeal4} (h : ∀ p, φ.eval p = ψ.eval p) : φ = ψ := by
+  have hm : φ.mask = ψ.mask := BitVec.eq_of_getLsbD_eq fun i hi => by
+    simpa only [eval, CubePt4.toIdx_ofIdx] using h (CubePt4.ofIdx ⟨i,hi⟩)
+  cases φ; cases ψ; cases hm; rfl
+@[simp] theorem eval_bot (p : CubePt4) : bot.eval p = false := by simp [eval, bot]
+private theorem top_bit (i : Fin 81) : (BitVec.allOnes 81).getLsbD i.val = true := by decide +revert
+@[simp] theorem eval_top (p : CubePt4) : top.eval p = true := top_bit p.toIdx
+@[simp] theorem eval_meet (φ ψ : FaceIdeal4) (p : CubePt4) : (φ.meet ψ).eval p = (φ.eval p && ψ.eval p) := by simp [eval, meet]
+@[simp] theorem eval_join (φ ψ : FaceIdeal4) (p : CubePt4) : (φ.join ψ).eval p = (φ.eval p || ψ.eval p) := by simp [eval, join]
+theorem meet_comm (φ ψ : FaceIdeal4) : φ.meet ψ = ψ.meet φ := by
+  apply ext; intro p; simp only [eval_meet, eval_join, eval_bot, eval_top]; cases φ.eval p <;> cases ψ.eval p <;> rfl
+theorem meet_assoc (φ ψ χ : FaceIdeal4) : (φ.meet ψ).meet χ = φ.meet (ψ.meet χ) := by
+  apply ext; intro p; simp only [eval_meet, eval_join, eval_bot, eval_top]; cases φ.eval p <;> cases ψ.eval p <;> cases χ.eval p <;> rfl
+theorem join_comm (φ ψ : FaceIdeal4) : φ.join ψ = ψ.join φ := by
+  apply ext; intro p; simp only [eval_meet, eval_join, eval_bot, eval_top]; cases φ.eval p <;> cases ψ.eval p <;> rfl
+theorem join_assoc (φ ψ χ : FaceIdeal4) : (φ.join ψ).join χ = φ.join (ψ.join χ) := by
+  apply ext; intro p; simp only [eval_meet, eval_join, eval_bot, eval_top]; cases φ.eval p <;> cases ψ.eval p <;> cases χ.eval p <;> rfl
+theorem meet_idem (φ : FaceIdeal4) : φ.meet φ = φ := by
+  apply ext; intro p; simp only [eval_meet, eval_join, eval_bot, eval_top]; cases φ.eval p <;> rfl
+theorem join_idem (φ : FaceIdeal4) : φ.join φ = φ := by
+  apply ext; intro p; simp only [eval_meet, eval_join, eval_bot, eval_top]; cases φ.eval p <;> rfl
+theorem meet_distrib_join (φ ψ χ : FaceIdeal4) : φ.meet (ψ.join χ) = (φ.meet ψ).join (φ.meet χ) := by
+  apply ext; intro p; simp only [eval_meet, eval_join, eval_bot, eval_top]; cases φ.eval p <;> cases ψ.eval p <;> cases χ.eval p <;> rfl
+theorem join_distrib_meet (φ ψ χ : FaceIdeal4) : φ.join (ψ.meet χ) = (φ.join ψ).meet (φ.join χ) := by
+  apply ext; intro p; simp only [eval_meet, eval_join, eval_bot, eval_top]; cases φ.eval p <;> cases ψ.eval p <;> cases χ.eval p <;> rfl
+theorem absorb_meet_join (φ ψ : FaceIdeal4) : φ.meet (φ.join ψ) = φ := by
+  apply ext; intro p; simp only [eval_meet, eval_join, eval_bot, eval_top]; cases φ.eval p <;> cases ψ.eval p <;> rfl
+theorem absorb_join_meet (φ ψ : FaceIdeal4) : φ.join (φ.meet ψ) = φ := by
+  apply ext; intro p; simp only [eval_meet, eval_join, eval_bot, eval_top]; cases φ.eval p <;> cases ψ.eval p <;> rfl
+theorem bot_meet (φ : FaceIdeal4) : bot.meet φ = bot := by
+  apply ext; intro p; simp only [eval_meet, eval_join, eval_bot, eval_top]; cases φ.eval p <;> rfl
+theorem top_meet (φ : FaceIdeal4) : top.meet φ = φ := by
+  apply ext; intro p; simp only [eval_meet, eval_join, eval_bot, eval_top]; cases φ.eval p <;> rfl
+theorem bot_join (φ : FaceIdeal4) : bot.join φ = φ := by
+  apply ext; intro p; simp only [eval_meet, eval_join, eval_bot, eval_top]; cases φ.eval p <;> rfl
+theorem top_join (φ : FaceIdeal4) : top.join φ = top := by
+  apply ext; intro p; simp only [eval_meet, eval_join, eval_bot, eval_top]; cases φ.eval p <;> rfl
+theorem entails_iff_meet_eq (φ ψ : FaceIdeal4) : φ.entails ψ = true ↔ φ.meet ψ = φ := by
+  simp only [entails, beq_iff_eq]; exact ⟨fun h => by apply ext; intro p; exact congrArg (fun b : BitVec 81 => b.getLsbD p.toIdx.val) h, congrArg FaceIdeal4.mask⟩
+theorem entails_iff_pointwise (φ ψ : FaceIdeal4) : φ.entails ψ = true ↔ ∀ p, φ.eval p = true → ψ.eval p = true := by
+  rw [entails_iff_meet_eq]; constructor
+  · intro h p hp; have := congrArg (fun x => x.eval p) h; simpa [hp] using this
+  · intro h; apply ext; intro p; rw [eval_meet]; cases hp : φ.eval p <;> simp_all
+theorem entails_refl (φ : FaceIdeal4) : φ.entails φ = true := (entails_iff_meet_eq _ _).2 (meet_idem φ)
+def dim0 (d : Fin 4) : FaceIdeal4 := tabulate fun p => p.coord d == .ep0
+def dim1 (d : Fin 4) : FaceIdeal4 := tabulate fun p => p.coord d == .ep1
+def revDim (d : Fin 4) (φ : FaceIdeal4) : FaceIdeal4 := tabulate fun p => φ.eval (p.flipDim d)
+def substDim (d : Fin 4) (v : IntervalPt) (φ : FaceIdeal4) : FaceIdeal4 := tabulate fun p => φ.eval (p.setDim d v)
+@[simp] theorem eval_revDim (d : Fin 4) (φ : FaceIdeal4) (p : CubePt4) : (revDim d φ).eval p = φ.eval (p.flipDim d) := eval_tabulate _ _
+theorem revDim_involutive (d : Fin 4) (φ : FaceIdeal4) : revDim d (revDim d φ) = φ := by
+  apply ext; intro p; simp [CubePt4.flipDim_involutive]
+@[simp] theorem eval_substDim (d : Fin 4) (v : IntervalPt) (φ : FaceIdeal4) (p : CubePt4) :
+    (substDim d v φ).eval p = φ.eval (p.setDim d v) := eval_tabulate _ _
+theorem substDim_comm (φ : FaceIdeal4) (d e : Fin 4) (u v : IntervalPt) (h : d ≠ e) :
+    substDim d u (substDim e v φ) = substDim e v (substDim d u φ) := by
+  apply ext; intro p; simp only [eval_substDim, CubePt4.setDim_comm p d e u v h]
+theorem dim0_meet_dim1 (d : Fin 4) : (dim0 d).meet (dim1 d) = bot := by
+  apply ext; intro p; simp only [eval_meet, dim0, dim1, eval_tabulate, eval_bot]; cases p.coord d <;> rfl
+theorem boundary_ne_top (d : Fin 4) : (dim0 d).join (dim1 d) ≠ top := by
+  intro h; have he := congrArg (fun φ => φ.eval CubePt4.interior4) h
+  rcases d with ⟨d,hd⟩; (rcases (show d = 0 ∨ d = 1 ∨ d = 2 ∨ d = 3 from by omega) with rfl | rfl | rfl | rfl) <;> simp [dim0, dim1, CubePt4.coord, CubePt4.interior4] at he
+end FaceIdeal4
+def IsSubcomplex (φ : FaceIdeal4) : Prop :=
+  ∀ p q : CubePt4, CubePt4.PtLe p q = true → φ.eval q = true → φ.eval p = true
+def checkSubcomplex (φ : FaceIdeal4) : Bool :=
+  (List.finRange 81).all fun i => (List.finRange 81).all fun j =>
+    !CubePt4.PtLe (CubePt4.ofIdx i) (CubePt4.ofIdx j) || !φ.eval (CubePt4.ofIdx j) || φ.eval (CubePt4.ofIdx i)
+theorem checkSubcomplex_iff (φ : FaceIdeal4) : checkSubcomplex φ = true ↔ IsSubcomplex φ := by
+  simp only [checkSubcomplex, List.all_eq_true, List.mem_finRange, forall_const]
   constructor
-  · intro h
-    have hk := congrArg (fun w : BitVec 16 => w.getLsbD k.val) h
-    rw [BitVec.getLsbD_and, oneHot_self k, Bool.and_true] at hk; exact hk
-  · intro hb
-    apply bv16_eq_of_lsb; intro j; rw [BitVec.getLsbD_and]
-    if hjk : j = k then
-      subst hjk; rw [hb, Bool.true_and]
-    else
-      rw [oneHot_ne hjk, Bool.and_false]
-theorem evalSubcube_ofVertex (φ : CofibLUT16) (pt : Vertex4) :
-    evalSubcube φ (CubePt4.ofVertex pt) = evalCofib φ pt := by
-  unfold evalSubcube evalCofib; rw [subcubeMask_ofVertex pt]
-  exact and_oneHot_beq φ.bits pt.toIdx
-theorem evalSubcube_meet (φ ψ : CofibLUT16) (pt : CubePt4) :
-    evalSubcube (φ.meet ψ) pt = (evalSubcube φ pt && evalSubcube ψ pt) := by
-  unfold evalSubcube meet; apply Bool.eq_iff_iff.mpr
-  simp only [Bool.and_eq_true, beq_iff_eq]
-  constructor
-  · intro h
-    constructor <;>
-      (apply bv16_eq_of_lsb; intro k
-       have hk := congrArg (fun w => w.getLsbD k.val) h
-       rw [BitVec.getLsbD_and, BitVec.getLsbD_and] at hk
-       rw [BitVec.getLsbD_and]
-       cases hφ : φ.bits.getLsbD k.val <;> cases hψ : ψ.bits.getLsbD k.val <;>
-         cases hm : (subcubeMask pt).getLsbD k.val <;>
-         (rw [hφ, hψ, hm] at hk; first | rfl | exact hk))
-  · rintro ⟨h1, h2⟩; rw [BitVec.and_assoc, h2, h1]
-end CofibLUT16
-/-- Syntactic Cavallo–Sattler cofibration formula over 4 interval variables, tracking open-interior -/
+  · intro h p q hp hq; have hh := h p.toIdx q.toIdx; simpa [hp, hq] using hh
+  · intro h i j; have hh := h (CubePt4.ofIdx i) (CubePt4.ofIdx j)
+    cases hp : CubePt4.PtLe (CubePt4.ofIdx i) (CubePt4.ofIdx j) <;>
+      cases hq : φ.eval (CubePt4.ofIdx j) <;> simp_all
+namespace IsSubcomplex
+theorem bot {φ : FaceIdeal4} (h : φ = FaceIdeal4.bot) : IsSubcomplex φ := by
+  subst h; intro p q _ hq; simp at hq
+theorem top {φ : FaceIdeal4} (h : φ = FaceIdeal4.top) : IsSubcomplex φ := by
+  subst h; intro p q _ _; simp
+theorem meet {φ ψ : FaceIdeal4} (hφ : IsSubcomplex φ) (hψ : IsSubcomplex ψ) : IsSubcomplex (φ.meet ψ) := by
+  intro p q hp hq; simp only [FaceIdeal4.eval_meet, Bool.and_eq_true] at hq ⊢
+  exact ⟨hφ p q hp hq.1, hψ p q hp hq.2⟩
+theorem join {φ ψ : FaceIdeal4} (hφ : IsSubcomplex φ) (hψ : IsSubcomplex ψ) : IsSubcomplex (φ.join ψ) := by
+  intro p q hp hq; simp only [FaceIdeal4.eval_join, Bool.or_eq_true] at hq ⊢
+  exact hq.elim (fun h => Or.inl (hφ p q hp h)) (fun h => Or.inr (hψ p q hp h))
+theorem dim0 (d : Fin 4) : IsSubcomplex (FaceIdeal4.dim0 d) := by
+  intro p q hp hq
+  have hc := (CubePt4.PtLe_iff p q).1 hp d
+  simp only [FaceIdeal4.dim0, FaceIdeal4.eval_tabulate, beq_iff_eq] at hq ⊢
+  rw [hq] at hc; cases he : p.coord d <;> simp_all [IntervalPt.le]
+theorem dim1 (d : Fin 4) : IsSubcomplex (FaceIdeal4.dim1 d) := by
+  intro p q hp hq
+  have hc := (CubePt4.PtLe_iff p q).1 hp d
+  simp only [FaceIdeal4.dim1, FaceIdeal4.eval_tabulate, beq_iff_eq] at hq ⊢
+  rw [hq] at hc; cases he : p.coord d <;> simp_all [IntervalPt.le]
+theorem revDim {φ : FaceIdeal4} (h : IsSubcomplex φ) (d : Fin 4) : IsSubcomplex (FaceIdeal4.revDim d φ) :=
+  fun p q hp hq => by simpa using h _ _ (CubePt4.flipDim_mono p q d hp) (by simpa using hq)
+theorem substDim {φ : FaceIdeal4} (h : IsSubcomplex φ) (d : Fin 4) (v : IntervalPt) : IsSubcomplex (FaceIdeal4.substDim d v φ) :=
+  fun p q hp hq => by simpa using h _ _ (CubePt4.setDim_mono p q d v hp) (by simpa using hq)
+end IsSubcomplex
 inductive CofibSyntax4 where
   | bot | top | dim0 (d : Fin 4) | dim1 (d : Fin 4)
   | meet (φ ψ : CofibSyntax4) | join (φ ψ : CofibSyntax4)
@@ -270,122 +206,191 @@ inductive CofibSyntax4 where
 namespace CofibSyntax4
 def evalCubePt : CofibSyntax4 → CubePt4 → Bool
   | .bot, _ => false | .top, _ => true
-  | .dim0 d, pt => pt.coord d == .ep0 | .dim1 d, pt => pt.coord d == .ep1
-  | .meet φ ψ, pt => evalCubePt φ pt && evalCubePt ψ pt
-  | .join φ ψ, pt => evalCubePt φ pt || evalCubePt ψ pt
-def toLUT16 : CofibSyntax4 → CofibLUT16
-  | .bot => .bot | .top => .top | .dim0 d => .dimEq0 d | .dim1 d => .dimEq1 d
-  | .meet φ ψ => (toLUT16 φ).meet (toLUT16 ψ) | .join φ ψ => (toLUT16 φ).join (toLUT16 ψ)
-theorem toLUT16_agrees_on_vertices (f : CofibSyntax4) (pt : Vertex4) :
-    f.toLUT16.evalCofib pt = f.evalCubePt (CubePt4.ofVertex pt) := by
+  | .dim0 d, p => p.coord d == .ep0 | .dim1 d, p => p.coord d == .ep1
+  | .meet φ ψ, p => evalCubePt φ p && evalCubePt ψ p
+  | .join φ ψ, p => evalCubePt φ p || evalCubePt ψ p
+def denote : CofibSyntax4 → FaceIdeal4
+  | .bot => .bot | .top => .top | .dim0 d => .dim0 d | .dim1 d => .dim1 d
+  | .meet φ ψ => φ.denote.meet ψ.denote | .join φ ψ => φ.denote.join ψ.denote
+theorem denote_eval (f : CofibSyntax4) (p : CubePt4) : f.denote.eval p = f.evalCubePt p := by
+  induction f <;> simp_all [denote, evalCubePt, FaceIdeal4.dim0, FaceIdeal4.dim1]
+theorem denote_isSubcomplex (f : CofibSyntax4) : IsSubcomplex f.denote := by
   induction f with
-  | bot => exact CofibLUT16.evalCofib_bot pt
-  | top => exact CofibLUT16.evalCofib_top pt
-  | dim0 d =>
-    rw [toLUT16, CofibLUT16.evalCofib_dimEq0]
-    cases pt with | mk b0 b1 b2 b3 => revert b0 b1 b2 b3 d; decide
-  | dim1 d =>
-    rw [toLUT16, CofibLUT16.evalCofib_dimEq1]
-    cases pt with | mk b0 b1 b2 b3 => revert b0 b1 b2 b3 d; decide
-  | meet φ ψ ihφ ihψ => simp [toLUT16, evalCubePt, CofibLUT16.evalCofib_meet, ihφ, ihψ]
-  | join φ ψ ihφ ihψ => simp [toLUT16, evalCubePt, CofibLUT16.evalCofib_join, ihφ, ihψ]
-theorem boundary_ne_top_at_interior (d : Fin 4) :
-    (CofibSyntax4.join (.dim0 d) (.dim1 d)).evalCubePt CubePt4.interior4 = false ∧
-    CofibSyntax4.top.evalCubePt CubePt4.interior4 = true := by revert d; decide
+  | bot => intro p q _ h; simpa [denote] using h
+  | top => intro p q _ _; simp [denote]
+  | dim0 d => exact IsSubcomplex.dim0 d
+  | dim1 d => exact IsSubcomplex.dim1 d
+  | meet _ _ h k => exact h.meet k
+  | join _ _ h k => exact h.join k
 end CofibSyntax4
-/-- Ternary coordinates: 0 and 1 are endpoints; 2 is the generic interior. -/
-abbrev TernaryPt := Fin 3 × Fin 3 × Fin 3
-namespace TernaryPt
-def index (p : TernaryPt) : Fin 27 := ⟨9*p.1.val+3*p.2.1.val+p.2.2.val, by omega⟩
-def ofIndex (i : Fin 27) : TernaryPt := (⟨i.val/9, by omega⟩, ⟨i.val/3%3, by omega⟩, ⟨i.val%3, by omega⟩)
-def coord (p : TernaryPt) (d : Fin 3) : Fin 3 := if d = 0 then p.1 else if d = 1 then p.2.1 else p.2.2
-def set (p : TernaryPt) (d : Fin 3) (e : Fin 3) : TernaryPt :=
-  if d = 0 then (e,p.2) else if d = 1 then (p.1,e,p.2.2) else (p.1,p.2.1,e)
-theorem ofIndex_index (p : TernaryPt) : ofIndex p.index = p := by
-  rcases p with ⟨a,b,c⟩; revert a b c; decide
-theorem index_ofIndex (i : Fin 27) : (ofIndex i).index = i := by decide +revert
-theorem set_comm (p : TernaryPt) (d e : Fin 3) (a b : Fin 3) (h : d ≠ e) :
-    (p.set d a).set e b = (p.set e b).set d a := by
-  rcases p with ⟨x,y,z⟩; revert x y z d e a b; decide
-end TernaryPt
-abbrev CofibCube27 := BitVec 27
-namespace CofibCube27
-def bot : CofibCube27 := 0#27
-def top : CofibCube27 := BitVec.allOnes 27
-def meet (a b : CofibCube27) : CofibCube27 := a &&& b
-def join (a b : CofibCube27) : CofibCube27 := a ||| b
-def eval (a : CofibCube27) (p : TernaryPt) : Bool := a.getLsbD p.index.val
-def tabulate (f : TernaryPt → Bool) : CofibCube27 :=
-  (BitVec.ofBoolListLE (List.ofFn (fun i : Fin 27 => f (TernaryPt.ofIndex i)))).cast (by simp)
-theorem eval_tabulate (f : TernaryPt → Bool) (p : TernaryPt) : eval (tabulate f) p = f p := by
-  simp only [eval, tabulate, BitVec.getLsbD_cast, BitVec.getLsbD_ofBoolListLE]
-  simp only [List.getD_eq_getElem?_getD, List.getElem?_ofFn, p.index.isLt, dite_true, Option.getD_some]
-  exact congrArg f (TernaryPt.ofIndex_index p)
-theorem ext {a b : CofibCube27} (h : ∀ p, eval a p = eval b p) : a = b := by
-  apply BitVec.eq_of_getLsbD_eq
-  intro i hi
-  have he := h (TernaryPt.ofIndex ⟨i,hi⟩)
-  simpa only [eval, TernaryPt.index_ofIndex] using he
-def dimEq0 (d : Fin 3) : CofibCube27 :=
-  match d.val with | 0 => 0x1ff#27 | 1 => 0x1c0e07#27 | _ => 0x1249249#27
-def dimEq1 (d : Fin 3) : CofibCube27 :=
-  match d.val with | 0 => 0x3fe00#27 | 1 => 0xe07038#27 | _ => 0x2492492#27
-def substDim (d : Fin 3) (e : Fin 3) (a : CofibCube27) : CofibCube27 := tabulate (fun p => eval a (p.set d e))
-@[simp] theorem eval_meet (a b : CofibCube27) (p : TernaryPt) : eval (meet a b) p = (eval a p && eval b p) := by simp [eval, meet]
-@[simp] theorem eval_join (a b : CofibCube27) (p : TernaryPt) : eval (join a b) p = (eval a p || eval b p) := by simp [eval, join]
-theorem eval_dimEq0 (d : Fin 3) (p : TernaryPt) : eval (dimEq0 d) p = decide (p.coord d = 0) := by
-  rcases p with ⟨x,y,z⟩; revert d x y z; decide
-theorem eval_dimEq1 (d : Fin 3) (p : TernaryPt) : eval (dimEq1 d) p = decide (p.coord d = 1) := by
-  rcases p with ⟨x,y,z⟩; revert d x y z; decide
-theorem dimEq0_meet_dimEq1 (d : Fin 3) : meet (dimEq0 d) (dimEq1 d) = bot := by revert d; decide
-theorem boundary_strictly_sub_top (d : Fin 3) : join (dimEq0 d) (dimEq1 d) ≠ top := by revert d; decide
- theorem meet_comm (a b : CofibCube27) : meet a b = meet b a := BitVec.and_comm _ _
- theorem join_comm (a b : CofibCube27) : join a b = join b a := BitVec.or_comm _ _
- theorem meet_assoc (a b c : CofibCube27) : meet (meet a b) c = meet a (meet b c) := BitVec.and_assoc _ _ _
- theorem join_assoc (a b c : CofibCube27) : join (join a b) c = join a (join b c) := BitVec.or_assoc _ _ _
-theorem meet_distrib_join (a b c : CofibCube27) : meet a (join b c) = join (meet a b) (meet a c) := by
-  apply ext; intro p; simp only [eval_meet, eval_join]; cases eval a p <;> simp
-theorem join_distrib_meet (a b c : CofibCube27) : join a (meet b c) = meet (join a b) (join a c) := by
-  apply ext; intro p; simp only [eval_meet, eval_join]; cases eval a p <;> simp
-private theorem top_bit (i : Fin 27) : (BitVec.allOnes 27).getLsbD i.val = true := by revert i; decide
-private theorem zero_bit (i : Fin 27) : (0#27).getLsbD i.val = false := by revert i; decide
-theorem meet_idem (a : CofibCube27) : meet a a = a := BitVec.and_self
-theorem join_idem (a : CofibCube27) : join a a = a := BitVec.or_self
-theorem meet_top (a : CofibCube27) : meet a top = a := by
-  apply ext; intro p; rw [eval_meet, show eval top p = true from top_bit p.index, Bool.and_true]
-theorem join_bot (a : CofibCube27) : join a bot = a := by simp [join, bot]
-theorem absorb (a b : CofibCube27) : meet a (join a b) = a ∧ join a (meet a b) = a := by
-  constructor <;> apply ext <;> intro p <;> simp only [eval_meet, eval_join] <;> cases eval a p <;> simp
-theorem eval_substDim (a : CofibCube27) (d : Fin 3) (e : Fin 3) (p : TernaryPt) :
-    eval (substDim d e a) p = eval a (p.set d e) := eval_tabulate _ _
-theorem substDim_comm (a : CofibCube27) (d e : Fin 3) (u v : Fin 3) (h : d ≠ e) :
-    substDim d u (substDim e v a) = substDim e v (substDim d u a) := by
-  apply ext; intro p; simp only [eval_substDim, TernaryPt.set_comm p d e u v h]
-end CofibCube27
-inductive CofibSyntax where
-  | bot | top | dim0 (d : Fin 3) | dim1 (d : Fin 3)
-  | meet (a b : CofibSyntax) | join (a b : CofibSyntax)
-namespace CofibSyntax
-def eval : CofibSyntax → TernaryPt → Bool
-  | .bot, _ => false | .top, _ => true
-  | .dim0 d, p => decide (p.coord d = 0) | .dim1 d, p => decide (p.coord d = 1)
-  | .meet a b, p => a.eval p && b.eval p | .join a b, p => a.eval p || b.eval p
-termination_by structural f => f
-def toCube27 : CofibSyntax → CofibCube27
-  | .bot => CofibCube27.bot | .top => CofibCube27.top
-  | .dim0 d => CofibCube27.dimEq0 d | .dim1 d => CofibCube27.dimEq1 d
-  | .meet a b => CofibCube27.meet a.toCube27 b.toCube27
-  | .join a b => CofibCube27.join a.toCube27 b.toCube27
-termination_by structural f => f
-theorem toCube27_sound (f : CofibSyntax) (p : TernaryPt) : CofibCube27.eval f.toCube27 p = f.eval p := by
-  induction f with
-  | bot => exact CofibCube27.zero_bit p.index
-  | top => exact CofibCube27.top_bit p.index
-  | dim0 d => exact CofibCube27.eval_dimEq0 d p
-  | dim1 d => exact CofibCube27.eval_dimEq1 d p
-  | meet a b ha hb => simp only [toCube27, CofibCube27.eval_meet, ha, hb, eval]
-  | join a b ha hb => simp only [toCube27, CofibCube27.eval_join, ha, hb, eval]
-end CofibSyntax
+def interiorOnlyMask : FaceIdeal4 := FaceIdeal4.tabulate fun p => p == CubePt4.interior4
+theorem interiorOnly_not_subcomplex (d : Fin 4) : ¬ IsSubcomplex interiorOnlyMask ∧ (CubePt4.interior4.setDim d .ep0).toIdx.val < 80 := by
+  have hp : CubePt4.PtLe (CubePt4.interior4.setDim d .ep0) CubePt4.interior4 = true := by
+    rcases d with ⟨d,hd⟩; (rcases (show d = 0 ∨ d = 1 ∨ d = 2 ∨ d = 3 from by omega) with rfl | rfl | rfl | rfl) <;> rfl
+  have hn : (CubePt4.interior4.setDim d .ep0 == CubePt4.interior4) = false := by
+    rcases d with ⟨d,hd⟩; (rcases (show d = 0 ∨ d = 1 ∨ d = 2 ∨ d = 3 from by omega) with rfl | rfl | rfl | rfl) <;> rfl
+  refine ⟨fun h => ?_, ?_⟩
+  · have hh := h _ _ hp (by simp [interiorOnlyMask]); simpa [interiorOnlyMask, hn] using hh
+  · rcases d with ⟨d,hd⟩; (rcases (show d = 0 ∨ d = 1 ∨ d = 2 ∨ d = 3 from by omega) with rfl | rfl | rfl | rfl) <;> simp [CubePt4.toIdx, CubePt4.setDim, CubePt4.interior4, IntervalPt.toFin3] <;> exact of_decide_eq_true rfl
+/-- Two unboxed words; only the low 17 bits of `hi` represent faces. -/
+structure FaceIdeal4Exec where
+  lo : UInt64
+  hi : UInt32
+  deriving DecidableEq, Repr
+namespace FaceIdeal4Exec
+def WellFormed (x : FaceIdeal4Exec) : Prop := x.hi.toNat < 2^17
+def toSpec (x : FaceIdeal4Exec) : FaceIdeal4 := ⟨(x.hi.toBitVec ++ x.lo.toBitVec).setWidth 81⟩
+def ofSpec (φ : FaceIdeal4) : FaceIdeal4Exec :=
+  ⟨UInt64.ofBitVec (φ.mask.setWidth 64), UInt32.ofBitVec ((φ.mask >>> 64).setWidth 32)⟩
+theorem toSpec_ofSpec (φ : FaceIdeal4) : (ofSpec φ).toSpec = φ := by
+  apply FaceIdeal4.ext; intro p
+  simp only [FaceIdeal4.eval, toSpec, ofSpec, UInt64.toBitVec_ofBitVec, UInt32.toBitVec_ofBitVec,
+    BitVec.getLsbD_setWidth, BitVec.getLsbD_append, BitVec.getLsbD_ushiftRight]
+  have hp := p.toIdx.isLt
+  split <;> simp_all <;> omega
+theorem ofSpec_wellFormed (φ : FaceIdeal4) : (ofSpec φ).WellFormed := by
+  have h := BitVec.toNat_ushiftRight_lt φ.mask 64 (by decide)
+  simp only [WellFormed, ofSpec, UInt32.toNat_ofBitVec, BitVec.toNat_setWidth]
+  exact Nat.lt_of_le_of_lt (Nat.mod_le _ _) h
+def botExec : FaceIdeal4Exec := ⟨0,0⟩
+def topExec : FaceIdeal4Exec := ⟨0xffffffffffffffff,0x1ffff⟩
+def meetExec (x y : FaceIdeal4Exec) : FaceIdeal4Exec := ⟨x.lo &&& y.lo, x.hi &&& y.hi⟩
+def joinExec (x y : FaceIdeal4Exec) : FaceIdeal4Exec := ⟨x.lo ||| y.lo, x.hi ||| y.hi⟩
+theorem meetExec_toSpec (x y : FaceIdeal4Exec) : (meetExec x y).toSpec = x.toSpec.meet y.toSpec := by
+  apply FaceIdeal4.ext; intro p
+  simp only [FaceIdeal4.eval, FaceIdeal4.meet, toSpec, meetExec, UInt64.toBitVec_and, UInt32.toBitVec_and,
+    BitVec.getLsbD_setWidth, BitVec.getLsbD_append, BitVec.getLsbD_and]
+  split <;> simp_all
+theorem joinExec_toSpec (x y : FaceIdeal4Exec) : (joinExec x y).toSpec = x.toSpec.join y.toSpec := by
+  apply FaceIdeal4.ext; intro p
+  simp only [FaceIdeal4.eval, FaceIdeal4.join, toSpec, joinExec, UInt64.toBitVec_or, UInt32.toBitVec_or,
+    BitVec.getLsbD_setWidth, BitVec.getLsbD_append, BitVec.getLsbD_or]
+  split <;> simp_all
+def normalize (x : FaceIdeal4Exec) : FaceIdeal4Exec := ⟨x.lo, x.hi &&& 0x1ffff⟩
+private theorem highMask_bit (i : Fin 32) : ((0x1ffff : UInt32).toBitVec).getLsbD i.val = decide (i.val < 17) := by decide +revert
+theorem ofSpec_toSpec (x : FaceIdeal4Exec) : ofSpec x.toSpec = normalize x := by
+  have hlo : (ofSpec x.toSpec).lo = x.lo := by
+    apply UInt64.toBitVec_inj.1; apply BitVec.eq_of_getLsbD_eq; intro i hi
+    simp only [ofSpec, toSpec, UInt64.toBitVec_ofBitVec, BitVec.getLsbD_setWidth, BitVec.getLsbD_append]
+    simp [hi, show i < 81 by omega]
+  have hhi : (ofSpec x.toSpec).hi = x.hi &&& 0x1ffff := by
+    apply UInt32.toBitVec_inj.1; apply BitVec.eq_of_getLsbD_eq; intro i hi
+    simp only [ofSpec, toSpec, UInt32.toBitVec_ofBitVec, UInt32.toBitVec_and, BitVec.getLsbD_and,
+      BitVec.getLsbD_setWidth, BitVec.getLsbD_ushiftRight, BitVec.getLsbD_append]
+    rw [highMask_bit ⟨i,hi⟩]
+    have he : (64+i < 81) ↔ i < 17 := by constructor <;> intro h <;> omega
+    simp [hi, he, show ¬ (64+i < 64) by omega, Nat.add_sub_cancel_left, Bool.and_comm]
+  cases he : ofSpec x.toSpec with
+  | mk lo hi =>
+    simp only [he] at hlo hhi
+    exact congr (congrArg FaceIdeal4Exec.mk hlo) hhi
+def entailsExec (x y : FaceIdeal4Exec) : Bool := decide (normalize (meetExec x y) = normalize x)
+theorem entailsExec_eq (x y : FaceIdeal4Exec) : entailsExec x y = x.toSpec.entails y.toSpec := by
+  apply Bool.eq_iff_iff.2; rw [entailsExec, decide_eq_true_eq, FaceIdeal4.entails_iff_meet_eq]
+  rw [← ofSpec_toSpec, ← ofSpec_toSpec, meetExec_toSpec]
+  exact ⟨fun h => by simpa only [toSpec_ofSpec] using congrArg toSpec h, congrArg ofSpec⟩
+/-- Shift in an unboxed word, then convert at most one byte to a small natural. -/
+def evalExec (x : FaceIdeal4Exec) (p : CubePt4) : Bool :=
+  if p.toIdx.val < 64 then ((x.lo >>> UInt64.ofNat p.toIdx.val).toUInt8.toNat % 2 == 1)
+  else ((x.hi >>> UInt32.ofNat (p.toIdx.val-64)).toUInt8.toNat % 2 == 1)
+theorem evalExec_eq (x : FaceIdeal4Exec) (p : CubePt4) : evalExec x p = x.toSpec.eval p := by
+  have hp := p.toIdx.isLt
+  simp only [evalExec, FaceIdeal4.eval, toSpec, BitVec.getLsbD_setWidth, BitVec.getLsbD_append]
+  by_cases h : p.toIdx.val < 64
+  · have hbig : p.toIdx.val < 2^64 := by omega
+    simp [h, hp, UInt64.toNat_shiftRight, UInt64.toNat_toUInt8, UInt64.toNat_ofNat,
+      Nat.mod_eq_of_lt h, Nat.mod_eq_of_lt hbig, BitVec.getLsbD, Nat.testBit_eq_decide_div_mod_eq,
+      Nat.shiftRight_eq_div_pow, Nat.mod_mod_of_dvd]
+    exact Bool.eq_iff_iff.2 (by simp)
+  · have h32 : p.toIdx.val-64 < 32 := by omega
+    have hbig : p.toIdx.val-64 < 2^32 := by omega
+    simp [h, hp, UInt32.toNat_shiftRight, UInt32.toNat_toUInt8, UInt32.toNat_ofNat,
+      Nat.mod_eq_of_lt h32, Nat.mod_eq_of_lt hbig, BitVec.getLsbD, Nat.testBit_eq_decide_div_mod_eq,
+      Nat.shiftRight_eq_div_pow, Nat.mod_mod_of_dvd]
+    exact Bool.eq_iff_iff.2 (by simp)
+def dim0Exec (d : Fin 4) : FaceIdeal4Exec :=
+  match d.val with
+  | 0 => ⟨0x9249249249249249,0x4924⟩
+  | 1 => ⟨0x81c0e070381c0e07,0x703⟩
+  | 2 => ⟨0x7fc0000ff80001ff,0x0⟩
+  | _ => ⟨0x7ffffff,0x0⟩
+def dim1Exec (d : Fin 4) : FaceIdeal4Exec :=
+  match d.val with
+  | 0 => ⟨0x2492492492492492,0x9249⟩
+  | 1 => ⟨0xe070381c0e07038,0x381c⟩
+  | 2 => ⟨0x80001ff00003fe00,0xff⟩
+  | _ => ⟨0x3ffffff8000000,0x0⟩
+theorem dim0Exec_toSpec (d : Fin 4) : (dim0Exec d).toSpec = FaceIdeal4.dim0 d := by
+  apply FaceIdeal4.ext; intro p; rw [FaceIdeal4.dim0, FaceIdeal4.eval_tabulate]
+  rcases p with ⟨a,b,c,e⟩; cases a <;> cases b <;> cases c <;> cases e <;> revert d <;> decide
+theorem dim1Exec_toSpec (d : Fin 4) : (dim1Exec d).toSpec = FaceIdeal4.dim1 d := by
+  apply FaceIdeal4.ext; intro p; rw [FaceIdeal4.dim1, FaceIdeal4.eval_tabulate]
+  rcases p with ⟨a,b,c,e⟩; cases a <;> cases b <;> cases c <;> cases e <;> revert d <;> decide
+/-- The simulation uses word operations throughout; conversion is only at the API boundary. -/
+def Simulates (x : FaceIdeal4Exec) (φ : FaceIdeal4) : Prop := x.toSpec = φ
+theorem meet_simulates {x y : FaceIdeal4Exec} {φ ψ : FaceIdeal4}
+    (hx : Simulates x φ) (hy : Simulates y ψ) : Simulates (meetExec x y) (φ.meet ψ) := by
+  unfold Simulates at *; rw [meetExec_toSpec, hx, hy]
+theorem join_simulates {x y : FaceIdeal4Exec} {φ ψ : FaceIdeal4}
+    (hx : Simulates x φ) (hy : Simulates y ψ) : Simulates (joinExec x y) (φ.join ψ) := by
+  unfold Simulates at *; rw [joinExec_toSpec, hx, hy]
+end FaceIdeal4Exec
+/-- Nonempty faces use the same ternary carrier as points. -/
+abbrev FaceCube4 := CubePt4
+def subcubeIdeal (f : FaceCube4) : FaceIdeal4 := FaceIdeal4.tabulate fun p => CubePt4.PtLe p f
+@[simp] theorem eval_subcubeIdeal (f p : CubePt4) : (subcubeIdeal f).eval p = CubePt4.PtLe p f := FaceIdeal4.eval_tabulate _ _
+theorem subcubeIdeal_isSubcomplex (f : FaceCube4) : IsSubcomplex (subcubeIdeal f) :=
+  fun p q hp hq => by simpa using CubePt4.PtLe_trans p q f hp (by simpa using hq)
+def meetIntervalPt : IntervalPt → IntervalPt → Option IntervalPt
+  | .ep0, .ep1 | .ep1, .ep0 => none
+  | .interior, x | x, .interior => some x
+  | .ep0, .ep0 => some .ep0 | .ep1, .ep1 => some .ep1
+private theorem meetIntervalPt_eval (a b p : IntervalPt) : (meetIntervalPt a b).any (fun c => p.le c) = (p.le a && p.le b) := by
+  cases a <;> cases b <;> cases p <;> rfl
+def meetFace (a b : FaceCube4) : Option FaceCube4 := do
+  let c0 ← meetIntervalPt a.c0 b.c0; let c1 ← meetIntervalPt a.c1 b.c1
+  let c2 ← meetIntervalPt a.c2 b.c2; let c3 ← meetIntervalPt a.c3 b.c3
+  pure ⟨c0,c1,c2,c3⟩
+private theorem meetFace_eval (a b p : CubePt4) : (meetFace a b).any (CubePt4.PtLe p) = (CubePt4.PtLe p a && CubePt4.PtLe p b) := by
+  have h0 := meetIntervalPt_eval a.c0 b.c0 p.c0
+  have h1 := meetIntervalPt_eval a.c1 b.c1 p.c1
+  have h2 := meetIntervalPt_eval a.c2 b.c2 p.c2
+  have h3 := meetIntervalPt_eval a.c3 b.c3 p.c3
+  cases e0 : meetIntervalPt a.c0 b.c0 <;> cases e1 : meetIntervalPt a.c1 b.c1 <;>
+    cases e2 : meetIntervalPt a.c2 b.c2 <;> cases e3 : meetIntervalPt a.c3 b.c3 <;>
+    simp_all [meetFace, CubePt4.PtLe, Bool.and_assoc, Bool.and_left_comm, Bool.and_comm]
+theorem eval_subcubeIdeal_and_iff_meetFace (f₁ f₂ p : CubePt4) : ((subcubeIdeal f₁).eval p && (subcubeIdeal f₂).eval p) = true ↔
+    ∃ f₁₂, meetFace f₁ f₂ = some f₁₂ ∧ (subcubeIdeal f₁₂).eval p = true := by
+  simp only [eval_subcubeIdeal, ← meetFace_eval]
+  cases h : meetFace f₁ f₂ <;> simp
+
+def tubeCofib {α : Type u} (walls : List (FaceCube4 × α)) : FaceIdeal4 :=
+  walls.foldr (fun w φ => (subcubeIdeal w.1).join φ) .bot
+theorem tubeCofib_isSubcomplex {α : Type u} (walls : List (FaceCube4 × α)) : IsSubcomplex (tubeCofib walls) := by
+  induction walls with
+  | nil => exact IsSubcomplex.bot rfl
+  | cons w ws ih => exact (subcubeIdeal_isSubcomplex w.1).join ih
+def checkTubeWallAgreement {α : Type u} {β : Type v} (restrict : FaceCube4 → α → β) [DecidableEq β] (walls : List (FaceCube4 × α)) : Bool :=
+  walls.all fun a => walls.all fun b => match meetFace a.1 b.1 with
+    | none => true | some f => decide (restrict f a.2 = restrict f b.2)
+theorem checkTubeWallAgreement_inhabited (f g : FaceCube4) (n : Nat) :
+    checkTubeWallAgreement (fun _ (x : Nat) => x) [(f,n),(g,n)] = true := by
+  simp only [checkTubeWallAgreement, List.all_cons, List.all_nil]
+  cases meetFace f f <;> cases meetFace f g <;> cases meetFace g f <;> cases meetFace g g <;> rfl
+theorem checkTubeWallAgreement_sound {α : Type u} {β : Type v} (restrict : FaceCube4 → α → β) [DecidableEq β] (walls : List (FaceCube4 × α))
+    (h : checkTubeWallAgreement restrict walls = true) (f₁ f₂ p : CubePt4) (u₁ u₂ : α) (h₁ : (f₁,u₁) ∈ walls) (h₂ : (f₂,u₂) ∈ walls)
+    (hp₁ : (subcubeIdeal f₁).eval p = true) (hp₂ : (subcubeIdeal f₂).eval p = true) :
+    ∃ f₁₂, meetFace f₁ f₂ = some f₁₂ ∧ (subcubeIdeal f₁₂).eval p = true ∧ restrict f₁₂ u₁ = restrict f₁₂ u₂ := by
+  obtain ⟨f,hf,hp⟩ := (eval_subcubeIdeal_and_iff_meetFace f₁ f₂ p).1 (by simp [hp₁,hp₂])
+  have hh := List.all_eq_true.1 (List.all_eq_true.1 h _ h₁) _ h₂
+  simp only [hf, decide_eq_true_eq] at hh
+  exact ⟨f,hf,hp,hh⟩
+theorem checkTubeWallAgreement_pointwise {α : Type u} (restrict : FaceCube4 → α → α) [DecidableEq α] (walls : List (FaceCube4 × α))
+    (functorial : ∀ p f u, CubePt4.PtLe p f = true → restrict p u = restrict p (restrict f u))
+    (h : checkTubeWallAgreement restrict walls = true) (f₁ f₂ p : CubePt4) (u₁ u₂ : α) (h₁ : (f₁,u₁) ∈ walls) (h₂ : (f₂,u₂) ∈ walls)
+    (hp₁ : (subcubeIdeal f₁).eval p = true) (hp₂ : (subcubeIdeal f₂).eval p = true) : restrict p u₁ = restrict p u₂ := by
+  obtain ⟨f,_,hp,he⟩ := checkTubeWallAgreement_sound restrict walls h f₁ f₂ p u₁ u₂ h₁ h₂ hp₁ hp₂
+  rw [functorial p f u₁ (by simpa using hp), functorial p f u₂ (by simpa using hp), he]
 /-- Algebraic Kan-equipped cubical carrier `A`: certified 1-paths `PathHom`, commuting squares -/
 class KanCarrier (A : Type u) where
   PathHom : A → A → Type v
@@ -425,8 +430,7 @@ class KanCarrier (A : Type u) where
 namespace KanCarrier
 def invHom {A : Type u} [KanCarrier A] {x y : A} (p : PathHom x y) : PathHom y x :=
   hcomLidHom (reflHom x) p (reflHom x)
-def compHom {A : Type u} [KanCarrier A] {x y z : A}
-    (p : PathHom x y) (q : PathHom y z) : PathHom x z :=
+def compHom {A : Type u} [KanCarrier A] {x y z : A} (p : PathHom x y) (q : PathHom y z) : PathHom x z :=
   hcomLidHom p (reflHom x) q
 end KanCarrier
 structure Cube1 (A : Type u) [KanCarrier A] where
@@ -441,8 +445,7 @@ def eval1 {A : Type u} [KanCarrier A] (c : Cube1 A) (t : IntervalPt) : A :=
   KanCarrier.sampleHom_ep0 c.path
 @[simp] theorem eval1_ep1 {A : Type u} [KanCarrier A] (c : Cube1 A) : c.eval1 .ep1 = c.ep1 :=
   KanCarrier.sampleHom_ep1 c.path
-@[simp] theorem eval1_refl {A : Type u} [KanCarrier A] (x : A) (t : IntervalPt) :
-    (Cube1.refl x).eval1 t = x := KanCarrier.sampleHom_refl x t
+@[simp] theorem eval1_refl {A : Type u} [KanCarrier A] (x : A) (t : IntervalPt) : (Cube1.refl x).eval1 t = x := KanCarrier.sampleHom_refl x t
 def inv {A : Type u} [KanCarrier A] (c : Cube1 A) : Cube1 A :=
   ⟨c.ep1, c.ep0, KanCarrier.invHom c.path⟩
 def ofHom {A : Type u} [KanCarrier A] {x y : A} (p : KanCarrier.PathHom x y) : Cube1 A := ⟨x, y, p⟩
@@ -455,10 +458,8 @@ structure Boundary2 (A : Type u) [KanCarrier A] where
 def checkSquareCoherent {A : Type u} [KanCarrier A] [DecidableEq A] (b : Boundary2 A) : Bool :=
   (b.left.ep0 == b.bottom.ep0) && (b.right.ep0 == b.bottom.ep1) &&
   (b.left.ep1 == b.top.ep0) && (b.right.ep1 == b.top.ep1)
-theorem checkSquareCoherent_iff {A : Type u} [KanCarrier A] [DecidableEq A] (b : Boundary2 A) :
-    checkSquareCoherent b = true ↔
-      b.left.ep0 = b.bottom.ep0 ∧ b.right.ep0 = b.bottom.ep1 ∧
-      b.left.ep1 = b.top.ep0 ∧ b.right.ep1 = b.top.ep1 := by
+theorem checkSquareCoherent_iff {A : Type u} [KanCarrier A] [DecidableEq A] (b : Boundary2 A) : checkSquareCoherent b = true ↔
+      b.left.ep0 = b.bottom.ep0 ∧ b.right.ep0 = b.bottom.ep1 ∧ b.left.ep1 = b.top.ep0 ∧ b.right.ep1 = b.top.ep1 := by
   unfold checkSquareCoherent; simp only [Bool.and_eq_true, beq_iff_eq]
   exact ⟨fun ⟨⟨⟨h1, h2⟩, h3⟩, h4⟩ => ⟨h1, h2, h3, h4⟩,
          fun ⟨h1, h2, h3, h4⟩ => ⟨⟨⟨h1, h2⟩, h3⟩, h4⟩⟩
@@ -480,8 +481,7 @@ def left   {A : Type u} [KanCarrier A] (sq : Cube2 A) : Cube1 A := ⟨sq.c00, sq
 def right  {A : Type u} [KanCarrier A] (sq : Cube2 A) : Cube1 A := ⟨sq.c10, sq.c11, sq.rightPath⟩
 def toBoundary2 {A : Type u} [KanCarrier A] (sq : Cube2 A) : Boundary2 A :=
   ⟨sq.top, sq.bottom, sq.left, sq.right⟩
-theorem coherent_of_cube2 {A : Type u} [KanCarrier A] [DecidableEq A] (sq : Cube2 A) :
-    checkSquareCoherent sq.toBoundary2 = true :=
+theorem coherent_of_cube2 {A : Type u} [KanCarrier A] [DecidableEq A] (sq : Cube2 A) : checkSquareCoherent sq.toBoundary2 = true :=
   (checkSquareCoherent_iff sq.toBoundary2).mpr ⟨rfl, rfl, rfl, rfl⟩
 def eval2 {A : Type u} [KanCarrier A] (sq : Cube2 A) : IntervalPt → IntervalPt → A
   | i, .ep0 => sq.bottom.eval1 i | i, .ep1 => sq.top.eval1 i
@@ -503,14 +503,12 @@ def left   {A : Type u} [KanCarrier A] (box : OpenBox2 A) : Cube1 A :=
   ⟨box.c00, box.c01, box.leftPath⟩
 def right  {A : Type u} [KanCarrier A] (box : OpenBox2 A) : Cube1 A :=
   ⟨box.c10, box.c11, box.rightPath⟩
-def ofWalls? {A : Type u} [KanCarrier A] [DecidableEq A]
-    (u0 w0 w1 : Cube1 A) : Option (OpenBox2 A) :=
+def ofWalls? {A : Type u} [KanCarrier A] [DecidableEq A] (u0 w0 w1 : Cube1 A) : Option (OpenBox2 A) :=
   match decEq w0.ep0 u0.ep0, decEq w1.ep0 u0.ep1 with
   | isTrue h0, isTrue h1 =>
     some ⟨u0.ep0, u0.ep1, w0.ep1, w1.ep1, u0.path, h0 ▸ w0.path, h1 ▸ w1.path⟩
   | _, _ => none
-theorem ofWalls?_isSome_iff {A : Type u} [KanCarrier A] [DecidableEq A]
-    (u0 w0 w1 : Cube1 A) :
+theorem ofWalls?_isSome_iff {A : Type u} [KanCarrier A] [DecidableEq A] (u0 w0 w1 : Cube1 A) :
     (ofWalls? u0 w0 w1).isSome = true ↔ w0.ep0 = u0.ep0 ∧ w1.ep0 = u0.ep1 := by
   unfold ofWalls?
   cases decEq w0.ep0 u0.ep0 with
@@ -537,11 +535,8 @@ end OpenBox2
   commutes   := KanCarrier.hcomSquare box.bottomPath box.leftPath box.rightPath
 abbrev hcom2 {A : Type u} [KanCarrier A] (box : OpenBox2 A) : Cube2 A := hcomFill2 box
 /-- **Exact Boundary Computation Rules (`hcomFill2_agrees_on_open_box_boundary`)**: -/
-theorem hcomFill2_agrees_on_open_box_boundary {A : Type u} [KanCarrier A] (box : OpenBox2 A) :
-    (hcomFill2 box).bottom = box.bottom ∧
-    (hcomFill2 box).left = box.left ∧
-    (hcomFill2 box).right = box.right ∧
-    (hcomFill2 box).top = hcomLid box ∧
+theorem hcomFill2_agrees_on_open_box_boundary {A : Type u} [KanCarrier A] (box : OpenBox2 A) : (hcomFill2 box).bottom = box.bottom ∧
+    (hcomFill2 box).left = box.left ∧ (hcomFill2 box).right = box.right ∧ (hcomFill2 box).top = hcomLid box ∧
     (∀ i : IntervalPt, (hcomFill2 box).eval2 i .ep0 = box.bottom.eval1 i) ∧
     (∀ j : IntervalPt, (hcomFill2 box).eval2 .ep0 j = box.left.eval1 j) ∧
     (∀ j : IntervalPt, (hcomFill2 box).eval2 .ep1 j = box.right.eval1 j) ∧
@@ -559,9 +554,44 @@ theorem hcomFill2_agrees_on_open_box_boundary {A : Type u} [KanCarrier A] (box :
     | interior => rfl
     | ep1 => change (hcomLid box).eval1 .ep1 = box.right.eval1 .ep1
              simp [hcomLid, OpenBox2.right]
+namespace OpenBox2
+/-- A 2D tube has a horizontal bottom and two vertical sides, embedded in the 4-cube. -/
+def bottomFace : FaceCube4 := ⟨.interior,.ep0,.interior,.interior⟩
+def leftFace : FaceCube4 := ⟨.ep0,.interior,.interior,.interior⟩
+def rightFace : FaceCube4 := ⟨.ep1,.interior,.interior,.interior⟩
+def kanTubeWalls {A : Type u} [KanCarrier A] (u0 w0 w1 : Cube1 A) : List (FaceCube4 × (CubePt4 → A)) :=
+  [(bottomFace,fun p => u0.eval1 p.c0), (leftFace,fun p => w0.eval1 p.c1), (rightFace,fun p => w1.eval1 p.c1)]
+def checkKanTubeWalls {A : Type u} [KanCarrier A] [DecidableEq A] (u0 w0 w1 : Cube1 A) : Bool :=
+  checkTubeWallAgreement (fun f u => u f) (kanTubeWalls u0 w0 w1)
+theorem checkKanTubeWalls_iff {A : Type u} [KanCarrier A] [DecidableEq A] (u0 w0 w1 : Cube1 A) :
+    checkKanTubeWalls u0 w0 w1 = true ↔ w0.ep0 = u0.ep0 ∧ w1.ep0 = u0.ep1 := by
+  simp only [checkKanTubeWalls, checkTubeWallAgreement, kanTubeWalls, bottomFace, leftFace, rightFace,
+    meetFace, meetIntervalPt, List.all_cons, List.all_nil]
+  dsimp only [Bind.bind, Pure.pure, Option.bind]
+  simp only [Cube1.eval1_ep0, Cube1.eval1_ep1, decide_true, Bool.true_and, Bool.and_true, Bool.and_eq_true, decide_eq_true_eq]
+  exact ⟨fun h => h.2, fun ⟨h0,h1⟩ => ⟨⟨h0.symm,h1.symm⟩,h0,h1⟩⟩
+theorem checkKanTubeWalls_eq_ofWalls {A : Type u} [KanCarrier A] [DecidableEq A] (u0 w0 w1 : Cube1 A) :
+    checkKanTubeWalls u0 w0 w1 = (ofWalls? u0 w0 w1).isSome :=
+  Bool.eq_iff_iff.2 ((checkKanTubeWalls_iff _ _ _).trans (ofWalls?_isSome_iff _ _ _).symm)
+/-- A full open box requires all three oriented walls. Agreement alone does not supply a bottom. -/
+@[expose] def hcomFillTube? {A : Type u} [KanCarrier A] [DecidableEq A] (walls : List (FaceCube4 × Cube1 A)) : Option (Cube2 A) :=
+  match walls with
+  | [(f,u0),(g,w0),(h,w1)] =>
+    if f = bottomFace ∧ g = leftFace ∧ h = rightFace ∧ checkKanTubeWalls u0 w0 w1 = true
+    then (ofWalls? u0 w0 w1).map hcomFill2 else none
+  | _ => none
+theorem hcomFillTube_eq {A : Type u} [KanCarrier A] [DecidableEq A] (u0 w0 w1 : Cube1 A) :
+    hcomFillTube? [(bottomFace,u0),(leftFace,w0),(rightFace,w1)] = (ofWalls? u0 w0 w1).map hcomFill2 := by
+  simp only [hcomFillTube?, true_and, checkKanTubeWalls_eq_ofWalls]
+  cases ofWalls? u0 w0 w1 <;> rfl
+theorem disconnectedTube_refused {A : Type u} [KanCarrier A] [DecidableEq A] (w0 w1 : Cube1 A) :
+    hcomFillTube? [(leftFace,w0),(rightFace,w1)] = none := rfl
+theorem disconnectedTube_ne_top {α : Type u} (u0 u1 : α) : tubeCofib [(leftFace,u0),(rightFace,u1)] ≠ FaceIdeal4.top := by
+  intro h; have he := congrArg (fun φ => φ.eval CubePt4.interior4) h
+  simp [tubeCofib, subcubeIdeal, leftFace, rightFace, CubePt4.PtLe, CubePt4.interior4, IntervalPt.le] at he
+end OpenBox2
 def compPath_assoc_up_to_square {A : Type u} [KanCarrier A] {x y z d : A}
-    (p : KanCarrier.PathHom x y) (q : KanCarrier.PathHom y z) (r : KanCarrier.PathHom z d) :
-    Cube2 A where
+    (p : KanCarrier.PathHom x y) (q : KanCarrier.PathHom y z) (r : KanCarrier.PathHom z d) : Cube2 A where
   c00 := x; c10 := d; c01 := x; c11 := d
   bottomPath := KanCarrier.compHom (KanCarrier.compHom p q) r
   topPath    := KanCarrier.compHom p (KanCarrier.compHom q r)
@@ -570,15 +600,11 @@ def compPath_assoc_up_to_square {A : Type u} [KanCarrier A] {x y z d : A}
   center     := x
   commutes   := KanCarrier.assocSquare p q r
 theorem compPath_assoc_square_faces {A : Type u} [KanCarrier A] {x y z d : A}
-    (p : KanCarrier.PathHom x y) (q : KanCarrier.PathHom y z) (r : KanCarrier.PathHom z d) :
-    (compPath_assoc_up_to_square p q r).bottom =
-      Cube1.ofHom (KanCarrier.compHom (KanCarrier.compHom p q) r) ∧
-    (compPath_assoc_up_to_square p q r).top =
-      Cube1.ofHom (KanCarrier.compHom p (KanCarrier.compHom q r)) ∧
-    (compPath_assoc_up_to_square p q r).left = Cube1.refl x ∧
+    (p : KanCarrier.PathHom x y) (q : KanCarrier.PathHom y z) (r : KanCarrier.PathHom z d) : (compPath_assoc_up_to_square p q r).bottom =
+      Cube1.ofHom (KanCarrier.compHom (KanCarrier.compHom p q) r) ∧ (compPath_assoc_up_to_square p q r).top =
+      Cube1.ofHom (KanCarrier.compHom p (KanCarrier.compHom q r)) ∧ (compPath_assoc_up_to_square p q r).left = Cube1.refl x ∧
     (compPath_assoc_up_to_square p q r).right = Cube1.refl d := ⟨rfl, rfl, rfl, rfl⟩
-def path_inv_cancel_square {A : Type u} [KanCarrier A] {x y : A}
-    (p : KanCarrier.PathHom x y) : Cube2 A × Cube2 A :=
+def path_inv_cancel_square {A : Type u} [KanCarrier A] {x y : A} (p : KanCarrier.PathHom x y) : Cube2 A × Cube2 A :=
   ( { c00 := x, c10 := x, c01 := x, c11 := x
       bottomPath := KanCarrier.compHom p (KanCarrier.invHom p)
       topPath := KanCarrier.reflHom x, leftPath := KanCarrier.reflHom x
@@ -589,22 +615,14 @@ def path_inv_cancel_square {A : Type u} [KanCarrier A] {x y : A}
       topPath := KanCarrier.reflHom y, leftPath := KanCarrier.reflHom y
       rightPath := KanCarrier.reflHom y, center := y
       commutes := KanCarrier.leftInvSquare p } )
-theorem path_inv_cancel_square_faces {A : Type u} [KanCarrier A] {x y : A}
-    (p : KanCarrier.PathHom x y) :
-    (path_inv_cancel_square p).1.bottom =
-      Cube1.ofHom (KanCarrier.compHom p (KanCarrier.invHom p)) ∧
-    (path_inv_cancel_square p).1.top = Cube1.refl x ∧
-    (path_inv_cancel_square p).2.bottom =
-      Cube1.ofHom (KanCarrier.compHom (KanCarrier.invHom p) p) ∧
-    (path_inv_cancel_square p).2.top = Cube1.refl y := ⟨rfl, rfl, rfl, rfl⟩
-def pasteCube2Vertical {A : Type u} [KanCarrier A]
-    {a0 b0 a1 b1 a2 b2 : A}
+theorem path_inv_cancel_square_faces {A : Type u} [KanCarrier A] {x y : A} (p : KanCarrier.PathHom x y) :
+    (path_inv_cancel_square p).1.bottom = Cube1.ofHom (KanCarrier.compHom p (KanCarrier.invHom p)) ∧
+    (path_inv_cancel_square p).1.top = Cube1.refl x ∧ (path_inv_cancel_square p).2.bottom =
+      Cube1.ofHom (KanCarrier.compHom (KanCarrier.invHom p) p) ∧ (path_inv_cancel_square p).2.top = Cube1.refl y := ⟨rfl, rfl, rfl, rfl⟩
+def pasteCube2Vertical {A : Type u} [KanCarrier A] {a0 b0 a1 b1 a2 b2 : A}
     {u0 : KanCarrier.PathHom a0 b0} {u1 : KanCarrier.PathHom a1 b1} {u2 : KanCarrier.PathHom a2 b2}
-    {l0 : KanCarrier.PathHom a0 a1} {r0 : KanCarrier.PathHom b0 b1}
-    {l1 : KanCarrier.PathHom a1 a2} {r1 : KanCarrier.PathHom b1 b2}
-    (cCenter : A)
-    (hLower : KanCarrier.SquareHom u0 u1 l0 r0)
-    (hUpper : KanCarrier.SquareHom u1 u2 l1 r1) : Cube2 A where
+    {l0 : KanCarrier.PathHom a0 a1} {r0 : KanCarrier.PathHom b0 b1} {l1 : KanCarrier.PathHom a1 a2} {r1 : KanCarrier.PathHom b1 b2}
+    (cCenter : A) (hLower : KanCarrier.SquareHom u0 u1 l0 r0) (hUpper : KanCarrier.SquareHom u1 u2 l1 r1) : Cube2 A where
   c00 := a0; c10 := b0; c01 := a2; c11 := b2
   bottomPath := u0; topPath := u2
   leftPath   := KanCarrier.compHom l0 l1
@@ -680,8 +698,7 @@ structure EnclosureTube1 (u v : EnclosureVec2) where
 namespace EnclosureVec2
 def midpoint (u v : EnclosureVec2) : EnclosureVec2 :=
   ⟨u.x + (v.x - u.x) / 2, u.y + (v.y - u.y) / 2, u.rad + v.rad⟩
-private theorem int_diff_three (a b c d : Int) :
-    c - d = -(a - c) + ((a - b) + (b - d)) := by
+private theorem int_diff_three (a b c d : Int) : c - d = -(a - c) + ((a - b) + (b - d)) := by
   have h1 : (a - b) + (b - d) = a - d := by
     calc (a - b) + (b - d) = ((a - b) + b) + -d := by rw [Int.sub_eq_add_neg (a := b), ← Int.add_assoc]
       _ = a + -d := by rw [Int.sub_add_cancel]
@@ -692,16 +709,13 @@ private theorem int_diff_three (a b c d : Int) :
     _ = -(a - c) + (a - d) := by
       rw [Int.sub_eq_add_neg (a := a) (b := c), Int.neg_add, Int.neg_neg, Int.add_comm (-a) c,
           ← Int.sub_eq_add_neg (a := a) (b := d)]
-private theorem natAbs_three_step (a b c d : Int) :
-    (c - d).natAbs ≤ (a - c).natAbs + ((a - b).natAbs + (b - d).natAbs) := by
+private theorem natAbs_three_step (a b c d : Int) : (c - d).natAbs ≤ (a - c).natAbs + ((a - b).natAbs + (b - d).natAbs) := by
   rw [int_diff_three a b c d]
   have h1 := Int.natAbs_add_le (-(a - c)) ((a - b) + (b - d))
   rw [Int.natAbs_neg] at h1
   exact Nat.le_trans h1 (Nat.add_le_add_left (Int.natAbs_add_le (a - b) (b - d)) _)
-theorem l1_three_step_bound (c00 c10 c01 c11 : EnclosureVec2) {b0 b1 b2 : Nat}
-    (hw0 : (c00.x - c01.x).natAbs + (c00.y - c01.y).natAbs ≤ b0)
-    (hu0 : (c00.x - c10.x).natAbs + (c00.y - c10.y).natAbs ≤ b1)
-    (hw1 : (c10.x - c11.x).natAbs + (c10.y - c11.y).natAbs ≤ b2) :
+theorem l1_three_step_bound (c00 c10 c01 c11 : EnclosureVec2) {b0 b1 b2 : Nat} (hw0 : (c00.x - c01.x).natAbs + (c00.y - c01.y).natAbs ≤ b0)
+    (hu0 : (c00.x - c10.x).natAbs + (c00.y - c10.y).natAbs ≤ b1) (hw1 : (c10.x - c11.x).natAbs + (c10.y - c11.y).natAbs ≤ b2) :
     (c01.x - c11.x).natAbs + (c01.y - c11.y).natAbs ≤ b0 + (b1 + b2) := by
   have hxy := Nat.add_le_add (natAbs_three_step c00.x c10.x c01.x c11.x)
     (natAbs_three_step c00.y c10.y c01.y c11.y)
@@ -753,11 +767,8 @@ instance instKanCarrier : KanCarrier EnclosureVec2 where
       _ = (l0.work + l1.work) + u2.work := (Int.add_assoc l0.work l1.work u2.work).symm
 def evalAffineBox2 (u0 w0 w1 : Int → Int) (i j : Int) : Int :=
   u0 i + (1 - i) * (w0 j - u0 0) + i * (w1 j - u0 1)
-theorem evalAffineBox2_boundary {u0 w0 w1 : Int → Int}
-    (hc0 : w0 0 = u0 0) (hc1 : w1 0 = u0 1) (i j : Int) :
-    evalAffineBox2 u0 w0 w1 i 0 = u0 i ∧
-    evalAffineBox2 u0 w0 w1 0 j = w0 j ∧
-    evalAffineBox2 u0 w0 w1 1 j = w1 j := by
+theorem evalAffineBox2_boundary {u0 w0 w1 : Int → Int} (hc0 : w0 0 = u0 0) (hc1 : w1 0 = u0 1) (i j : Int) :
+    evalAffineBox2 u0 w0 w1 i 0 = u0 i ∧ evalAffineBox2 u0 w0 w1 0 j = w0 j ∧ evalAffineBox2 u0 w0 w1 1 j = w1 j := by
   unfold evalAffineBox2; refine ⟨?_, ?_, ?_⟩
   · rw [hc0, hc1, Int.sub_self, Int.sub_self, Int.mul_zero, Int.mul_zero, Int.add_zero, Int.add_zero]
   · simp only [Int.sub_zero, Int.one_mul, Int.zero_mul, Int.add_zero]
@@ -769,8 +780,7 @@ structure PackagedStepSys (Act : Type v) (V : Type w) (ε : Type) where
   State : Type u
   sys   : StepSystem State Act V
   init  : State
-structure GradedSimPath {Act : Type v} {V : Type w} {ε : Type} [GradeMonoid ε] [ObsMetric V ε]
-    (M₁ M₂ : PackagedStepSys.{u} Act V ε) where
+structure GradedSimPath {Act : Type v} {V : Type w} {ε : Type} [GradeMonoid ε] [ObsMetric V ε] (M₁ M₂ : PackagedStepSys.{u} Act V ε) where
   rel      : M₁.State → M₂.State → Prop
   init_rel : rel M₁.init M₂.init
   fwdSlack : ε
@@ -779,8 +789,7 @@ structure GradedSimPath {Act : Type v} {V : Type w} {ε : Type} [GradeMonoid ε]
   fwdSim   : Simulates M₁.sys M₂.sys rel fwdSlack
   bwdSim   : Simulates M₂.sys M₁.sys (fun s₂ s₁ => rel s₁ s₂) bwdSlack
 namespace GradedSimPath
-def refl {Act : Type v} {V : Type w} {ε : Type} [GradeMonoid ε] [ObsMetric V ε]
-    (M : PackagedStepSys.{u} Act V ε) : GradedSimPath M M where
+def refl {Act : Type v} {V : Type w} {ε : Type} [GradeMonoid ε] [ObsMetric V ε] (M : PackagedStepSys.{u} Act V ε) : GradedSimPath M M where
   rel := Eq; init_rel := rfl; fwdSlack := 0; bwdSlack := 0; phase := 0
   fwdSim := Simulates.refl M.sys
   bwdSim :=
@@ -791,8 +800,7 @@ def symm {Act : Type v} {V : Type w} {ε : Type} [GradeMonoid ε] [ObsMetric V �
   rel s₂ s₁ := p.rel s₁ s₂; init_rel := p.init_rel
   fwdSlack := p.bwdSlack; bwdSlack := p.fwdSlack; phase := -p.phase
   fwdSim := p.bwdSim; bwdSim := p.fwdSim
-def comp {Act : Type v} {V : Type w} {ε : Type} [GradeMonoid ε] [ObsMetric V ε]
-    {M₁ M₂ M₃ : PackagedStepSys.{u} Act V ε}
+def comp {Act : Type v} {V : Type w} {ε : Type} [GradeMonoid ε] [ObsMetric V ε] {M₁ M₂ M₃ : PackagedStepSys.{u} Act V ε}
     (p : GradedSimPath M₁ M₂) (q : GradedSimPath M₂ M₃) : GradedSimPath M₁ M₃ where
   rel := RelComp p.rel q.rel; init_rel := ⟨M₂.init, p.init_rel, q.init_rel⟩
   fwdSlack := p.fwdSlack + q.fwdSlack; bwdSlack := q.bwdSlack + p.bwdSlack
@@ -837,18 +845,11 @@ instance instKanCarrierPackagedStepSys {Act : Type v} {V : Type w} {ε : Type}
       _ = l0.phase + (l1.phase + u2.phase) := by rw [h2]
       _ = (l0.phase + l1.phase) + u2.phase := (Int.add_assoc l0.phase l1.phase u2.phase).symm
 /-- Every `hcomLid` in `PackagedStepSys Act V ε` carries a machine-checked `Simulates` proof whose -/
-theorem hcomLid_stepSys_trace_safe {Act : Type v} {V : Type w} {ε : Type}
-    [GradeMonoid ε] [ObsMetric V ε]
-    (box : OpenBox2 (PackagedStepSys.{u} Act V ε))
-    {Inv : box.c11.State → Prop}
-    (hInvStep : ∀ {s s' : box.c11.State} {a : Act}, Inv s → box.c11.sys.step s a s' → Inv s')
-    (hInvInit : Inv box.c11.init)
-    {s₀₁' : box.c01.State} {tr : List Act}
-    (hTr : StepTrace box.c01.sys box.c01.init tr s₀₁') :
-    ∃ s₁₁' : box.c11.State,
-      StepTrace box.c11.sys box.c11.init tr s₁₁' ∧
-      Inv s₁₁' ∧
-      ObsMetric.dist (box.c01.sys.observe s₀₁') (box.c11.sys.observe s₁₁') ≤
+theorem hcomLid_stepSys_trace_safe {Act : Type v} {V : Type w} {ε : Type} [GradeMonoid ε] [ObsMetric V ε]
+    (box : OpenBox2 (PackagedStepSys.{u} Act V ε)) {Inv : box.c11.State → Prop}
+    (hInvStep : ∀ {s s' : box.c11.State} {a : Act}, Inv s → box.c11.sys.step s a s' → Inv s') (hInvInit : Inv box.c11.init)
+    {s₀₁' : box.c01.State} {tr : List Act} (hTr : StepTrace box.c01.sys box.c01.init tr s₀₁') : ∃ s₁₁' : box.c11.State,
+      StepTrace box.c11.sys box.c11.init tr s₁₁' ∧ Inv s₁₁' ∧ ObsMetric.dist (box.c01.sys.observe s₀₁') (box.c11.sys.observe s₁₁') ≤
         box.leftPath.bwdSlack + (box.bottomPath.fwdSlack + box.rightPath.fwdSlack) := by
   let lid := (hcomLid box).path
   obtain ⟨s₁₁', hTr', hInv', _, hDist⟩ :=
@@ -863,8 +864,7 @@ namespace AdapterEquiv
 def refl (A : Type u) : AdapterEquiv A A := ⟨fun a => a, fun a => a, fun _ => rfl, fun _ => rfl⟩
 def symm {A : Type u} {B : Type v} (e : AdapterEquiv A B) : AdapterEquiv B A :=
   ⟨e.bwd, e.fwd, e.fwd_bwd, e.bwd_fwd⟩
-def trans {A : Type u} {B : Type v} {C : Type w}
-    (e₁ : AdapterEquiv A B) (e₂ : AdapterEquiv B C) : AdapterEquiv A C where
+def trans {A : Type u} {B : Type v} {C : Type w} (e₁ : AdapterEquiv A B) (e₂ : AdapterEquiv B C) : AdapterEquiv A C where
   fwd a := e₂.fwd (e₁.fwd a); bwd c := e₁.bwd (e₂.bwd c)
   bwd_fwd a := by rw [e₂.bwd_fwd, e₁.bwd_fwd]
   fwd_bwd c := by rw [e₁.fwd_bwd, e₂.fwd_bwd]
@@ -873,12 +873,10 @@ end AdapterEquiv
 def coeKan {A : Type u} {B : Type v} (e : AdapterEquiv A B) (a : A) : B := e.fwd a
 theorem coeKan_refl {A : Type u} (a : A) : coeKan (AdapterEquiv.refl A) a = a := by
   unfold coeKan AdapterEquiv.refl; rfl
-theorem coeKan_trans {A : Type u} {B : Type v} {C : Type w}
-    (e₁ : AdapterEquiv A B) (e₂ : AdapterEquiv B C) (a : A) :
+theorem coeKan_trans {A : Type u} {B : Type v} {C : Type w} (e₁ : AdapterEquiv A B) (e₂ : AdapterEquiv B C) (a : A) :
     coeKan (e₁.trans e₂) a = coeKan e₂ (coeKan e₁ a) := by
   unfold coeKan AdapterEquiv.trans; rfl
-theorem coeKan_symm_cancel {A : Type u} {B : Type v} (e : AdapterEquiv A B) (a : A) :
-    coeKan e.symm (coeKan e a) = a := e.bwd_fwd a
+theorem coeKan_symm_cancel {A : Type u} {B : Type v} (e : AdapterEquiv A B) (a : A) : coeKan e.symm (coeKan e a) = a := e.bwd_fwd a
 structure KanFiber (A : Type u) [KanCarrier A] (F : A → Type w) where
   transport : {x y : A} → KanCarrier.PathHom x y → F x → F y
   transport_refl : ∀ (x : A) (u : F x), transport (KanCarrier.reflHom x) u = u
@@ -887,10 +885,8 @@ structure KanFiber (A : Type u) [KanCarrier A] (F : A → Type w) where
     {l : KanCarrier.PathHom c00 c01} {r : KanCarrier.PathHom c10 c11},
     KanCarrier.SquareHom b t l r →
     ∀ u : F c00, transport r (transport b u) = transport t (transport l u)
-theorem coeKan_along_hcomFill2 {A : Type u} [KanCarrier A] {F : A → Type w}
-    (fib : KanFiber A F) (box : OpenBox2 A) (u : F box.c00) :
-    fib.transport (hcomLid box).path (fib.transport box.leftPath u) =
-      fib.transport box.rightPath (fib.transport box.bottomPath u) :=
+theorem coeKan_along_hcomFill2 {A : Type u} [KanCarrier A] {F : A → Type w} (fib : KanFiber A F) (box : OpenBox2 A) (u : F box.c00) :
+    fib.transport (hcomLid box).path (fib.transport box.leftPath u) = fib.transport box.rightPath (fib.transport box.bottomPath u) :=
   (fib.transport_square (hcomFill2 box).commutes u).symm
 inductive StageGrade where
   | zero | one
@@ -950,9 +946,7 @@ def evalStageOneKernel (realEnv : List UInt64) : KernelOneExpr → UInt64
   | .letOne v b => evalStageOneKernel (evalStageOneKernel realEnv v :: realEnv) b
 @[expose] def runStageOne (realEnv : List UInt64) (e : Expr2LTT) : UInt64 :=
   evalStageOneKernel realEnv (eraseToStageOne e)
-private theorem runStageOne_eq_evalTwoLevel
-    (e : Expr2LTT) (realEnv ghostEnv : List UInt64)
-    (h : WellStaged .one e = true) :
+private theorem runStageOne_eq_evalTwoLevel (e : Expr2LTT) (realEnv ghostEnv : List UInt64) (h : WellStaged .one e = true) :
     evalStageOneKernel realEnv (eraseToStageOne e) = evalTwoLevel ghostEnv realEnv e := by
   induction e generalizing realEnv ghostEnv with
   | litU64 _ => rfl
@@ -985,29 +979,22 @@ private theorem runStageOne_eq_evalTwoLevel
     simp only [WellStaged, Bool.and_eq_true] at h
     exact ihr realEnv ghostEnv h.2
 /-- **Ghost Erasure & Stage Non-Interference (`realizer_stage_erases_zero_ghosts`)**: -/
-theorem realizer_stage_erases_zero_ghosts
-    (e : Expr2LTT) (realEnv ghostEnv₁ ghostEnv₂ : List UInt64)
-    (hStage : WellStaged .one e = true) :
-    runStageOne realEnv e = evalTwoLevel ghostEnv₁ realEnv e ∧
-    evalTwoLevel ghostEnv₁ realEnv e = evalTwoLevel ghostEnv₂ realEnv e := by
+theorem realizer_stage_erases_zero_ghosts (e : Expr2LTT) (realEnv ghostEnv₁ ghostEnv₂ : List UInt64) (hStage : WellStaged .one e = true) :
+    runStageOne realEnv e = evalTwoLevel ghostEnv₁ realEnv e ∧ evalTwoLevel ghostEnv₁ realEnv e = evalTwoLevel ghostEnv₂ realEnv e := by
   have h1 := runStageOne_eq_evalTwoLevel e realEnv ghostEnv₁ hStage
   have h2 := runStageOne_eq_evalTwoLevel e realEnv ghostEnv₂ hStage
   exact ⟨h1, h1.symm.trans h2⟩
-structure QuantAdapter (Spec : Type u) (Exec : Type v) (ε : Type w)
-    [GradeMonoid ε] [ObsMetric Spec ε] where
+structure QuantAdapter (Spec : Type u) (Exec : Type v) (ε : Type w) [GradeMonoid ε] [ObsMetric Spec ε] where
   project        : Exec → Spec
   embed          : Spec → Exec
   grade          : ε
   roundtrip_dist : ∀ s : Spec, ObsMetric.dist (project (embed s)) s ≤ grade
-abbrev Adapter (Spec : Type u) (Exec : Type v) (ε : Type w)
-    [GradeMonoid ε] [ObsMetric Spec ε] := QuantAdapter Spec Exec ε
+abbrev Adapter (Spec : Type u) (Exec : Type v) (ε : Type w) [GradeMonoid ε] [ObsMetric Spec ε] := QuantAdapter Spec Exec ε
 namespace QuantAdapter
 @[expose] def id (A : Type u) (ε : Type w) [GradeMonoid ε] [ObsMetric A ε] : QuantAdapter A A ε :=
   ⟨fun a => a, fun a => a, 0, fun a => ObsMetric.dist_self a⟩
-def comp {A : Type u} {B : Type v} {C : Type z} {ε : Type w}
-    [GradeMonoid ε] [ObsMetric A ε] [ObsMetric B ε]
-    (ab : QuantAdapter A B ε) (bc : QuantAdapter B C ε)
-    (hLip : ∀ b₁ b₂ : B,
+def comp {A : Type u} {B : Type v} {C : Type z} {ε : Type w} [GradeMonoid ε] [ObsMetric A ε] [ObsMetric B ε]
+    (ab : QuantAdapter A B ε) (bc : QuantAdapter B C ε) (hLip : ∀ b₁ b₂ : B,
       ObsMetric.dist (ε := ε) (ab.project b₁) (ab.project b₂) ≤ ObsMetric.dist (ε := ε) b₁ b₂) :
     QuantAdapter A C ε where
   project c := ab.project (bc.project c)
@@ -1031,21 +1018,15 @@ def inv {A : Type u} {B : Type v} (e : IsoAdapter A B) : IsoAdapter B A :=
     (ε : Type w) [GradeMonoid ε] [ObsMetric A ε] : QuantAdapter A B ε :=
   ⟨e.project, e.embed, 0, fun a => by rw [e.project_inv]; exact ObsMetric.dist_self a⟩
 end IsoAdapter
-theorem castAdapter_id_elim {A : Type u} {B : Type v} {ε : Type w}
-    [GradeMonoid ε] [ObsMetric A ε] [ObsMetric B ε]
-    (ad : QuantAdapter A B ε) (a : A) (b : B) :
-    (QuantAdapter.id A ε).embed a = a ∧
-    (QuantAdapter.id A ε).project a = a ∧
+theorem castAdapter_id_elim {A : Type u} {B : Type v} {ε : Type w} [GradeMonoid ε] [ObsMetric A ε] [ObsMetric B ε]
+    (ad : QuantAdapter A B ε) (a : A) (b : B) : (QuantAdapter.id A ε).embed a = a ∧ (QuantAdapter.id A ε).project a = a ∧
     ((QuantAdapter.id A ε).comp ad (fun _ _ => GradeMonoid.le_refl _)).project b = ad.project b ∧
     ((QuantAdapter.id A ε).comp ad (fun _ _ => GradeMonoid.le_refl _)).embed a = ad.embed a ∧
     ((QuantAdapter.id A ε).comp ad (fun _ _ => GradeMonoid.le_refl _)).grade = ad.grade := by
   unfold QuantAdapter.comp
   exact ⟨rfl, rfl, rfl, rfl, GradeMonoid.add_zero ad.grade⟩
-theorem castAdapter_inv_cancel {A : Type u} {B : Type v} {ε : Type w}
-    [GradeMonoid ε] [ObsMetric A ε] [ObsMetric B ε]
-    (e : IsoAdapter A B)
-    (hIso : ∀ b₁ b₂ : B,
-      ObsMetric.dist (ε := ε) (e.project b₁) (e.project b₂) ≤ ObsMetric.dist (ε := ε) b₁ b₂)
+theorem castAdapter_inv_cancel {A : Type u} {B : Type v} {ε : Type w} [GradeMonoid ε] [ObsMetric A ε] [ObsMetric B ε] (e : IsoAdapter A B)
+    (hIso : ∀ b₁ b₂ : B, ObsMetric.dist (ε := ε) (e.project b₁) (e.project b₂) ≤ ObsMetric.dist (ε := ε) b₁ b₂)
     (a : A) :
     e.inv.embed (e.embed a) = a ∧
     e.project (e.inv.project a) = a ∧
@@ -1083,8 +1064,7 @@ def applyTagCast (tag : Nat) (dir : CastDir) (x : Int) : Int :=
     match dir with
     | .fwd => x + Int.ofNat (tag + 1)
     | .bwd => x - Int.ofNat (tag + 1)
-theorem applyTagCast_inv_cancel (tag : Nat) (dir : CastDir) (x : Int) :
-    applyTagCast tag dir (applyTagCast tag dir.flip x) = x := by
+theorem applyTagCast_inv_cancel (tag : Nat) (dir : CastDir) (x : Int) : applyTagCast tag dir (applyTagCast tag dir.flip x) = x := by
   unfold applyTagCast
   cases hEven : (tag % 2 == 0) with
   | true =>
@@ -1116,12 +1096,10 @@ def resourceGrade : AdapterChain → CompositeGrade
   | op :: rest => opResourceGrade op + resourceGrade rest
 @[simp] theorem evalChain_append (c₁ c₂ : AdapterChain) (x : Int) :
     evalChain (c₁ ++ c₂) x = evalChain c₂ (evalChain c₁ x) := List.foldl_append
-private theorem evalChain_cons (op : AdapterOp) (c : AdapterChain) (x : Int) :
-    evalChain (op :: c) x = evalChain c (evalOp op x) := rfl
+private theorem evalChain_cons (op : AdapterOp) (c : AdapterChain) (x : Int) : evalChain (op :: c) x = evalChain c (evalOp op x) := rfl
 private theorem evalChain_snoc (c : AdapterChain) (op : AdapterOp) (x : Int) :
     evalChain (c ++ [op]) x = evalOp op (evalChain c x) := by simp [evalChain]
-theorem resourceGrade_append (c₁ c₂ : AdapterChain) :
-    resourceGrade (c₁ ++ c₂) = resourceGrade c₁ + resourceGrade c₂ := by
+theorem resourceGrade_append (c₁ c₂ : AdapterChain) : resourceGrade (c₁ ++ c₂) = resourceGrade c₁ + resourceGrade c₂ := by
   induction c₁ with
   | nil => simp only [List.nil_append, resourceGrade]; exact (GradeMonoid.zero_add _).symm
   | cons op rest ih => simp only [List.cons_append, resourceGrade, ih, GradeMonoid.add_assoc]
@@ -1135,8 +1113,7 @@ private theorem pushAffine_sound (revAcc : List AdapterOp) (s o : Int) (e c : Na
     dsimp only; simp only [Bool.and_eq_true, intEq_iff, Nat.beq_eq] at hId
     rcases hId with ⟨⟨rfl, rfl⟩, rfl⟩; rw [Int.one_mul, Int.add_zero]
   | false => dsimp only; rw [List.reverse_cons, evalChain_snoc, evalOp]
-private theorem pushAffine_grade (revAcc : List AdapterOp) (s o : Int) (e c : Nat) :
-    resourceGrade (pushAffine revAcc s o e c).reverse ≤
+private theorem pushAffine_grade (revAcc : List AdapterOp) (s o : Int) (e c : Nat) : resourceGrade (pushAffine revAcc s o e c).reverse ≤
       resourceGrade revAcc.reverse + opResourceGrade (.affine s o e c) := by
   unfold pushAffine
   cases hId : (intEq s 1 && intEq o 0 && Nat.beq e 0) with
@@ -1240,18 +1217,14 @@ private theorem fuseStep_step_grade (revAcc : List AdapterOp) (op : AdapterOp) :
         simp only [List.reverse_cons, resourceGrade_append, resourceGrade, GradeMonoid.add_zero]
         rw [← GradeMonoid.add_assoc] at hMono
         exact GradeMonoid.le_trans hPush hMono
-private theorem foldl_fuseStep_sound :
-    ∀ (chain : AdapterChain) (revAcc : List AdapterOp) (x : Int),
-      evalChain (chain.foldl fuseStep revAcc).reverse x =
-        evalChain chain (evalChain revAcc.reverse x)
+private theorem foldl_fuseStep_sound : ∀ (chain : AdapterChain) (revAcc : List AdapterOp) (x : Int),
+      evalChain (chain.foldl fuseStep revAcc).reverse x = evalChain chain (evalChain revAcc.reverse x)
   | [], _, _ => rfl
   | op :: rest, revAcc, x => by
     rw [List.foldl_cons, evalChain_cons, foldl_fuseStep_sound rest (fuseStep revAcc op) x,
         fuseStep_step_sound]
-private theorem foldl_fuseStep_grade :
-    ∀ (chain : AdapterChain) (revAcc : List AdapterOp),
-      resourceGrade (chain.foldl fuseStep revAcc).reverse ≤
-        resourceGrade revAcc.reverse + resourceGrade chain
+private theorem foldl_fuseStep_grade : ∀ (chain : AdapterChain) (revAcc : List AdapterOp),
+      resourceGrade (chain.foldl fuseStep revAcc).reverse ≤ resourceGrade revAcc.reverse + resourceGrade chain
   | [], revAcc => by
     simp only [List.foldl_nil, resourceGrade, GradeMonoid.add_zero]; exact GradeMonoid.le_refl _
   | op :: rest, revAcc => by
@@ -1261,15 +1234,13 @@ private theorem foldl_fuseStep_grade :
       (GradeMonoid.le_refl (resourceGrade rest))
     rw [GradeMonoid.add_assoc] at hstep; exact GradeMonoid.le_trans ih hstep
 /-- **`fuseAdapters_sound`**: -/
-theorem fuseAdapters_resource_sound (chain : AdapterChain) (x : Int) :
-    evalChain (fuseAdapters chain) x = evalChain chain x ∧
+theorem fuseAdapters_resource_sound (chain : AdapterChain) (x : Int) : evalChain (fuseAdapters chain) x = evalChain chain x ∧
     resourceGrade (fuseAdapters chain) ≤ resourceGrade chain := by
   unfold fuseAdapters
   refine ⟨foldl_fuseStep_sound chain [] x, ?_⟩
   have hg := foldl_fuseStep_grade chain []
   simp only [List.reverse_nil, resourceGrade, GradeMonoid.zero_add] at hg; exact hg
-theorem castAdapter_id_elim_chain (chain : AdapterChain) :
-    fuseAdapters (.idCast :: chain) = fuseAdapters chain ∧
+theorem castAdapter_id_elim_chain (chain : AdapterChain) : fuseAdapters (.idCast :: chain) = fuseAdapters chain ∧
     fuseAdapters (chain ++ [.idCast]) = fuseAdapters chain := by
   unfold fuseAdapters; refine ⟨rfl, ?_⟩; rw [List.foldl_append]; rfl
 theorem castAdapter_inv_cancel_chain (tag : Nat) (dir : CastDir) (chain : AdapterChain) :
@@ -1282,21 +1253,18 @@ def opError : AdapterOp → Nat | .affine _ _ e _ => e | _ => 0
 def chainBound : AdapterChain → Nat × Nat
   | [] => (1,0)
   | op :: rest => let b := chainBound rest; (opGain op*b.1, opError op*b.1+b.2)
-theorem chainBound_append (a b : AdapterChain) :
-    chainBound (a++b) = ((chainBound a).1*(chainBound b).1,
+theorem chainBound_append (a b : AdapterChain) : chainBound (a++b) = ((chainBound a).1*(chainBound b).1,
       (chainBound a).2*(chainBound b).1+(chainBound b).2) := by
   induction a with
   | nil => simp [chainBound]
   | cons op rest ih => simp [chainBound, ih, Nat.add_mul, Nat.mul_assoc, Nat.add_assoc]
-private theorem bound_push (a : AdapterChain) (s o : Int) (e c : Nat) :
-    chainBound (pushAffine a s o e c).reverse =
+private theorem bound_push (a : AdapterChain) (s o : Int) (e c : Nat) : chainBound (pushAffine a s o e c).reverse =
       ((chainBound a.reverse).1*s.natAbs, (chainBound a.reverse).2*s.natAbs+e) := by
   unfold pushAffine; split
   · rename_i h; simp only [Bool.and_eq_true, intEq_iff, Nat.beq_eq] at h
     rcases h with ⟨⟨rfl,rfl⟩,rfl⟩; simp
   · simp [List.reverse_cons, chainBound_append, chainBound, opGain, opError]
-private theorem fuseStep_bound (a : AdapterChain) (op : AdapterOp) :
-    chainBound (fuseStep a op).reverse = chainBound (a.reverse++[op]) := by
+private theorem fuseStep_bound (a : AdapterChain) (op : AdapterOp) : chainBound (fuseStep a op).reverse = chainBound (a.reverse++[op]) := by
   cases op with
   | idCast => simp [fuseStep, chainBound_append, chainBound, opGain, opError]
   | tagCast t d =>
@@ -1319,8 +1287,7 @@ private theorem fuseStep_bound (a : AdapterChain) (op : AdapterOp) :
       | affine s₁ o₁ e₁ c₁ =>
         simp [fuseStep, affineError, bound_push, List.reverse_cons, chainBound_append, chainBound, opGain, opError,
           Int.natAbs_mul, Nat.mul_assoc, Nat.mul_comm]
-private theorem fold_bound (c a : AdapterChain) :
-    chainBound (c.foldl fuseStep a).reverse = chainBound (a.reverse++c) := by
+private theorem fold_bound (c a : AdapterChain) : chainBound (c.foldl fuseStep a).reverse = chainBound (a.reverse++c) := by
   induction c generalizing a with
   | nil => simp
   | cons op rest ih =>
@@ -1345,8 +1312,7 @@ theorem approxRun_exact_complete (c : AdapterChain) (x : Int) : ApproxRun c x (e
   induction c generalizing x with
   | nil => exact .nil x
   | cons op rest ih => exact .cons (by simp [ApproxEvalOp]) (ih (evalOp op x))
-private theorem op_lipschitz (op : AdapterOp) (x y : Int) :
-    (evalOp op x-evalOp op y).natAbs ≤ opGain op*(x-y).natAbs := by
+private theorem op_lipschitz (op : AdapterOp) (x y : Int) : (evalOp op x-evalOp op y).natAbs ≤ opGain op*(x-y).natAbs := by
   cases op with
   | idCast => simp [evalOp, opGain]
   | tagCast t d =>
@@ -1355,15 +1321,13 @@ private theorem op_lipschitz (op : AdapterOp) (x y : Int) :
   | affine s o e c =>
     have he : (s*x+o)-(s*y+o) = s*(x-y) := by simp [Int.mul_sub]; omega
     simp only [evalOp, opGain, he, Int.natAbs_mul]; exact Nat.le_refl _
-private theorem chain_lipschitz (c : AdapterChain) (x y : Int) :
-    (evalChain c x-evalChain c y).natAbs ≤ (chainBound c).1*(x-y).natAbs := by
+private theorem chain_lipschitz (c : AdapterChain) (x y : Int) : (evalChain c x-evalChain c y).natAbs ≤ (chainBound c).1*(x-y).natAbs := by
   induction c generalizing x y with
   | nil => simp [evalChain, chainBound]
   | cons op rest ih =>
     have ht := Nat.le_trans (ih (evalOp op x) (evalOp op y)) (Nat.mul_le_mul_left _ (op_lipschitz op x y))
     simpa only [evalChain_cons, chainBound, Nat.mul_assoc, Nat.mul_comm, Nat.mul_left_comm] using ht
-theorem approxRun_error {c : AdapterChain} {x z : Int} (h : ApproxRun c x z) :
-    (z-evalChain c x).natAbs ≤ (chainBound c).2 := by
+theorem approxRun_error {c : AdapterChain} {x z : Int} (h : ApproxRun c x z) : (z-evalChain c x).natAbs ≤ (chainBound c).2 := by
   induction h with
   | nil x => simp [evalChain, chainBound]
   | @cons op rest x y z hop hrest ih =>
@@ -1380,35 +1344,21 @@ theorem fuseAdapters_approx_sound (c : AdapterChain) (x actual : Int) (h : Appro
 def runChainGradedM (chain : AdapterChain) : GradedM CompositeGrade Int Unit :=
   GradedM.modifyCost (evalChain chain) (chainGrade chain)
 theorem fuseAdapters_gradedTriple (chain : AdapterChain) (P : Int → Prop) :
-    GradedTriple P (runChainGradedM (fuseAdapters chain)) (chainGrade chain)
-      (fun _ s' => ∃ s₀ : Int, P s₀ ∧ s' = evalChain chain s₀) := by
+    GradedTriple P (runChainGradedM (fuseAdapters chain)) (chainGrade chain) (fun _ s' => ∃ s₀ : Int, P s₀ ∧ s' = evalChain chain s₀) := by
   intro s₀ hp
   obtain ⟨heq, hgrade⟩ := fuseAdapters_sound chain s₀
   exact ⟨⟨s₀, hp, heq⟩, hgrade⟩
-def adapterEmbedRel {Spec : Type u} {Exec : Type v} {ε : Type w}
-    [GradeMonoid ε] [ObsMetric Spec ε]
+def adapterEmbedRel {Spec : Type u} {Exec : Type v} {ε : Type w} [GradeMonoid ε] [ObsMetric Spec ε]
     (ad : QuantAdapter Spec Exec ε) (c : Exec) (s : Spec) : Prop := c = ad.embed s
 /-- **`adapter_induces_graded_refines` (Bridging `QuantAdapter` $\to$ `Obend.Category.Refines`)**. -/
-theorem adapter_induces_graded_refines {Spec : Type u} {Exec : Type v} {Act : Type} {ε : Type w}
-    [GradeMonoid ε] [ObsMetric Spec ε]
-    (ad : QuantAdapter Spec Exec ε)
-    (C : StepSystem Exec Act Spec)
-    (A : StepSystem Spec Act Spec)
-    (hObsC : ∀ c : Exec, C.observe c = ad.project c)
-    (hObsA : ∀ s : Spec, A.observe s = s)
-    (hStep : ∀ {s : Spec} {c' : Exec} {a : Act},
-      C.step (ad.embed s) a c' → ∃ s' : Spec, A.step s a s' ∧ c' = ad.embed s') :
-    Simulates C A (adapterEmbedRel ad) ad.grade ∧
-    (∀ (P : Exec → Prop) (Q : Spec → Prop),
-      PredLe ((GaloisRefinement.ofRel (adapterEmbedRel ad)).alpha P) Q ↔
-      PredLe P ((GaloisRefinement.ofRel (adapterEmbedRel ad)).gamma Q)) ∧
-    (∀ {Inv : Spec → Prop},
-      (∀ {s s' : Spec} {a : Act}, Inv s → A.step s a s' → Inv s') →
-      ∀ {s₀ : Spec} {c' : Exec} {tr : List Act},
-        Inv s₀ → StepTrace C (ad.embed s₀) tr c' →
-        ∃ s' : Spec,
-          StepTrace A s₀ tr s' ∧
-          Inv s' ∧
+theorem adapter_induces_graded_refines {Spec : Type u} {Exec : Type v} {Act : Type} {ε : Type w} [GradeMonoid ε] [ObsMetric Spec ε]
+    (ad : QuantAdapter Spec Exec ε) (C : StepSystem Exec Act Spec) (A : StepSystem Spec Act Spec)
+    (hObsC : ∀ c : Exec, C.observe c = ad.project c) (hObsA : ∀ s : Spec, A.observe s = s) (hStep : ∀ {s : Spec} {c' : Exec} {a : Act},
+      C.step (ad.embed s) a c' → ∃ s' : Spec, A.step s a s' ∧ c' = ad.embed s') : Simulates C A (adapterEmbedRel ad) ad.grade ∧
+    (∀ (P : Exec → Prop) (Q : Spec → Prop), PredLe ((GaloisRefinement.ofRel (adapterEmbedRel ad)).alpha P) Q ↔
+      PredLe P ((GaloisRefinement.ofRel (adapterEmbedRel ad)).gamma Q)) ∧ (∀ {Inv : Spec → Prop},
+      (∀ {s s' : Spec} {a : Act}, Inv s → A.step s a s' → Inv s') → ∀ {s₀ : Spec} {c' : Exec} {tr : List Act},
+        Inv s₀ → StepTrace C (ad.embed s₀) tr c' → ∃ s' : Spec, StepTrace A s₀ tr s' ∧ Inv s' ∧
           ObsMetric.dist (C.observe c') (A.observe s') ≤ ad.grade) := by
   have hSim : Simulates C A (adapterEmbedRel ad) ad.grade :=
     { obs_bound := fun hr => by subst hr; rw [hObsC, hObsA]; exact ad.roundtrip_dist _
@@ -1419,12 +1369,9 @@ theorem adapter_induces_graded_refines {Spec : Type u} {Exec : Type v} {Act : Ty
     Simulates.trace_safety hSim hInvStep (rfl : adapterEmbedRel ad (ad.embed s₀) s₀) hInv₀ hTr
   exact ⟨s', hTrA, hInv', hDist⟩
 /-- **Vertical `SuperRefines` + 2LTT Adapter Weld (`adapter_superRefines_vertical_weld`)**. -/
-theorem adapter_superRefines_vertical_weld
-    {k : Nat} {o : ClaimObj} {steps : List RStep} {Sem : ClaimObj → Prop}
-    (hSound : ∀ {c : ClaimObj}, superClaimCheck k c steps = .ok → Sem c)
-    (hOk : superClaimCheck k o steps = .ok)
-    {C' : Composition} {j' : Nat}
-    (hSup : ∀ sp ∈ superSupports o steps, SuperSupport.holds C' o.arity j' sp = true)
+theorem adapter_superRefines_vertical_weld {k : Nat} {o : ClaimObj} {steps : List RStep} {Sem : ClaimObj → Prop}
+    (hSound : ∀ {c : ClaimObj}, superClaimCheck k c steps = .ok → Sem c) (hOk : superClaimCheck k o steps = .ok)
+    {C' : Composition} {j' : Nat} (hSup : ∀ sp ∈ superSupports o steps, SuperSupport.holds C' o.arity j' sp = true)
     (hWf : ({ o with comp := C', layer := j' } : ClaimObj).wellFormed = true)
     (chain : AdapterChain) (x : Int) :
     superClaimCheck k { o with comp := C', layer := j' } steps = .ok ∧
@@ -1436,17 +1383,9 @@ theorem adapter_superRefines_vertical_weld
   obtain ⟨hEval, hGrade⟩ := fuseAdapters_sound chain x
   exact ⟨hOk', hSound hOk', hSupEq, hEval, hGrade⟩
 /-- **`hcom_repairs_broken_commuting_square` (Kan `hcom2` + `DeltaLensRenew` + `SuperRefines`)**: -/
-theorem hcom_repairs_broken_commuting_square
-    {Ω : Type u} {A : Type v} [KanCarrier A]
-    (L_spec : DeltaLens Ω A)
-    (L_comp : DeltaLens Ω Composition)
-    (hDisj : DisjointLenses L_comp L_spec)
-    (ω₁ : Ω)
-    (sq₀ : Cube2 A)
-    (hAnchor : sq₀.c01 = L_spec.get ω₁)
-    {s₂ impl₂ : A}
-    (specDelta : KanCarrier.PathHom sq₀.c01 s₂)
-    (implDelta : KanCarrier.PathHom sq₀.c11 impl₂)
+theorem hcom_repairs_broken_commuting_square {Ω : Type u} {A : Type v} [KanCarrier A] (L_spec : DeltaLens Ω A)
+    (L_comp : DeltaLens Ω Composition) (hDisj : DisjointLenses L_comp L_spec) (ω₁ : Ω) (sq₀ : Cube2 A) (hAnchor : sq₀.c01 = L_spec.get ω₁)
+    {s₂ impl₂ : A} (specDelta : KanCarrier.PathHom sq₀.c01 s₂) (implDelta : KanCarrier.PathHom sq₀.c11 impl₂)
     {k : Nat} {o : ClaimObj} {steps : List RStep} {Sem : ClaimObj → Prop}
     (hSound : ∀ {c : ClaimObj}, superClaimCheck k c steps = .ok → Sem c)
     (hOrthOk : superClaimCheck k { o with comp := L_comp.get ω₁ } steps = .ok) :

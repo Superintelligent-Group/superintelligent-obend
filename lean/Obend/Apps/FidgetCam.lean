@@ -18,6 +18,8 @@ public import Obend.Hardware.Compiler
 public import Obend.Hardware.Accelerators
 public import Obend.Hardware.Synth
 public import Obend.Hardware.GeometryCAM
+import all Obend.Hardware.GeometryCAM
+import all Obend.Hardware.HDL
 public import Obend.Hardware.OpenUSD
 public import Obend.Spec.CrossPackage
 public import Obend.Leaf.Emit
@@ -73,7 +75,7 @@ below is built from the composed values; `fidgetParams_eq_obend` is the link, de
 constants the importer emitted. -/
 
 /-- The natural number a reduced `.obend` value carries (`0` for anything else). -/
-@[expose] def natOfTerm : Term → Nat
+def natOfTerm : Term → Nat
   | .nat n => n
   | _ => 0
 
@@ -98,7 +100,7 @@ structure FidgetParams where
   deriving DecidableEq, Repr
 
 /-- The parameters as the importer reduced them from the composed `.obend` objects. -/
-@[expose] def FidgetParams.ofObend : FidgetParams :=
+def FidgetParams.ofObend : FidgetParams :=
   { hubR := natOfTerm FidgetBaseBody.hubRadius_val
   , hubH := natOfTerm FidgetBaseBody.hubHeight_val
   , lugX := natOfTerm FidgetMountingBoss.lugCentreX_val
@@ -118,7 +120,7 @@ structure FidgetParams where
 
 /-- The same values as literals, for the compiled checks below (the importer's constants are not
 compiled code). -/
-@[expose] def fidgetParams : FidgetParams :=
+def fidgetParams : FidgetParams :=
   { hubR := 10000, hubH := 8000, lugX := 10000, lugR := 2500, boreX := 4000, boreR := 2000
   , minWall := 2000, unit := 100, toolR := 2000, shankLen := 12000, toolOffset := 2400
   , clearAbove := 5000, stepDown := 2000, cutFeed := 1200, plungeFeed := 300, rpm := 18000 }
@@ -129,14 +131,14 @@ theorem fidgetParams_eq_obend : fidgetParams = FidgetParams.ofObend := by
   decide +kernel
 
 /-- Every length is a whole number of lattice units. -/
-@[expose] def FidgetParams.onLattice (p : FidgetParams) : Bool :=
+def FidgetParams.onLattice (p : FidgetParams) : Bool :=
   [p.hubR, p.hubH, p.lugX, p.lugR, p.boreX, p.boreR, p.minWall, p.toolR, p.shankLen,
     p.toolOffset, p.clearAbove, p.stepDown].all (fun v => v % p.unit == 0)
 
 example : fidgetParams.onLattice = true := by decide +kernel
 
 /-- Micrometres to lattice units. -/
-@[expose] def FidgetParams.lat (p : FidgetParams) (um : Nat) : Nat := um / p.unit
+def FidgetParams.lat (p : FidgetParams) (um : Nat) : Nat := um / p.unit
 
 /-! ## 2. Vtable flattening, `Leaf.Book` emission, cone survival -/
 
@@ -191,16 +193,16 @@ theorem fidgetCam_cone_survives :
 /-! ## 3. The part as one solid, on a 100 µm lattice -/
 
 /-- A Z-parallel cylinder of radius `r` on the axis through `(cx, cy)`, between `z0` and `z1`. -/
-@[expose] def frepCylZ (cx cy : Int) (r : Nat) (z0 z1 : Int) : FRepExpr :=
+def frepCylZ (cx cy : Int) (r : Nat) (z0 z1 : Int) : FRepExpr :=
   .csgInter (.offset ((r : Int) * r) (.add (.sq (.sub .varX (.const cx))) (.sq (.sub .varY (.const cy)))))
     (.csgInter (.sub (.const z0) .varZ) (.sub .varZ (.const z1)))
 
 /-- The bounding box of `frepCylZ`. -/
-@[expose] def cylBox (cx cy : Int) (r : Nat) (z0 z1 : Int) : Box3D :=
+def cylBox (cx cy : Int) (r : Nat) (z0 z1 : Int) : Box3D :=
   { xIv := { lo := cx - r, hi := cx + r }, yIv := { lo := cy - r, hi := cy + r }, zIv := { lo := z0, hi := z1 } }
 
 /-- Smallest box holding two boxes. -/
-@[expose] def Box3D.hull (A B : Box3D) : Box3D :=
+def Box3D.hull (A B : Box3D) : Box3D :=
   { xIv := { lo := min A.xIv.lo B.xIv.lo, hi := max A.xIv.hi B.xIv.hi }
   , yIv := { lo := min A.yIv.lo B.yIv.lo, hi := max A.yIv.hi B.yIv.hi }
   , zIv := { lo := min A.zIv.lo B.zIv.lo, hi := max A.zIv.hi B.zIv.hi } }
@@ -257,18 +259,18 @@ theorem hull_contains_right (A B : Box3D) (x y z : Int) (h : B.contains x y z) :
   omega
 
 /-- Hub ∪ lug, the envelope the bore is cut from. -/
-@[expose] def FidgetParams.outer (p : FidgetParams) : FRepExpr :=
+def FidgetParams.outer (p : FidgetParams) : FRepExpr :=
   .csgUnion (frepCylZ 0 0 (p.lat p.hubR) 0 (p.lat p.hubH))
     (frepCylZ (p.lat p.lugX) 0 (p.lat p.lugR) 0 (p.lat p.hubH))
 
 /-- The cooling bore as a cavity of the part's height (for the wall), and as the cut (through). -/
-@[expose] def FidgetParams.cavity (p : FidgetParams) : FRepExpr :=
+def FidgetParams.cavity (p : FidgetParams) : FRepExpr :=
   frepCylZ (-(p.lat p.boreX : Int)) 0 (p.lat p.boreR) 0 (p.lat p.hubH)
 
-@[expose] def FidgetParams.part (p : FidgetParams) : FRepExpr :=
+def FidgetParams.part (p : FidgetParams) : FRepExpr :=
   .csgDiff p.outer (frepCylZ (-(p.lat p.boreX : Int)) 0 (p.lat p.boreR) (-1) (p.lat p.hubH + 1))
 
-@[expose] def FidgetParams.partBox (p : FidgetParams) : Box3D :=
+def FidgetParams.partBox (p : FidgetParams) : Box3D :=
   Box3D.hull (cylBox 0 0 (p.lat p.hubR) 0 (p.lat p.hubH))
     (cylBox (p.lat p.lugX) 0 (p.lat p.lugR) 0 (p.lat p.hubH))
 
@@ -290,7 +292,7 @@ theorem FidgetParams.part_in_box (p : FidgetParams) (x y z : Int) (h : inSolid x
     exact hull_contains_right _ _ x y z (frepCylZ_in_box _ _ _ _ _ x y z hu)
 
 /-- The part's tape is compiled from the solid, not written beside it. -/
-@[expose] def impellerSsaTape : List SsaTapeOp := fidgetParams.part.toTape
+def impellerSsaTape : List SsaTapeOp := fidgetParams.part.toTape
 
 theorem impellerSsaTape_eval (x y z : Int) :
     evalSsaTape x y z impellerSsaTape = evalFRepPoint x y z fidgetParams.part :=
@@ -326,7 +328,7 @@ segment the control will interpolate, including plunges and retracts. -/
 
 /-- Rational points on the unit circle, `((M²-k², 2kM), M²+k²)` for `k < M`, turned through the four
 quadrants: `4M` exact directions in angular order. -/
-@[expose] def circleDirs (M : Nat) : List (Int × Int × Int) :=
+def circleDirs (M : Nat) : List (Int × Int × Int) :=
   let q0 := (List.range M).map fun (i : Nat) =>
     let m : Int := M
     let k : Int := i
@@ -338,10 +340,10 @@ quadrants: `4M` exact directions in angular order. -/
   q0 ++ q1 ++ q2 ++ q3
 
 /-- `round(ρ·a/c)`. -/
-@[expose] def roundMul (ρ a c : Int) : Int := (2 * ρ * a + c) / (2 * c)
+def roundMul (ρ a c : Int) : Int := (2 * ρ * a + c) / (2 * c)
 
 /-- Smallest radius `ρ ≥ ρ0` along direction `d` whose point is at least `clear` from `(ox, oy)`. -/
-@[expose] def searchRho (ox oy : Int) (clear : Nat) (d : Int × Int × Int) : Nat → Int → Int
+def searchRho (ox oy : Int) (clear : Nat) (d : Int × Int × Int) : Nat → Int → Int
   | 0, ρ => ρ
   | fuel + 1, ρ =>
     let px := roundMul ρ d.1 d.2.2
@@ -350,25 +352,25 @@ quadrants: `4M` exact directions in angular order. -/
     else searchRho ox oy clear d fuel (ρ + 1)
 
 /-- The quadrant (0 … 3) whose axis `+X, +Y, -X, -Y` is nearest to direction `d`. -/
-@[expose] def nearestQuadrant (d : Int × Int × Int) : Nat :=
+def nearestQuadrant (d : Int × Int × Int) : Nat :=
   let a := d.1
   let b := d.2.1
   if (b.natAbs : Int) ≤ a then 0 else if (a.natAbs : Int) ≤ b then 1
   else if (b.natAbs : Int) ≤ -a then 2 else 3
 
 /-- Tool axis tilted 36.87° (a 3-4-5 triangle) outward over quadrant `q`. -/
-@[expose] def tiltAxis : Nat → ToolAxis
+def tiltAxis : Nat → ToolAxis
   | 0 => ⟨3, 0, 4, 5⟩
   | 1 => ⟨0, 3, 4, 5⟩
   | 2 => ⟨-3, 0, 4, 5⟩
   | _ => ⟨0, -3, 4, 5⟩
 
-@[expose] def vertAxis : ToolAxis := ⟨0, 0, 1, 1⟩
+def vertAxis : ToolAxis := ⟨0, 0, 1, 1⟩
 
-@[expose] def FidgetParams.clearanceZ (p : FidgetParams) : Int := p.lat p.hubH + p.lat p.clearAbove
+def FidgetParams.clearanceZ (p : FidgetParams) : Int := p.lat p.hubH + p.lat p.clearAbove
 
 /-- The contour around hub ∪ lug at the tool offset (radius plus stock), closed. -/
-@[expose] def FidgetParams.contour (p : FidgetParams) : List (Int × Int) :=
+def FidgetParams.contour (p : FidgetParams) : List (Int × Int) :=
   let off := p.lat p.toolOffset
   let pts := (circleDirs 64).map fun d =>
     let ρ := searchRho (p.lat p.lugX) 0 (p.lat p.lugR + off) d 400 ((p.lat p.hubR : Int) + off)
@@ -376,16 +378,16 @@ quadrants: `4M` exact directions in angular order. -/
   pts ++ pts.take 1
 
 /-- Tip heights of the Z-level passes, top down to the base. -/
-@[expose] def FidgetParams.zLevels (p : FidgetParams) : List Int :=
+def FidgetParams.zLevels (p : FidgetParams) : List Int :=
   (List.range (p.hubH / p.stepDown)).map fun (i : Nat) =>
     (p.lat p.hubH : Int) - ((i : Int) + 1) * (p.lat p.stepDown : Int)
 
-@[expose] def FidgetParams.zPass (p : FidgetParams) (z : Int) : CamPass :=
+def FidgetParams.zPass (p : FidgetParams) (z : Int) : CamPass :=
   { axis := vertAxis, pts := p.contour.map fun q => (q.1, q.2, z) }
 
 /-- The top-edge pass over quadrant `q`: ball centre at the tool offset from the edge along the
 tilted axis, pushed out radially where the lug is. -/
-@[expose] def FidgetParams.tiltPass (p : FidgetParams) (q : Nat) : CamPass :=
+def FidgetParams.tiltPass (p : FidgetParams) (q : Nat) : CamPass :=
   let all := circleDirs 64
   let src := if q == 0 then all.drop (3 * 64) ++ all.take (3 * 64) else all
   let u := tiltAxis q
@@ -400,12 +402,12 @@ tilted axis, pushed out radially where the lug is. -/
       let cz := (p.lat p.hubH : Int) + 4 * off / 5
       (cx - r * u.ux / u.n, cy - r * u.uy / u.n, cz - r * u.uz / u.n) }
 
-@[expose] def FidgetParams.passes (p : FidgetParams) : List CamPass :=
+def FidgetParams.passes (p : FidgetParams) : List CamPass :=
   p.zLevels.map p.zPass ++ [p.tiltPass 0, p.tiltPass 1, p.tiltPass 2, p.tiltPass 3]
 
 /-- Every lattice point the tip passes through in a pass under the post's moves: plunge from the
 clearance plane, the cut polyline, retract to the clearance plane. -/
-@[expose] def FidgetParams.certPath (p : FidgetParams) (pass : CamPass) : List CLPoint :=
+def FidgetParams.certPath (p : FidgetParams) (pass : CamPass) : List CLPoint :=
   match pass.pts with
   | [] => []
   | q :: rest =>
@@ -422,11 +424,11 @@ facts the theorem there needs (the part lies in its box; every certified move ca
 axis). -/
 
 /-- A Z-cylinder's rational bounding box. -/
-@[expose] def cylBoxQ (cx cy : Int) (r : Nat) (z0 z1 : Int) : QBox :=
+def cylBoxQ (cx cy : Int) (r : Nat) (z0 z1 : Int) : QBox :=
   ⟨⟨(cx : Rat) - ((r : Int) : Rat), (cx : Rat) + ((r : Int) : Rat)⟩,
    ⟨(cy : Rat) - ((r : Int) : Rat), (cy : Rat) + ((r : Int) : Rat)⟩, ⟨(z0 : Rat), (z1 : Rat)⟩⟩
 
-@[expose] def QBox.hullQ (A B : QBox) : QBox :=
+def QBox.hullQ (A B : QBox) : QBox :=
   ⟨⟨min A.x.lo B.x.lo, max A.x.hi B.x.hi⟩, ⟨min A.y.lo B.y.lo, max A.y.hi B.y.hi⟩,
    ⟨min A.z.lo B.z.lo, max A.z.hi B.z.hi⟩⟩
 
@@ -474,7 +476,7 @@ theorem hullQ_right (A B : QBox) (x y z : Rat) (h : B.contains x y z) : (QBox.hu
   dsimp only
   refine ⟨⟨?_, ?_⟩, ⟨?_, ?_⟩, ⟨?_, ?_⟩⟩ <;> grind
 
-@[expose] def FidgetParams.partBoxQ (p : FidgetParams) : QBox :=
+def FidgetParams.partBoxQ (p : FidgetParams) : QBox :=
   QBox.hullQ (cylBoxQ 0 0 (p.lat p.hubR) 0 (p.lat p.hubH))
     (cylBoxQ (p.lat p.lugX) 0 (p.lat p.lugR) 0 (p.lat p.hubH))
 
@@ -494,23 +496,23 @@ theorem FidgetParams.part_in_boxQ (p : FidgetParams) (x y z : Rat) (h : evalFRep
   · exact hullQ_right _ _ x y z (frepCylZ_in_boxQ _ _ _ _ _ x y z h1)
 
 /-- The moves of a pass the control interpolates: consecutive certified points. -/
-@[expose] def FidgetParams.passMoves (p : FidgetParams) (pass : CamPass) : List (Pt3 × Pt3) :=
+def FidgetParams.passMoves (p : FidgetParams) (pass : CamPass) : List (Pt3 × Pt3) :=
   ((p.certPath pass).zip (p.certPath pass).tail).map fun m => ((m.1.x, m.1.y, m.1.z), (m.2.x, m.2.y, m.2.z))
 
 /-- The certificate's resolution: the same part on a 5 µm lattice, so the k-d boxes can shrink below
 the 100 µm of the tool path without leaving the integers. -/
-@[expose] def camParams : FidgetParams := { fidgetParams with unit := 5 }
+def camParams : FidgetParams := { fidgetParams with unit := 5 }
 
 /-- Tool-path lattice units (100 µm) to certificate units (5 µm). -/
-@[expose] def camScale : Int := 20
+def camScale : Int := 20
 
-@[expose] def scaleMove (m : Pt3 × Pt3) : Pt3 × Pt3 :=
+def scaleMove (m : Pt3 × Pt3) : Pt3 × Pt3 :=
   ((camScale * m.1.1, camScale * m.1.2.1, camScale * m.1.2.2),
    (camScale * m.2.1, camScale * m.2.2.1, camScale * m.2.2.2))
 
 /-- The object of `cam-gouge@1` for the fidget program: each pass's moves on its axis, in 5 µm
 units, against the part and the cutter at 5 µm. -/
-@[expose] def fidgetCamObj : CamGougeObj :=
+def fidgetCamObj : CamGougeObj :=
   { part := camParams.part
   , box := camParams.partBox
   , toolR := camParams.lat camParams.toolR
@@ -530,12 +532,12 @@ theorem FidgetParams.certPath_axis (p : FidgetParams) (pass : CamPass) (c : CLPo
   · obtain ⟨t, _, rfl⟩ := List.mem_map.mp h
     rfl
 
-@[expose] def FidgetParams.postConfig (p : FidgetParams) : PostConfig :=
+def FidgetParams.postConfig (p : FidgetParams) : PostConfig :=
   { clearanceZ := p.clearanceZ, plungeFeed := p.plungeFeed, cutFeed := p.cutFeed
   , spindleRpm := p.rpm, tool := 1, unitMicron := p.unit }
 
 /-- The program `apps/fidget-cam/build/impeller_5axis.ngc` is this string. -/
-@[expose] def impeller5AxisNgc : String :=
+def impeller5AxisNgc : String :=
   postNgc fidgetParams.postConfig "Objective Bend fidget part: Z-level contours and 3+2 top-edge passes"
     fidgetParams.passes
 
@@ -551,7 +553,7 @@ The bore radius is authored twice: `2.0 mm` as a local opinion (`ConformalBoreLo
 `1.6 mm` through a reference (`HelicalChannelReferenceSpec`). Lowered through `composePrimToTerm`,
 the local opinion wins in either layer order, and it is the value the `.obend` composition reduced. -/
 /-- The cooling channel's prim, authoring the bore radius through arc `arc`. -/
-@[expose] def boreLayer (name : String) (arc : UsdArcKind) (v : Term) : SdfLayer :=
+def boreLayer (name : String) (arc : UsdArcKind) (v : Term) : SdfLayer :=
   { layerId := name
   , prims := [{ path := ["Factory", "ImpellerAssy", "CoolingChannel"], arc := arc
               , fields := [("boreRadiusUm", v)] }] }
@@ -584,7 +586,7 @@ theorem fidgetCam_liverps_bore_radius :
 
 /-- Compile a single `SsaTapeOp` into an `RtlExpr` reading `(in_x, in_y, in_z)` from ports `0, 1, 2`
 and earlier SSA registers at `wireOffset + r`. -/
-@[expose] def compileSsaOpToRtlExpr (wireOffset : Nat) : SsaTapeOp → RtlExpr
+def compileSsaOpToRtlExpr (wireOffset : Nat) : SsaTapeOp → RtlExpr
   | .const c        => .const (BitVec.ofInt 64 c)
   | .varX           => .inputPort 0
   | .varY           => .inputPort 1
@@ -602,7 +604,7 @@ and earlier SSA registers at `wireOffset + r`. -/
     let w2 := RtlExpr.wireRef (wireOffset + r2)
     .mux (.alu .slt w1 w2) w2 w1
 
-@[expose] def compileSsaTapeToRtlWires (wireOffset : Nat) (tag : String) (tape : List SsaTapeOp) :
+def compileSsaTapeToRtlWires (wireOffset : Nat) (tag : String) (tape : List SsaTapeOp) :
     List WireAssign :=
   tape.zipIdx.map fun (op, idx) =>
     { wireIdx := wireOffset + idx
@@ -610,16 +612,16 @@ and earlier SSA registers at `wireOffset + r`. -/
     , expr    := compileSsaOpToRtlExpr wireOffset op }
 
 /-- A box inside the hub, one at the lug tip, one across the bore (lattice units). -/
-@[expose] def impellerCenterBox : Box3D := { xIv := ⟨40, 60⟩, yIv := ⟨-10, 10⟩, zIv := ⟨30, 50⟩ }
-@[expose] def impellerBossBox : Box3D := { xIv := ⟨112, 124⟩, yIv := ⟨-5, 5⟩, zIv := ⟨30, 50⟩ }
-@[expose] def impellerBoreBox : Box3D := { xIv := ⟨-50, -30⟩, yIv := ⟨-8, 8⟩, zIv := ⟨30, 50⟩ }
+def impellerCenterBox : Box3D := { xIv := ⟨40, 60⟩, yIv := ⟨-10, 10⟩, zIv := ⟨30, 50⟩ }
+def impellerBossBox : Box3D := { xIv := ⟨112, 124⟩, yIv := ⟨-5, 5⟩, zIv := ⟨30, 50⟩ }
+def impellerBoreBox : Box3D := { xIv := ⟨-50, -30⟩, yIv := ⟨-8, 8⟩, zIv := ⟨30, 50⟩ }
 
-@[expose] def compactFor (B : Box3D) : List SsaTapeOp :=
+def compactFor (B : Box3D) : List SsaTapeOp :=
   compactSsaTape (pruneSsaTapeForBox B impellerSsaTape) (impellerSsaTape.length - 1)
 
-@[expose] def impellerCenterCompactedTape : List SsaTapeOp := compactFor impellerCenterBox
-@[expose] def impellerBossCompactedTape : List SsaTapeOp := compactFor impellerBossBox
-@[expose] def impellerBoreCompactedTape : List SsaTapeOp := compactFor impellerBoreBox
+def impellerCenterCompactedTape : List SsaTapeOp := compactFor impellerCenterBox
+def impellerBossCompactedTape : List SsaTapeOp := compactFor impellerBossBox
+def impellerBoreCompactedTape : List SsaTapeOp := compactFor impellerBoreBox
 
 /-- A pruned and compacted tape agrees with the solid on every point of its box. -/
 theorem compactFor_sound (B : Box3D) (x y z : Int) (h : B.contains x y z) :
@@ -631,7 +633,7 @@ theorem compactFor_sound (B : Box3D) (x y z : Int) (h : B.contains x y z) :
 flag for a vertical ball end mill of the certified grown radius with its tip at `(in_tx, in_ty,
 in_tz)` (lattice units throughout). The proof is `Obend.Apps.FidgetCamCert`; this module is a
 fast re-check of tool positions. -/
-@[expose] def fidgetImpellerVoxelCamRtlModule : RtlModule :=
+def fidgetImpellerVoxelCamRtlModule : RtlModule :=
   let fullWires   := compileSsaTapeToRtlWires 0 "full" impellerSsaTape
   let off1        := fullWires.length
   let centerWires := compileSsaTapeToRtlWires off1 "center" impellerCenterCompactedTape
@@ -687,7 +689,7 @@ fast re-check of tool positions. -/
       , { name := "out_solid_voxel_count",   expr := .regRead 1 }
       , { name := "out_gouge_violations",    expr := .regRead 2 } ] }
 
-@[expose] def mkFidgetCamRtlInputs (x y z tx ty tz : Int) : Nat → BitVec 64
+def mkFidgetCamRtlInputs (x y z tx ty tz : Int) : Nat → BitVec 64
   | 0 => BitVec.ofInt 64 x
   | 1 => BitVec.ofInt 64 y
   | 2 => BitVec.ofInt 64 z

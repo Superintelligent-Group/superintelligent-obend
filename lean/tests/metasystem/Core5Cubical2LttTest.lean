@@ -2,26 +2,8 @@ import Obend.Core.Cubical2LTT
 import Obend.AssertAxioms
 import Obend.Tactic.Tooth
 
-/-!
-# `tests/metasystem/Core5Cubical2LttTest.lean` — Verification & `#tooth` Suite for `Obend.Core.Cubical2LTT`
+/-! Ternary face ideals, word refinement, Kan tubes, staged erasure, and adapter mutation tests. -/
 
-End-to-end inhabitedness witnesses, refutations, cross-organ `Core5` welds, `#tooth` mutation kills,
-and strict `0 Classical.choice` / `0 sorryAx` / `0` closed-theorem audit covering:
-1. `CofibLUT16` (`BitVec 16`) Cavallo–Sattler 4-variable cofibration lattice, SWAR `revDim` / `substDim`,
-   semantic completeness (`entails_iff_pointwise`), ternary interior `evalSubcube`, and
-   `CofibSyntax4.boundary_ne_top_at_interior` (`∂𝕀 ≠ 𝕀` at `CubePt4.interior4`).
-2. `Cube1`, `Cube2`, `OpenBox2`, `hcomLid`, `hcomFill2`, and `coeKan` instantiated across:
-   - `TorsorPt` path groupoids (`KanGroupoid`),
-   - `EnclosureVec2` 2D Lipschitz enclosure tubes (`evalAffineBox2`), and
-   - `PackagedStepSys` quantitative `Simulates` machines (`hcomLid_stepSys_trace_safe`).
-3. Realizability 2LTT (`StageGrade`, `realizer_stage_erases_zero_ghosts`) and quantitative
-   bidirectional `AdapTT` adapters (`QuantAdapter`, `IsoAdapter`, `AdapterChain`, `fuseAdapters_sound`,
-   `castAdapter_id_elim`, `castAdapter_inv_cancel`, `fuseAdapters_gradedTriple`).
-4. Cross-organ `Core5` welds to `Obend.Category.Refines` (`adapter_induces_graded_refines`),
-   `Obend.Logic.SuperRefines` (`adapter_superRefines_vertical_weld`), and
-   `Obend.Repair.DeltaLensRenew` (`hcom_repairs_broken_commuting_square`).
-5. Eight `#tooth` mutation kills + `#assert_axioms_tree` + strict `0 Classical.choice` audit.
--/
 
 namespace Obend.Tests.Core5Cubical2LttTest
 
@@ -31,55 +13,52 @@ open Obend.Repair
 open Obend.Core.Cubical2LTT
 
 set_option autoImplicit false
+set_option maxRecDepth 4096
 
--- ============================================================================
--- 1. `CofibLUT16` Lattice, SWAR Operations & Interior Non-Collapse (`∂𝕀 ≠ 𝕀`)
--- ============================================================================
-
-def openBoxCofib : CofibLUT16 :=
-  ((CofibLUT16.dimEq0 0).join (CofibLUT16.dimEq1 0)).join (CofibLUT16.dimEq0 1)
-
-def originVtx : Vertex4 := ⟨false, false, false, false⟩
-def lidFreeVtx : Vertex4 := ⟨false, true, false, false⟩
-def topRightVtx : Vertex4 := ⟨true, true, false, false⟩
-
-#guard CofibLUT16.evalCofib openBoxCofib originVtx == true
-#guard CofibLUT16.evalCofib openBoxCofib lidFreeVtx == true
-#guard CofibLUT16.evalCofib openBoxCofib topRightVtx == true
--- Refutation: dim 0 = 0 does NOT entail dim 0 = 1, and open-box (i₀=0 ∨ i₁=0) misses (1, 1, 0, 0)
-#guard (CofibLUT16.dimEq0 0).entails (CofibLUT16.dimEq1 0) == false
-#guard CofibLUT16.evalCofib ((CofibLUT16.dimEq0 0).join (CofibLUT16.dimEq0 1)) topRightVtx == false
-
--- SWAR De Morgan reversal & substitution checks
-#guard CofibLUT16.revDim 0 (CofibLUT16.dimEq0 0) == CofibLUT16.dimEq1 0
-#guard CofibLUT16.revDim 2 (CofibLUT16.dimEq1 2) == CofibLUT16.dimEq0 2
-#guard CofibLUT16.substDim 1 false (CofibLUT16.dimEq0 1) == CofibLUT16.top
-#guard CofibLUT16.substDim 1 true (CofibLUT16.dimEq0 1) == CofibLUT16.bot
-
--- Interior face check: `dimEq0 0` holds on face `(0, *, *, *)`, fails at `(*, *, *, *)`
-#guard CofibLUT16.evalSubcube (CofibLUT16.dimEq0 0) ⟨.ep0, .interior, .interior, .interior⟩ == true
-#guard CofibLUT16.evalSubcube (CofibLUT16.dimEq0 0) CubePt4.interior4 == false
-#guard (CofibSyntax4.join (.dim0 0) (.dim1 0)).evalCubePt CubePt4.interior4 == false
-#guard CofibSyntax4.top.evalCubePt CubePt4.interior4 == true
-
-example (φ ψ χ : CofibLUT16) (d : Fin 4) (pt : Vertex4) :
+-- The interior is bit 80, and the disconnected endpoint boundary omits it.
+def openBoxCofib : FaceIdeal4 := ((FaceIdeal4.dim0 0).join (.dim1 0)).join (.dim0 1)
+def origin : CubePt4 := ⟨.ep0,.ep0,.ep0,.ep0⟩
+#guard CubePt4.interior4.toIdx.val == 80
+#guard (List.finRange 81).all (fun i => (CubePt4.ofIdx i).toIdx == i)
+#guard openBoxCofib.eval origin
+#guard !openBoxCofib.eval CubePt4.interior4
+#guard !(FaceIdeal4.dim0 0).entails (.dim1 0)
+#guard FaceIdeal4.revDim 2 (.dim1 2) == FaceIdeal4.dim0 2
+#guard FaceIdeal4.substDim 1 .ep0 (.dim0 1) == FaceIdeal4.top
+#guard FaceIdeal4.substDim 1 .ep1 (.dim0 1) == FaceIdeal4.bot
+#guard FaceIdeal4.substDim 1 .interior ((FaceIdeal4.dim0 1).join (.dim1 1)) == FaceIdeal4.bot
+#guard checkSubcomplex openBoxCofib
+#guard !checkSubcomplex interiorOnlyMask
+#guard (List.finRange 4).all fun d =>
+  (FaceIdeal4Exec.dim0Exec d).toSpec == FaceIdeal4.dim0 d &&
+  (FaceIdeal4Exec.dim1Exec d).toSpec == FaceIdeal4.dim1 d
+#guard FaceIdeal4Exec.evalExec FaceIdeal4Exec.topExec CubePt4.interior4
+#guard !FaceIdeal4Exec.evalExec (FaceIdeal4Exec.dim0Exec 0) CubePt4.interior4
+#guard FaceIdeal4Exec.entailsExec (FaceIdeal4Exec.dim0Exec 0) FaceIdeal4Exec.topExec
+#guard !FaceIdeal4Exec.entailsExec FaceIdeal4Exec.topExec (FaceIdeal4Exec.dim0Exec 0)
+#guard (FaceIdeal4Exec.ofSpec openBoxCofib).toSpec == openBoxCofib
+#guard (FaceIdeal4Exec.meetExec (FaceIdeal4Exec.dim0Exec 0) (FaceIdeal4Exec.dim1Exec 0)).toSpec == FaceIdeal4.bot
+#guard (FaceIdeal4Exec.joinExec (FaceIdeal4Exec.dim0Exec 0) (FaceIdeal4Exec.dim1Exec 0)).toSpec != FaceIdeal4.top
+example (φ ψ χ : FaceIdeal4) (d : Fin 4) :
     φ.meet (ψ.join χ) = (φ.meet ψ).join (φ.meet χ) ∧
     φ.join (ψ.meet χ) = (φ.join ψ).meet (φ.join χ) ∧
-    φ.meet (φ.join ψ) = φ ∧
-    φ.entails φ = true ∧
-    CofibLUT16.evalSubcube φ (CubePt4.ofVertex pt) = CofibLUT16.evalCofib φ pt ∧
-    (CofibSyntax4.join (.dim0 d) (.dim1 d)).evalCubePt CubePt4.interior4 = false :=
-  ⟨CofibLUT16.meet_distrib_join φ ψ χ,
-   CofibLUT16.join_distrib_meet φ ψ χ,
-   CofibLUT16.absorb_meet_join φ ψ,
-   CofibLUT16.entails_refl φ,
-   CofibLUT16.evalSubcube_ofVertex φ pt,
-   (CofibSyntax4.boundary_ne_top_at_interior d).1⟩
-
-example : (CofibLUT16.dimEq0 0).entails openBoxCofib = true :=
-  (CofibLUT16.entails_iff_pointwise (CofibLUT16.dimEq0 0) openBoxCofib).mpr fun pt h => by
-    rw [openBoxCofib, CofibLUT16.evalCofib_join, CofibLUT16.evalCofib_join, h,
-        Bool.true_or, Bool.true_or]
+    (FaceIdeal4.dim0 d).join (.dim1 d) ≠ FaceIdeal4.top :=
+  ⟨FaceIdeal4.meet_distrib_join φ ψ χ, FaceIdeal4.join_distrib_meet φ ψ χ, FaceIdeal4.boundary_ne_top d⟩
+example (f : CofibSyntax4) : IsSubcomplex f.denote := CofibSyntax4.denote_isSubcomplex f
+example (φ : FaceIdeal4) : (FaceIdeal4Exec.ofSpec φ).WellFormed := FaceIdeal4Exec.ofSpec_wellFormed φ
+example : (FaceIdeal4.dim0 0).entails openBoxCofib = true :=
+  (FaceIdeal4.entails_iff_pointwise _ _).2 fun p h => by simp [openBoxCofib, h]
+def constantWalls : List (FaceCube4 × Nat) := [(OpenBox2.bottomFace,7), (OpenBox2.leftFace,7), (OpenBox2.rightFace,7)]
+def conflictingWalls : List (FaceCube4 × Nat) := [(OpenBox2.bottomFace,7), (OpenBox2.rightFace,8)]
+#guard checkTubeWallAgreement (fun _ (x : Nat) => x) constantWalls
+#guard !checkTubeWallAgreement (fun _ (x : Nat) => x) conflictingWalls
+#guard checkTubeWallAgreement (fun _ (x : Nat) => x) [(OpenBox2.leftFace,7),(OpenBox2.rightFace,8)]
+#guard meetFace OpenBox2.leftFace OpenBox2.rightFace == none
+#guard meetFace OpenBox2.leftFace OpenBox2.bottomFace == some ⟨.ep0,.ep0,.interior,.interior⟩
+example : ∃ f, meetFace OpenBox2.bottomFace OpenBox2.leftFace = some f ∧
+    (subcubeIdeal f).eval origin = true ∧ (7 : Nat) = 7 :=
+  checkTubeWallAgreement_sound (fun _ (x : Nat) => x) constantWalls (by decide)
+    OpenBox2.bottomFace OpenBox2.leftFace origin 7 7 (by decide) (by decide) (by decide) (by decide)
 
 -- ============================================================================
 -- 2. Cubical Paths, 2-Cubes, Kan `hcom2` & `coeKan` Across 3 Concrete Carriers
@@ -97,6 +76,10 @@ def shiftRight : TorsorShift t10 t11 := ⟨8, rfl⟩
 
 def torsorBox : OpenBox2 TorsorPt := ⟨t00, t10, t01, t11, shiftBot, shiftLeft, shiftRight⟩
 def torsorSquare : Cube2 TorsorPt := hcomFill2 torsorBox
+
+#guard OpenBox2.checkKanTubeWalls torsorBox.bottom torsorBox.left torsorBox.right
+#guard !(OpenBox2.hcomFillTube? [(OpenBox2.leftFace,torsorBox.left),(OpenBox2.rightFace,torsorBox.right)]).isSome
+#guard (OpenBox2.hcomFillTube? [(OpenBox2.bottomFace,torsorBox.bottom),(OpenBox2.leftFace,torsorBox.left),(OpenBox2.rightFace,torsorBox.right)]).isSome
 
 -- Missing top lid synthesized by `hcomLid` has exact shift `6 + 7 + 8 = 21` (`4 + 21 = 25`)
 #guard (hcomLid torsorBox).ep0 == t01
@@ -439,24 +422,21 @@ example :
   exact ⟨hRep.2.2.1.symm, hRep.2.2.2.2.1, hRep.2.2.2.2.2.1, hRep.2.2.2.2.2.2.1⟩
 
 -- ============================================================================
--- 5. `#tooth` Mutation Kills Across All Subsystems (8 Kills ≥ 6 Required)
+-- 5. Mutation sensitivity across the lattice, execution refinement, tubes, and adapters
 -- ============================================================================
 
--- Kill 1: Vacuously accepting `CofibLUT16.entails` breaks `entails_iff_pointwise`!
-#tooth Obend.Core.Cubical2LTT.CofibLUT16.entails_iff_pointwise by mutation
-  Obend.Core.Cubical2LTT.CofibLUT16.entails := fun _ _ => true
-
--- Kill 2: Dropping SWAR bit-reversal in `revDim` breaks `evalCofib_revDim`!
-#tooth Obend.Core.Cubical2LTT.CofibLUT16.evalCofib_revDim by mutation
-  Obend.Core.Cubical2LTT.CofibLUT16.revDim := fun _ φ => φ
-
--- Kill 3: Dropping SWAR endpoint restriction in `substDim` breaks `evalCofib_substDim`!
-#tooth Obend.Core.Cubical2LTT.CofibLUT16.evalCofib_substDim by mutation
-  Obend.Core.Cubical2LTT.CofibLUT16.substDim := fun _ _ φ => φ
-
--- Kill 4: Collapsing `CofibSyntax4.toLUT16` to `bot` breaks `toLUT16_agrees_on_vertices`!
-#tooth Obend.Core.Cubical2LTT.CofibSyntax4.toLUT16_agrees_on_vertices by mutation
-  Obend.Core.Cubical2LTT.CofibSyntax4.toLUT16 := fun _ => Obend.Core.Cubical2LTT.CofibLUT16.bot
+#tooth FaceIdeal4.entails_iff_pointwise by mutation FaceIdeal4.entails := fun _ _ => true
+#tooth FaceIdeal4.eval_revDim by mutation FaceIdeal4.revDim := fun _ φ => φ
+#tooth FaceIdeal4.eval_substDim by mutation FaceIdeal4.substDim := fun _ _ φ => φ
+#tooth CofibSyntax4.denote_eval by mutation CofibSyntax4.denote := fun _ => FaceIdeal4.bot
+#tooth FaceIdeal4.dim0_meet_dim1 by mutation FaceIdeal4.dim1 := FaceIdeal4.dim0
+#tooth checkSubcomplex_iff by mutation checkSubcomplex := fun _ => true
+#tooth FaceIdeal4Exec.toSpec_ofSpec by mutation FaceIdeal4Exec.ofSpec := fun _ => ⟨0,0⟩
+#tooth FaceIdeal4Exec.evalExec_eq by mutation FaceIdeal4Exec.evalExec := fun _ _ => false
+#tooth FaceIdeal4Exec.entailsExec_eq by mutation FaceIdeal4Exec.entailsExec := fun _ _ => true
+#tooth eval_subcubeIdeal_and_iff_meetFace by mutation meetFace := fun _ _ => none
+#tooth checkTubeWallAgreement_sound by mutation checkTubeWallAgreement := fun _ _ _ => true
+#tooth OpenBox2.checkKanTubeWalls_iff by mutation OpenBox2.checkKanTubeWalls := fun _ _ _ => true
 
 -- Kill 5: Replacing `hcomLid` with a degenerate constant `refl` path breaks `hcomFill2_agrees_on_open_box_boundary`!
 #tooth Obend.Core.Cubical2LTT.hcomFill2_agrees_on_open_box_boundary by mutation
@@ -480,23 +460,12 @@ example :
 
 #guard (chainGrade multiscaleChain).errorNum == 5
 #guard (chainGrade (fuseAdapters multiscaleChain)).errorNum == 5
-#guard CofibCube27.eval (CofibCube27.join (CofibCube27.dimEq0 0) (CofibCube27.dimEq1 0)) (2,2,2) == false
-#guard CofibCube27.eval CofibCube27.top (2,2,2) == true
-#guard CofibCube27.substDim 1 2 (CofibCube27.join (CofibCube27.dimEq0 1) (CofibCube27.dimEq1 1)) == CofibCube27.bot
-example (d : Fin 3) : CofibCube27.join (CofibCube27.dimEq0 d) (CofibCube27.dimEq1 d) ≠ CofibCube27.top :=
-  CofibCube27.boundary_strictly_sub_top d
 private def amplifying : AdapterChain := [.affine 1 0 2 1, .affine (-3) 4 1 2]
 #guard fuseAdapters amplifying == [.affine (-3) 4 7 2]
 example : ApproxRun amplifying 10 (-33) :=
   .cons (y := 12) (by decide) (.cons (y := -33) (by decide) (.nil _))
 example : ((-33 : Int)-evalChain (fuseAdapters amplifying) 10).natAbs ≤ (chainGrade (fuseAdapters amplifying)).errorNum :=
   fuseAdapters_approx_sound amplifying 10 (-33) (.cons (y := 12) (by decide) (.cons (y := -33) (by decide) (.nil _)))
-#tooth CofibCube27.boundary_strictly_sub_top by
-  mutation CofibCube27.dimEq1 := fun d => ~~~(CofibCube27.dimEq0 d)
-#tooth CofibCube27.eval_substDim by
-  mutation CofibCube27.substDim := fun _ _ a => a
-#tooth CofibSyntax.toCube27_sound by
-  mutation CofibSyntax.toCube27 := fun _ => CofibCube27.bot
 #tooth fuseAdapters_approx_sound by
   mutation affineError := fun _ inner outer => inner+outer
 example : ((-33 : Int)-evalChain amplifying 10).natAbs > 2+1 := by decide

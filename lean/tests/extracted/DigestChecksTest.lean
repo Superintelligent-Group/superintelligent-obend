@@ -69,4 +69,23 @@ theorem sealed_known_answer :
 
 #assert_compiled sealed_known_answer
 
+open Obend.Core.Digest in
+#guard (DigestWords4.ofDigest256 (0x123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0#256)).toDigest256 ==
+  0x123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0#256
+open Obend.Core.Digest in
+#guard (preimage256Exec ⟨1,2,3,4⟩ ⟨5,6,7,8⟩).size == 78
+open Obend.Core.Digest in
+#guard (preimage256Exec ⟨1,2,3,4⟩ ⟨5,6,7,8⟩).data.toList ==
+  preimage256 (DigestWords4.toDigest256 ⟨1,2,3,4⟩) (DigestWords4.toDigest256 ⟨5,6,7,8⟩)
+open Obend.Core.Digest in
+#guard digest256 1 2 != digest256 1 3
+
+open Obend.Core.Digest in
+#guard DigestWords4.ofByteArray32 (DigestWords4.toByteArray32 ⟨0xffffffffffffffff,0x1122334455667788,0,1⟩) ==
+  ⟨0xffffffffffffffff,0x1122334455667788,0,1⟩
+open Obend.Core.Digest in
+#guard deployedHash256 ⟨#[0,1,2,3,255]⟩ == deployed256 [0,1,2,3,255]
+open Obend.Core.Digest in
+#guard (digest256Exec ⟨1,2,3,4⟩ ⟨5,6,7,8⟩).toDigest256 ==
+  digest256 (DigestWords4.toDigest256 ⟨1,2,3,4⟩) (DigestWords4.toDigest256 ⟨5,6,7,8⟩)
 end Obend.Core.Proofs.DigestChecks

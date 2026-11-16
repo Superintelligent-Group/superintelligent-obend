@@ -83,7 +83,7 @@ Formalizes and verifies **Flagship Application #2** (`apps/foc-hil/`) from
    (`foc_hil_crossPackage_dpr_hotswap_and_cone_survives`).
 -/
 
-@[expose] public section
+public section
 
 namespace Obend.Apps.FocHil
 
@@ -244,34 +244,28 @@ def focEncodeIntervalQuery (q : IntervalQuery) : String :=
   "{\"kind\":\"interval@1\",\"wire\":\"" ++ wire ++ "\"}"
 
 def focDecodeIntervalQuery (s : String) : Except String IntervalQuery :=
-  if s == "{}" || s == "" then
-    .error "invalid IntervalQuery JSON: missing required fields"
-  else
-    match focExtractJsonStringField? "wire" s with
-    | some wire =>
-      match focSplitChar '|' wire with
-      | [exprW, envW, bndW] =>
-        match focDecodeRealExprTokens 64 (focSplitChar '~' exprW),
-              focDecodeIntervalEnvWire? envW,
-              focDecodeIntervalWire? bndW with
-        | some (expr, []), some env, some claimedBound => .ok { expr, env, claimedBound }
-        | _, _, _ => .error "invalid IntervalQuery wire fields"
-      | _ => .error "invalid IntervalQuery wire envelope"
-    | none => .error "invalid IntervalQuery JSON: missing wire field"
+  match focExtractJsonStringField? "wire" s with
+  | some wire =>
+    match focSplitChar '|' wire with
+    | [exprW, envW, bndW] =>
+      match focDecodeRealExprTokens 64 (focSplitChar '~' exprW),
+            focDecodeIntervalEnvWire? envW,
+            focDecodeIntervalWire? bndW with
+      | some (expr, []), some env, some claimedBound => .ok { expr, env, claimedBound }
+      | _, _, _ => .error "invalid IntervalQuery wire fields"
+    | _ => .error "invalid IntervalQuery wire envelope"
+  | none => .error "invalid IntervalQuery JSON: missing wire field"
 
 def focEncodeIntervalCert : IntervalCert → String
   | .direct => "{\"kind\":\"direct\",\"wire\":\"D\"}"
   | .counterexample _ => "{\"kind\":\"counterexample\",\"wire\":\"X\"}"
 
 def focDecodeIntervalCert (s : String) : Except String IntervalCert :=
-  if s == "{}" || s == "" then
-    .error "invalid IntervalCert JSON: missing required fields"
-  else
-    match focExtractJsonStringField? "wire" s with
-    | some "D" => .ok .direct
-    | _ => .error "invalid IntervalCert wire"
+  match focExtractJsonStringField? "wire" s with
+  | some "D" => .ok .direct
+  | _ => .error "invalid IntervalCert wire"
 
-def focBadIntervalQuery : IntervalQuery where
+@[expose] def focBadIntervalQuery : IntervalQuery where
   expr         := .var "x"
   env          := [("x", ⟨0, 10⟩)]
   claimedBound := ⟨0, 2⟩
@@ -302,62 +296,106 @@ structure FocTaylorTrigQuery where
   claimedBound : Interval
   deriving DecidableEq, Repr
 
+@[expose] def FocTaylorTrigFragment (q : FocTaylorTrigQuery) : Prop :=
+  q.domain.lo ≤ q.domain.hi ∧ (-1 : CanonicalRat) ≤ q.domain.lo ∧
+  q.domain.hi ≤ 1 ∧ q.claimedBound.lo ≤ q.claimedBound.hi
+instance (q : FocTaylorTrigQuery) : Decidable (FocTaylorTrigFragment q) :=
+  by unfold FocTaylorTrigFragment; infer_instance
+def focTrigModel (q : FocTaylorTrigQuery) : TaylorModel :=
+  tmAdd (tmCosCertified q.domain) (tmSinCertified q.domain)
+/-- The certificate identifies the certified trig polynomial and encloses its full interval
+range. Pointwise enclosure is stated separately below, including every remainder value. -/
+def FocTaylorTrigMeaning (q : FocTaylorTrigQuery) (tm : TaylorModel) : Prop :=
+  FocTaylorTrigFragment q ∧ tm = focTrigModel q ∧
+  q.claimedBound.lo ≤ (evalTaylorModelRange tm).lo ∧
+  (evalTaylorModelRange tm).hi ≤ q.claimedBound.hi
+private theorem focPoint_mem_range (tm : TaylorModel) (x y : CanonicalRat)
+    (hx : x ∈ tm.domain) (hy : y ∈ evalTaylorModelPoint tm x) : y ∈ evalTaylorModelRange tm := by
+  have hp := evalTaylorPolyInterval_mem tm.coeffs tm.deltaDomain (TaylorModel.deltaDomain_mem tm hx)
+  simp only [evalTaylorModelPoint, evalTaylorModelRange, Interval.add, Interval.ofPoint, Interval.mem_iff] at *
+  grind
+theorem focTaylorTrigMeaning_encloses {q : FocTaylorTrigQuery} {tm : TaylorModel}
+    (h : FocTaylorTrigMeaning q tm) (x y : CanonicalRat) (hx : x ∈ q.domain)
+    (hy : y ∈ evalTaylorModelPoint (focTrigModel q) x) :
+    tm.domain = q.domain ∧ y ∈ evalTaylorModelPoint tm x ∧ y ∈ q.claimedBound := by
+  obtain ⟨hv,rfl,hlo,hhi⟩ := h
+  have hd : (focTrigModel q).domain = q.domain := by
+    unfold focTrigModel tmAdd
+    dsimp only
+    unfold tmCosCertified
+    split <;> rfl
+  have hr := focPoint_mem_range (focTrigModel q) x y (hd ▸ hx) hy
+  exact ⟨hd,hy,by rw [Interval.mem_iff] at hr ⊢; exact ⟨Rat.le_trans hlo hr.1,Rat.le_trans hr.2 hhi⟩⟩
 def verifyFocTaylorTrigCert (q : FocTaylorTrigQuery) (tm : TaylorModel) : Bool :=
-  decide (q.domain.lo ≤ q.domain.hi) &&
-  q.domain.isSubintervalOf ⟨-1, 1⟩ &&
-  (let compTm := tmAdd (tmCosCertified q.domain) (tmSinCertified q.domain)
-   (compTm == tm) && (evalTaylorModelRange tm).isSubintervalOf q.claimedBound)
-
+  decide (FocTaylorTrigFragment q) && (focTrigModel q == tm) &&
+    (evalTaylorModelRange tm).isSubintervalOf q.claimedBound
+inductive FocTaylorTrigClause where
+  | emptyOrOutOfRangeDomain | invertedClaimedBound | enclosureViolation
+  deriving DecidableEq, Repr
+def focTaylorTrigRefutes : FocTaylorTrigClause → Bool
+  | .emptyOrOutOfRangeDomain | .invertedClaimedBound => true
+  | .enclosureViolation => false
 def checkFocTaylorTrigJudge (_grade : Nat) (q : FocTaylorTrigQuery) (tm : TaylorModel) :
-    Judge.Verdict String :=
-  if verifyFocTaylorTrigCert q tm then .ok
-  else .refused "taylor_model_enclosure_violation" []
-
+    Judge.Verdict FocTaylorTrigClause :=
+  if ¬(q.domain.lo ≤ q.domain.hi ∧ (-1 : CanonicalRat) ≤ q.domain.lo ∧ q.domain.hi ≤ 1) then
+    .refused .emptyOrOutOfRangeDomain []
+  else if ¬q.claimedBound.lo ≤ q.claimedBound.hi then .refused .invertedClaimedBound []
+  else if verifyFocTaylorTrigCert q tm then .ok else .refused .enclosureViolation []
 theorem checkFocTaylorTrigJudge_sound (grade : Nat) (q : FocTaylorTrigQuery) (tm : TaylorModel)
-    (h : checkFocTaylorTrigJudge grade q tm = .ok) :
-    verifyFocTaylorTrigCert q tm = true ∧
-    (evalTaylorModelRange tm).isSubintervalOf q.claimedBound = true := by
+    (h : checkFocTaylorTrigJudge grade q tm = .ok) : FocTaylorTrigMeaning q tm := by
   unfold checkFocTaylorTrigJudge at h
-  cases hV : verifyFocTaylorTrigCert q tm with
-  | false => rw [hV] at h; contradiction
-  | true =>
-    refine ⟨rfl, ?_⟩
-    unfold verifyFocTaylorTrigCert at hV
-    rcases (Bool.and_eq_true _ _).mp hV with ⟨_, hSub⟩
-    exact ((Bool.and_eq_true _ _).mp hSub).2
-
+  split at h <;> try cases h
+  split at h <;> try cases h
+  split at h <;> try cases h
+  rename_i hv
+  simp only [verifyFocTaylorTrigCert, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq,
+    Interval.isSubintervalOf] at hv
+  exact ⟨hv.1.1,hv.1.2.symm,hv.2⟩
+theorem checkFocTaylorTrigJudge_complete (q : FocTaylorTrigQuery) (tm : TaylorModel)
+    (h : FocTaylorTrigMeaning q tm) : checkFocTaylorTrigJudge 0 q tm = .ok := by
+  obtain ⟨hv,ht,hlo,hhi⟩ := h
+  have hdom : q.domain.lo ≤ q.domain.hi ∧ (-1 : CanonicalRat) ≤ q.domain.lo ∧ q.domain.hi ≤ 1 :=
+    ⟨hv.1,hv.2.1,hv.2.2.1⟩
+  simp [checkFocTaylorTrigJudge,hdom,hv.2.2.2,verifyFocTaylorTrigCert,hv,ht,
+    Interval.isSubintervalOf,ht ▸ hlo,ht ▸ hhi]
+theorem focTaylorTrigRefuted {grade : Nat} {q : FocTaylorTrigQuery} {tm : TaylorModel}
+    {k : FocTaylorTrigClause} {p : List Nat} (h : checkFocTaylorTrigJudge grade q tm = .refused k p)
+    (hk : focTaylorTrigRefutes k = true) : ∀ tm', ¬FocTaylorTrigMeaning q tm' := by
+  intro tm' hm
+  unfold checkFocTaylorTrigJudge at h
+  split at h
+  · rename_i hd; cases h; exact hd ⟨hm.1.1,hm.1.2.1,hm.1.2.2.1⟩
+  · split at h
+    · rename_i hb; cases h; exact hb hm.1.2.2.2
+    · split at h <;> cases h <;> cases hk
 @[instance_reducible] def focTaylorTrigJudge : Judge FocTaylorTrigQuery TaylorModel where
-  Clause := String
-  Meaning q tm :=
-    verifyFocTaylorTrigCert q tm = true ∧
-    (evalTaylorModelRange tm).isSubintervalOf q.claimedBound = true
+  Clause := FocTaylorTrigClause
+  Meaning := FocTaylorTrigMeaning
   check := checkFocTaylorTrigJudge
   sound := by intro r q tm h; exact checkFocTaylorTrigJudge_sound r q tm h
-  refutes _ := false
-  refuted := by intro _ _ _ _ _ _ h; cases h
-  Fragment q := ∃ tm, verifyFocTaylorTrigCert q tm = true
-  complete := by
-    intro q _ ⟨tm, htm⟩
-    exact ⟨tm, 0, by simp [checkFocTaylorTrigJudge, htm]⟩
-  mono := by intro _ _ _ _ _ _; rfl
+  refutes := focTaylorTrigRefutes
+  refuted := focTaylorTrigRefuted
+  Fragment := FocTaylorTrigFragment
+  complete := by intro q _ ⟨tm,h⟩; exact ⟨tm,0,checkFocTaylorTrigJudge_complete q tm h⟩
+  mono := by intros; rfl
+example : FocTaylorTrigFragment ⟨⟨0,0⟩,⟨-2,2⟩⟩ := by decide
+example : verifyFocTaylorTrigCert ⟨⟨0,0⟩,⟨-2,2⟩⟩ (focTrigModel ⟨⟨0,0⟩,⟨-2,2⟩⟩) = true := by decide +kernel
+#tooth checkFocTaylorTrigJudge_sound by mutation verifyFocTaylorTrigCert := fun _ _ => true
 
 def focEncodeTaylorTrigQuery (q : FocTaylorTrigQuery) : String :=
   let wire := focEncodeIntervalWire q.domain ++ "|" ++ focEncodeIntervalWire q.claimedBound
   "{\"kind\":\"taylor-model@1\",\"wire\":\"" ++ wire ++ "\"}"
 
 def focDecodeTaylorTrigQuery (s : String) : Except String FocTaylorTrigQuery :=
-  if s == "{}" || s == "" then
-    .error "invalid FocTaylorTrigQuery JSON: missing required fields"
-  else
-    match focExtractJsonStringField? "wire" s with
-    | some wire =>
-      match focSplitChar '|' wire with
-      | [domW, bndW] =>
-        match focDecodeIntervalWire? domW, focDecodeIntervalWire? bndW with
-        | some domain, some claimedBound => .ok { domain, claimedBound }
-        | _, _ => .error "invalid FocTaylorTrigQuery wire fields"
-      | _ => .error "invalid FocTaylorTrigQuery wire envelope"
-    | none => .error "invalid FocTaylorTrigQuery JSON: missing wire field"
+  match focExtractJsonStringField? "wire" s with
+  | some wire =>
+    match focSplitChar '|' wire with
+    | [domW, bndW] =>
+      match focDecodeIntervalWire? domW, focDecodeIntervalWire? bndW with
+      | some domain, some claimedBound => .ok { domain, claimedBound }
+      | _, _ => .error "invalid FocTaylorTrigQuery wire fields"
+    | _ => .error "invalid FocTaylorTrigQuery wire envelope"
+  | none => .error "invalid FocTaylorTrigQuery JSON: missing wire field"
 
 def focEncodeTaylorModelCert (tm : TaylorModel) : String :=
   let coeffsW :=
@@ -371,22 +409,19 @@ def focEncodeTaylorModelCert (tm : TaylorModel) : String :=
   "{\"kind\":\"taylor-model-cert@1\",\"wire\":\"" ++ wire ++ "\"}"
 
 def focDecodeTaylorModelCert (s : String) : Except String TaylorModel :=
-  if s == "{}" || s == "" then
-    .error "invalid TaylorModel JSON: missing required fields"
-  else
-    match focExtractJsonStringField? "wire" s with
-    | some wire =>
-      match focSplitChar '|' wire with
-      | [coeffsW, ctrW, domW, remW] =>
-        let coeffsOpt : Option (List CanonicalRat) :=
-          if coeffsW == "-" || coeffsW == "" then some []
-          else (focSplitChar ',' coeffsW).mapM focDecodeRatWire?
-        match coeffsOpt, focDecodeRatWire? ctrW, focDecodeIntervalWire? domW, focDecodeIntervalWire? remW with
-        | some coeffs, some center, some domain, some rem =>
-          .ok { coeffs, center, domain, rem }
-        | _, _, _, _ => .error "invalid TaylorModel wire fields"
-      | _ => .error "invalid TaylorModel wire envelope"
-    | none => .error "invalid TaylorModel JSON: missing wire field"
+  match focExtractJsonStringField? "wire" s with
+  | some wire =>
+    match focSplitChar '|' wire with
+    | [coeffsW, ctrW, domW, remW] =>
+      let coeffsOpt : Option (List CanonicalRat) :=
+        if coeffsW == "-" || coeffsW == "" then some []
+        else (focSplitChar ',' coeffsW).mapM focDecodeRatWire?
+      match coeffsOpt, focDecodeRatWire? ctrW, focDecodeIntervalWire? domW, focDecodeIntervalWire? remW with
+      | some coeffs, some center, some domain, some rem =>
+        .ok { coeffs, center, domain, rem }
+      | _, _, _, _ => .error "invalid TaylorModel wire fields"
+    | _ => .error "invalid TaylorModel wire envelope"
+  | none => .error "invalid TaylorModel JSON: missing wire field"
 
 def focGoldenTaylorTrigQuery : FocTaylorTrigQuery where
   domain       := ⟨CanonicalRat.mk (-1) 10, CanonicalRat.mk 1 10⟩
@@ -400,7 +435,7 @@ def focBadTaylorModelCert : TaylorModel where
 
 theorem focBadTaylorModelCert_refused :
     checkFocTaylorTrigJudge 0 focGoldenTaylorTrigQuery focBadTaylorModelCert =
-      .refused "taylor_model_enclosure_violation" [] := by
+      .refused .enclosureViolation [] := by
   decide +kernel
 
 /-- Registered kernel-verified `"taylor-model@1"` `Judge.Format` backed by `Obend.Analysis.TaylorModel`. -/
@@ -425,9 +460,9 @@ def focAutoCertFormats : List Judge.Format :=
 
 theorem focAutoCertFormats_refuse_empty_json :
     focIntervalFormat.checkBytes 0 "{}" "{}" =
-      .refused (.malformed "object: invalid IntervalQuery JSON: missing required fields") [] ∧
+      .refused (.malformed "object: invalid IntervalQuery JSON: missing wire field") [] ∧
     focTaylorModelFormat.checkBytes 0 "{}" "{}" =
-      .refused (.malformed "object: invalid FocTaylorTrigQuery JSON: missing required fields") [] ∧
+      .refused (.malformed "object: invalid FocTaylorTrigQuery JSON: missing wire field") [] ∧
     sosLyapunovFormat.checkBytes 0 "{}" "{}" =
       .refused (.malformed "object: invalid SosLyapunovProblem JSON: missing required fields") [] := by
   exact ⟨rfl, rfl, sosLyapunovFormat_refuses_empty_json⟩
@@ -491,7 +526,7 @@ theorem foc_hil_flatten_and_book_sound (m : String) :
    book_sound focDriveTopComp focDriveTopComp_closed m⟩
 
 /-- **Static `super` Elimination & Slot Dependency Certificate for `FocDriveTop.obend`**. -/
-theorem focDriveTop_book_shape_verified :
+example :
     let B := emit focDriveTopComp
     B.slots = [ "icapDprBandwidthGain"
               , "statorThermalResPermille"
@@ -1085,7 +1120,7 @@ private theorem focZeroTail_3_4 : ∀ i, 7 ≤ i → focRegs3 i = focRegs4 i := 
   | 0 | 1 | 2 | 3 | 4 | 5 | 6 => omega
   | _ + 7 => rfl
 
-theorem foc_hil_sequential_4tick_trace_verified :
+example :
     let regs1 := stepModuleRegs focHilSequentialRtlModule false focIn0 focInitRegs
     let regs2 := stepModuleRegs focHilSequentialRtlModule false focIn1 regs1
     let regs3 := stepModuleRegs focHilSequentialRtlModule false focIn2 regs2

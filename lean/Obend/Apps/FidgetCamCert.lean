@@ -12,7 +12,8 @@ If the part, the process or the tool path changes, the certificate no longer mat
 module goes red until `obend-emit-cam` is run again.
 -/
 public import Obend.Apps.FidgetCam
-public import Obend.AssertCompiled
+import all Obend.Apps.FidgetCam
+import all Obend.Hardware.GeometryCAM
 public meta import Obend.Apps.FidgetCam
 public section
 
@@ -26,29 +27,40 @@ set_option autoImplicit false
 
 @[expose] def fidgetCertText : String := include_str "../../../apps/fidget-cam/cam/impeller_5axis.cert"
 
-/-- The committed certificate decodes and the judge accepts it for the fidget program's moves. -/
-@[expose] def fidgetCertAccepted : Bool :=
-  match decodeCamCert fidgetCertText with
-  | .ok c => match checkCamGouge fidgetCamObj c with
-    | .ok => true
-    | _ => false
-  | .error _ => false
+set_option maxRecDepth 1000000
+set_option maxHeartbeats 8000000
 
-theorem fidgetCertAccepted_true : fidgetCertAccepted = true := by
-  native_decide
+#freeze_cam_obj fidgetCamObj as Frozen
+private theorem frozen_eq : Frozen = fidgetCamObj := by decide +kernel
 
-#assert_compiled fidgetCertAccepted_true
+set_option Elab.async false in
+#replay_cam_cert Frozen from "apps/fidget-cam/cam/impeller_5axis.cert" as FidgetCertificate
+
+private def accepted (o : CamGougeObj) (cert : List CamPassCert) : Bool :=
+  match checkCamGouge o cert with | .ok => true | _ => false
+private theorem accepted_of_check (o : CamGougeObj) (cert : List CamPassCert)
+    (h : checkCamGouge o cert = .ok) : accepted o cert = true := by
+  unfold accepted; rw [h]
+
+/-- The committed certificate is checked in bounded kernel slices and composed exactly. -/
+def fidgetCertAccepted : Bool := accepted fidgetCamObj FidgetCertificate.passes
+
+private theorem frozenAccepted : checkCamGouge Frozen FidgetCertificate.passes = .ok := by
+  apply checkCamGouge_of_groups
+  · rfl
+  · rw [FidgetCertificate.chunks_eq,FidgetCertificate.passes_eq]
+    simp only [List.zip_cons_cons,List.zip_nil_left,List.all_cons,List.all_nil,Bool.and_eq_true]
+    exact ⟨FidgetCertificate.verified0,FidgetCertificate.verified1,FidgetCertificate.verified2,
+      FidgetCertificate.verified3,FidgetCertificate.verified4,FidgetCertificate.verified5,
+      FidgetCertificate.verified6,FidgetCertificate.verified7,True.intro⟩
+
+theorem fidgetCertAccepted_true : fidgetCertAccepted = true :=
+  accepted_of_check _ _ (Eq.mp (congrArg
+    (fun o => checkCamGouge o FidgetCertificate.passes = .ok) frozen_eq) frozenAccepted)
 
 theorem fidgetCamObj_meaning : CamGougeMeaning fidgetCamObj := by
-  have h := fidgetCertAccepted_true
-  unfold fidgetCertAccepted at h
-  split at h
-  · rename_i c _
-    split at h
-    · rename_i hv
-      exact checkCamGouge_sound _ _ hv
-    · cases h
-  · cases h
+  rw [← frozen_eq]
+  exact checkCamGouge_sound _ _ frozenAccepted
 
 /-- **`fidget_toolpath_no_gouge_continuous`**: for every pass, every move `c₀ → c₁` the control
 interpolates (plunges and retracts included), every rational time `t ∈ [0, 1]`, and every rational
