@@ -10,9 +10,10 @@ One check, named for what it is:
    an emitter-correctness check; it is thin (64 cycles by default) and it is the thing to grow.
 The logic-equivalence check of the emitted `.sv` is `hardware/lec/lec.sh` with `Obend.Hardware.YosysLec`.
 -/
-public import Lean
+public import Lean.Data.Json
+import Lean
 public import Std.Tactic.BVDecide
-public meta import Std.Tactic.BVDecide.Reflect
+import Std.Tactic.BVDecide.Reflect
 public import Obend.Core.Term
 public import Obend.Core.Machine
 public import Obend.Core.MachineFast
@@ -25,7 +26,7 @@ public import Obend.Spec.Sha256
 public import Obend.Hardware.HDL
 public import Obend.Hardware.Synth
 public import Obend.Hardware.Compiler
-@[expose] public section
+public section
 
 namespace Obend.Core.MachineFast
 open Obend.Core.Term Obend.Core.Machine
@@ -49,6 +50,7 @@ theorem evalFuelFast_eq_runBounded (fuel : Nat) (t : Term) (heapLimit stackLimit
       | _ => none := by
   unfold evalFuelFast runBoundedFast
   rw [runFrom_eq_runBounded]
+  rfl
 
 end Obend.Core.MachineFast
 
@@ -134,7 +136,7 @@ def goldenCleanroomTcadComp : Composition where
     , ("calibratedDelayPs",  .lam (.nat 0)) ]
 
 /-- Canonical 3-layer `LcDrivesStator` composition (`stdlib/physical/LcDrivesStator.obend`). -/
-def goldenLcDrivesStatorComp : Composition where
+@[expose] def goldenLcDrivesStatorComp : Composition where
   top :=
     { name     := "FiveAxisFinishMilled"
       metadata := .record []
@@ -166,7 +168,7 @@ def goldenLcDrivesStatorComp : Composition where
     , ("camSurfaceErrorUm", .lam (.bound 0)) ]
 
 /-- Canonical 2-layer `Cnc5AxisMill` composition (`stdlib/physical/Cnc5AxisMill.obend`). -/
-def goldenCnc5AxisMillComp : Composition where
+@[expose] def goldenCnc5AxisMillComp : Composition where
   top :=
     { name     := "AbbeAndRuckigCompensatedMill"
       metadata := .record []
@@ -813,6 +815,14 @@ def parseMismatchCount (stdout : String) : Option Nat :=
 
 /-- Run the `Verilator` differential simulation (`Verilated::randReset(2)`, optional `.vcd`). -/
 def runVerilatePipeline (cfg : VerilateConfig) : IO (Except String VerilateReport) := do
+  let cwd ← IO.currentDir
+  let abs := fun (s : String) =>
+    let p := System.FilePath.mk s
+    (if p.isRelative then cwd / p else p).toString
+  let cfg := { cfg with
+    workDir := abs cfg.workDir
+    svOutPath := cfg.svOutPath.map abs
+    vcdOutPath := cfg.vcdOutPath.map abs }
   match ← resolveTargetRtlModule cfg with
   | .error err => return .error err
   | .ok (modName, comp?, m) =>

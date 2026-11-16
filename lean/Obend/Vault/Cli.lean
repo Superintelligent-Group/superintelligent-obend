@@ -1671,7 +1671,7 @@ def run (dir : System.FilePath) (args : List String) : Option (IO UInt32) :=
       match s'.page? page with
       | some p =>
         if p.history.isEmpty then
-          fail (page ++ ": not born: " ++ p.note.getD "")
+          return 2
         else
           IO.println ("created " ++ page ++ " (kind " ++ kindName k ++ ")")
           return 0

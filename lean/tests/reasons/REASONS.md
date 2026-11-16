@@ -20,8 +20,8 @@ Every block below is run, in order, by `python3 tests/vault/walkthrough.py --doc
 ## A stuck build, reasoned about from its own log
 
 The first consumer is the swarm's own process. On 2026-11-05 the lane building the fabric's certificate
-(`fabric5`) ran `lake build` of `Obend.Hardware.Fabulous.Mac8Tiles` on hbox, and one module,
-`Obend.Hardware.Fabulous.Mac8CertCheck`, took 1818 s: three times the 600 s a tier-2 module may take.
+(`fabric5`) ran `lake build` of the historical `Mac8Tiles` module on hbox, and one module,
+the historical `Mac8CertCheck` module, took 1818 s: three times the 600 s a tier-2 module may take.
 Why? The observations are lines of the build's own log, `~/obend/logs/fabric5-tiles.log` on hbox,
 copied here whole, and of the listing of that directory (`ls -l --time-style=+%Y-%m-%dT%H:%M:%S` of
 the five files named), copied here as printed. Nothing below is made up but the names given to
@@ -274,7 +274,7 @@ obend reasons admit split-the-table
 ```
 
 ```text
-forgot 19 records (5429 bytes) under the retention contract swarm-1: the log is one checkpoint record of 2412 bytes
+forgot 19 records (5429 bytes) under the retention contract swarm-1: the log is one checkpoint record of 2410 bytes
 split-the-table: admitted (kernel-bound is supported by R2)
 ```
 

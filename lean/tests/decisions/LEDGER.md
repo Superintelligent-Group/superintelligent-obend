@@ -64,25 +64,35 @@ grep -c 'The ledger is a vault' DECISIONS-20261031.md
 ```text
 owner posted to DECISIONS-20261031 (v3)
 rendered DECISIONS-20261031.md
+EXPERT-language-user-20261103: [[Delta]] (link) is dangling: no page of that name
 1
 ```
 
 ## 4. A row rewritten in place
 
 An edit of a line the ledger already has, in an editor: refused at the section, with the number of
-lines the write removed; the file keeps the edit, and the next open with the line put back changes
-nothing.
+lines the write removed, on stderr and with exit 1; the file keeps the edit.
+
+```sh refused
+cd review
+sed -i.bak 's/^| No per-theorem axiom lists; one crawling census | yes |/| No per-theorem axiom lists | yes |/' DECISIONS-20261031.md && rm DECISIONS-20261031.md.bak
+obend open
+```
+
+```text
+EXPERT-language-user-20261103: [[Delta]] (link) is dangling: no page of that name
+DECISIONS-20261031: refused by ledger/_kind: appendOnly per ## (the kind of ledger/, an ancestor of DECISIONS-20261031) at ## Decided by Ember: `new.deletions == 0` does not hold there; deletions = 0 would pass (this write has deletions = 1)
+```
+
+The next open with the line put back changes nothing.
 
 ```sh
 cd review
-sed -i.bak 's/^| No per-theorem axiom lists; one crawling census | yes |/| No per-theorem axiom lists | yes |/' DECISIONS-20261031.md && rm DECISIONS-20261031.md.bak
-obend open | grep DECISIONS-20261031
 sed -i.bak 's/^| No per-theorem axiom lists | yes |/| No per-theorem axiom lists; one crawling census | yes |/' DECISIONS-20261031.md && rm DECISIONS-20261031.md.bak
 obend open | grep -E 'DECISIONS-20261031|nothing changed'
 ```
 
 ```text
-DECISIONS-20261031: refused by ledger/_kind: appendOnly per ## (the kind of ledger/, an ancestor of DECISIONS-20261031) at ## Decided by Ember: `new.deletions == 0` does not hold there; deletions = 0 would pass (this write has deletions = 1)
 nothing changed
 ```
 

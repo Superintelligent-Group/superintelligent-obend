@@ -3,7 +3,7 @@
 require the walkthrough to fail.
 
 Each mutant is a copy of `lean/` (an APFS clone with `cp -c` where the filesystem has one, so the
-build directory comes along warm) in which `Obend/Vault/Form.lean` has one check removed and the one
+build directory comes along warm) in which `Obend/Vault/Form.lean` or `FormCheckCache.lean` has one check removed and the corresponding
 proof that states it replaced by `sorry` (the theorems are what would catch the mutant at build
 time; this test asks the walkthrough to catch it at run time too). The mutant's `obend` is built and
 the walkthrough run with it; a mutant whose walkthrough passes is a failure of this test.
@@ -15,7 +15,7 @@ Mutants:
   page-gate   `checkPage` admits every page: the fill may name a page outside the form, or one the
               final viewer may not write (the guessed hidden page lands; so does Dave's read-only fill)
   chain-gate  `resolveChain` takes an amplifying hop as granted (the forged hop lands)
-  kept-any    `classify` (Obend/Vault/FormCheck.lean) keeps every judgment as checked at capture: a
+  kept-any    `classifyCached` (Obend/Vault/FormCheckCache.lean) keeps every judgment as checked at capture: a
               judgment under a law changed since is counted kept, never checked now
 """
 import os
@@ -24,64 +24,73 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LEAN = os.path.dirname(os.path.dirname(HERE))
 
-PAGE_DEF = """  | .page n =>
-    if !f.scope.contains n then .error (.notInForm n holder)
-    else if !mayWrite v n then .error (.notWritable n holder v.held)
-    else .ok ()"""
+PAGE_DEF = "| .page n => if !f.scope.contains n then .error (.notInForm n holder) else if !mayWrite v n then .error (.notWritable n holder v.held) else .ok ()"
+CHAIN_DEF = "| none => .error (.amplifies who g.holder cur.held g.held)"
 
-CHAIN_DEF = """    | none => .error (.amplifies who g.holder cur.held g.held)"""
-
-KEPT_DEF = """    ⟨x.1, x.2, u, checked.any fun c => c.form == form && c.unit == u⟩"""
+KEPT_DEF = """    ⟨x.1, x.2, u, units.contains (form, u)⟩"""
 
 # the file each mutant edits
-FILE = {"page-gate": "Form.lean", "chain-gate": "Form.lean", "kept-any": "FormCheck.lean"}
+FILE = {"page-gate": "Form.lean", "chain-gate": "Form.lean", "kept-any": "FormCheckCache.lean"}
 
 
 def sorry_theorem(src, name):
-    """Replace the tactic proof of theorem `name` (its `:= by` up to the next blank line) by `sorry`."""
-    start = re.search(r"^theorem " + re.escape(name) + r"\b", src, re.M)
+    """Replace the tactic proof of theorem `name` (its `:= by` up to the next top-level declaration) by `sorry`."""
+    start = re.search(r"^(?:@\[csimp\] )?theorem " + re.escape(name) + r"\b", src, re.M)
     if not start:
         sys.exit("planted: theorem " + name + " not found")
-    end = src.find("\n\n", start.start())
-    body = src[start.start():end]
-    if body.count(":= by\n") != 1:
-        sys.exit("planted: theorem " + name + " is not one tactic proof")
-    head = body.split(":= by\n")[0]
-    return src[:start.start()] + head + ":= by\n  sorry" + src[end:]
+    proof = re.search(r":=\s*by\b", src[start.start():])
+    if not proof:
+        sys.exit("planted: theorem " + name + " is not a tactic proof")
+    proof_start = start.start() + proof.start()
+    proof_end = start.start() + proof.end()
+    following = re.search(r"\n(?=\S)", src[proof_end:])
+    end = proof_end + following.start() if following else len(src)
+    return src[:proof_start] + ":= by\n  sorry\n" + src[end:]
+
 
 
 def mutate(src, which):
     if which == "page-gate":
         if PAGE_DEF not in src:
             sys.exit("planted: checkPage's page case not found")
-        src = src.replace(PAGE_DEF, "  | .page _ => .ok ()")
+        src = src.replace(PAGE_DEF, "| .page _ => .ok ()")
         return sorry_theorem(src, "checkPage_ok")
     if which == "chain-gate":
         if CHAIN_DEF not in src:
             sys.exit("planted: resolveChain's refusal not found")
-        src = src.replace(CHAIN_DEF, "    | none => resolveChain scope (g.viewer scope) g.holder rest")
+        src = src.replace(CHAIN_DEF, "| none => resolveChain scope (g.viewer scope) g.holder rest")
         return sorry_theorem(src, "resolveChain_attenuates")
     if which == "kept-any":
         if KEPT_DEF not in src:
             sys.exit("planted: classify's membership not found")
         src = src.replace(KEPT_DEF, "    ⟨x.1, x.2, u, true⟩")
-        return sorry_theorem(src, "kept_typed")
+        return sorry_theorem(src, "classify_eq_cached")
     raise ValueError(which)
 
 
 def clone(dst):
+    """Copy lean/ with its build directory. `cp` fails when a file vanishes under it, which is a build
+    writing the source tree at that moment: the partial copy is discarded and the copy taken again."""
     flags = ["-c", "-R"] if sys.platform == "darwin" else ["-R", "--reflink=auto"]
-    subprocess.run(["cp", *flags, LEAN, dst], check=True)
+    for attempt in range(4):
+        c = subprocess.run(["cp", *flags, LEAN, dst], capture_output=True, text=True)
+        if c.returncode == 0:
+            return
+        shutil.rmtree(dst, ignore_errors=True)
+        time.sleep(15 * (attempt + 1))
+    sys.exit("planted: lean/ could not be copied while it was being built:\n" + c.stderr[-1000:])
 
 
 def main():
+    sys.stdout.reconfigure(line_buffering=True)  # a mutant's verdict is on record when it is reached
     failures = 0
     for which in sys.argv[1:] or ["page-gate", "chain-gate", "kept-any"]:
-        tmp = tempfile.mkdtemp(prefix="obend-forms-planted-")
+        tmp = tempfile.mkdtemp(prefix="obend-s2d-forms-planted-")
         lean = os.path.join(tmp, "lean")
         try:
             clone(lean)
@@ -97,8 +106,8 @@ def main():
                                 "--doc", os.path.join(lean, "tests", "vault", "FORMS.md")],
                                cwd=lean, capture_output=True, text=True)
             red = [l for l in w.stdout.splitlines() if l.startswith("FAIL")]
-            if w.returncode == 0:
-                print(f"FAIL {which}: the walkthrough passed with the check removed")
+            if w.returncode == 0 or not red:
+                print(f"FAIL {which}: no functional refusal detected (exit {w.returncode})\n{w.stdout[-2000:]}{w.stderr[-1000:]}")
                 failures += 1
             else:
                 print(f"ok   {which}: the walkthrough is red ({len(red)} step(s)):")
