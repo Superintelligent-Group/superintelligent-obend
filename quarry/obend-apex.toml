@@ -1722,7 +1722,7 @@ id = "elab-pde-solver-spec-sound"
 subsystem = "Elab"
 module = "Obend.Elab.PdeSolverElab"
 theorem = "checkPdeSolverSpec_sound"
-description = "Compile-time `#pde_solver` conservation-law specification gate soundness (`checkPdeSolverSpec_sound`, `validatePdeSolverSexpr_certified`) and CFL/malformed refusal."
+description = "Compile-time `#pde_solver` conservation-law specification gate soundness (`checkPdeSolverSpec_sound`, `validatePdeSolverSexpr_certified`), Q32.32 flux-word overflow-freedom on the state box (`checkPdeQ32Intervals_sound`), and CFL/malformed refusal."
 
 [[apex]]
 id = "spec-ecosystem-closure-law-inherited"
@@ -1793,6 +1793,104 @@ subsystem = "Hardware"
 module = "Obend.Hardware.QuantumMatter"
 theorem = "quotientOpenHypergraph_intertwines_eval_and_adjoint"
 description = "Equitable open-hypergraph symmetry quotient intertwining (`quotientOpenHypergraph_intertwines_eval_and_adjoint`), Clifford parity-sector protection, and planar Clements optical power conservation."
+
+[[apex]]
+id = "core-cubical-face-ideal4-boundary-proper"
+subsystem = "Core"
+module = "Obend.Core.Cubical2LTT"
+theorem = "FaceIdeal4.boundary_ne_top"
+description = "Ternary 81-point `FaceIdeal4` keeps the boundary proper: `(dim0 d).join (dim1 d) ≠ top` for every dimension (`FaceIdeal4.boundary_ne_top`, with `dim0_meet_dim1`), so the interval boundary is not the whole interval."
+
+[[apex]]
+id = "core-cubical-subcomplex-decision"
+subsystem = "Core"
+module = "Obend.Core.Cubical2LTT"
+theorem = "checkSubcomplex_iff"
+description = "Executable downward-closure check decides the subcomplex property of a `FaceIdeal4` exactly (`checkSubcomplex_iff : checkSubcomplex φ = true ↔ IsSubcomplex φ`)."
+
+[[apex]]
+id = "core-cubical-tube-wall-agreement-sound"
+subsystem = "Core"
+module = "Obend.Core.Cubical2LTT"
+theorem = "checkTubeWallAgreement_sound"
+description = "Kan tube wall compatibility: accepted walls agree after restriction to the meet face at every point both subcubes contain (`checkTubeWallAgreement_sound`)."
+
+[[apex]]
+id = "core-digest256-binds-or-collides"
+subsystem = "Core"
+module = "Obend.Core.Digest"
+theorem = "digest256_binds_or_collides"
+description = "Fixed-width 256-bit digest binding: equal `digest256` outputs give equal inputs or an explicit collision among the two preimages of the deployed hash (`digest256_binds_or_collides`)."
+
+[[apex]]
+id = "receipt-merkle-opens256-binds-or-collides"
+subsystem = "Receipt"
+module = "Obend.Receipt.Merkle"
+theorem = "opens256_binds_or_collides"
+description = "256-bit Merkle opening binding: two openings of one index climbing to the same root open the same leaf or exhibit a collision among the climbed preimages (`opens256_binds_or_collides`)."
+
+[[apex]]
+id = "run-hyperlaw-multiturn-noninterference"
+subsystem = "Run"
+module = "Obend.Run.HyperLaw"
+theorem = "hyper2Safe_multiTurn_nonInterference"
+description = "Multi-turn two-run noninterference: from `Hyper2Safe` states and low-equivalent replies on every turn, the whole `multiTurnTrace` satisfies `HyperLaw2NonInterference` (`hyper2Safe_multiTurn_nonInterference`)."
+
+[[apex]]
+id = "consensus-simplex-trace-exec-refines-spec"
+subsystem = "Consensus"
+module = "Obend.Consensus.SimplexTrace"
+theorem = "checkTraceExec_eq_checkTrace"
+description = "Indexed executable Simplex trace checker equals the list specification on every protocol and trace (`checkTraceExec_eq_checkTrace`)."
+
+[[apex]]
+id = "consensus-signed-simplex-authentic-message"
+subsystem = "Consensus"
+module = "Obend.Consensus.SimplexTrace"
+theorem = "checkSignedSimplex_authentic_message"
+description = "EUF-CMA reduction for signed Simplex traces: every accepted message from an honest sender is authentic as a message, by injectivity of the domain-tagged encoding (`checkSignedSimplex_authentic_message`)."
+
+[[apex]]
+id = "hardware-geometry-cam-gouge-refutes"
+subsystem = "Hardware"
+module = "Obend.Hardware.GeometryCAM"
+theorem = "pointGouge_refutes_meaning"
+description = "CAM gouge refusal soundness: an endpoint gouge returned by `findEndpointGouge?` refutes `CamGougeMeaning` (`pointGouge_refutes_meaning`)."
+
+[[apex]]
+id = "hardware-geometry-cam-gouge-unit-complete"
+subsystem = "Hardware"
+module = "Obend.Hardware.GeometryCAM"
+theorem = "camGougeUnit_complete"
+description = "CAM gouge checker completeness on the unit-pass fragment: gouge-free toolpaths in `CamGougeUnitFragment` are accepted (`camGougeUnit_complete`)."
+
+[[apex]]
+id = "tactic-q32-qmul-limb-shader-exact"
+subsystem = "Tactic"
+module = "Obend.Tactic.SymDiffAndFlux"
+theorem = "scalarQmul32_eval_eq_qmul32"
+description = "Four-limb GPU Q32.32 multiplication equals the HDL `qmul32` on every pair of 64-bit words, including overflow (`scalarQmul32_eval_eq_qmul32`)."
+
+[[apex]]
+id = "tactic-q32-newton-normalized-residual"
+subsystem = "Tactic"
+module = "Obend.Tactic.SymDiffAndFlux"
+theorem = "q32_nr_normalized_residual"
+description = "Integer recurrence of the LUT-free reciprocal: the 48/17, 32/17 seed and four rounded Newton steps leave a residual of at most three units on every normalized denominator (`q32_nr_normalized_residual`)."
+
+[[apex]]
+id = "tactic-q32-reciprocal-full-range-residual"
+subsystem = "Tactic"
+module = "Obend.Tactic.SymDiffAndFlux"
+theorem = "evalQ32Reciprocal_residual_bound"
+description = "Full-range word-level reciprocal accuracy: for every 64-bit `d` with `16 ≤ |d| ≤ 2^60`, `evalQ32Reciprocal d = r` satisfies `|r * d - 2^64| ≤ 6 * 2^32 + |d|`, through normalization, seed, four Newton word steps, rescaling and sign (`evalQ32Reciprocal_residual_bound`)."
+
+[[apex]]
+id = "tactic-q32-ssa-interval-encloses-eval"
+subsystem = "Tactic"
+module = "Obend.Tactic.SymDiffAndFlux"
+theorem = "inferSsaDagQ32Intervals_encloses_eval"
+description = "Signed Q32 interval soundness: when `inferSsaDagQ32Intervals` accepts and inputs lie in their boxes, every evaluated SSA word lies in its inferred guard-bit interval and every DAG output stays inside `(-2^62, 2^62)` (`inferSsaDagQ32Intervals_encloses_eval`, per node `propagateSsaInterval_encloses`)."
 
 # ==============================================================================
 # Planned Wave 5+ Vertical Spine Apex Theorems (`master_interface_and_systems_architecture.md`)

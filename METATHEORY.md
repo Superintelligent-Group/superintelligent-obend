@@ -22,6 +22,10 @@ Obend's metatheory connects surface elaboration, graded/linear row typing, conte
 - **Preservation (`lean/Obend/Core/Proofs/SubjectReduction.lean`, `lean/Obend/Core/Proofs/Splice.lean`, `lean/Obend/Core/Proofs/Preservation.lean`)**: Small-step reduction preserves graded typing (`step_preserves_typing`, `steps_preserve_typing`, `split_accounts`, `custody_conserved`). Across the heap-and-frame machine (`lean/Obend/Core/Machine.lean`), `typed_stepRaw_preserved` and `checked_runBounded_no_refusal` prove that closed checked terms never fault with missing-field, wrong-tag, or internal machine refusals.
 - **Garbage Collection Preservation (`lean/Obend/Core/Collect.lean`, `lean/Obend/Core/Proofs/Collect/Statements.lean`)**: Mark-compact heap collection preserves reachability, typing, and lockstep machine evaluation (`lean/Obend/Core/Proofs/Collect/Lockstep.lean`, `lean/Obend/Core/Proofs/Collect/Typing.lean`).
 
+### 1.4 Cubical Face Ideals (`lean/Obend/Core/Cubical2LTT.lean`)
+
+`FaceIdeal4` represents a cofibration over four interval dimensions as a truth table on the 81 points of $\{0, 1, *\}^4$, not on the 16 Boolean corners. On corners alone the boundary $(i = 0) \lor (i = 1)$ would equal the whole interval; here `FaceIdeal4.boundary_ne_top` proves it is proper for every dimension, with `dim0_meet_dim1` for disjointness. `checkSubcomplex_iff` shows the executable downward-closure check decides `IsSubcomplex` exactly, and `checkTubeWallAgreement_sound` shows that accepted Kan tube walls agree after restriction to the meet face at every point both subcubes contain.
+
 ---
 
 ## 2. Observational Equivalence, Improvement, and `Leaf` Specialization
@@ -56,6 +60,8 @@ Obend's metatheory connects surface elaboration, graded/linear row typing, conte
 - **Hash + Module-SIS Dual PCS (`lean/Obend/Crypto/DualSpine.lean`, `lean/Obend/Crypto/PCS.lean`, `lean/Obend/Crypto/Sumcheck.lean`, `lean/Obend/Crypto/Transcript.lean`)**: `DualPCS` (`canopyAjtaiDualPCS`) binds multilinear polynomial openings simultaneously to Merkle/code proximity and short-norm Ajtai lattice commitments (`dualPCS_sound_of_either`, `canopyAjtaiDualPCS_sound_of_hash_or_sis`, `verifyDualSumcheckPIOP_completeness`).
 - **Smudged Same-Opening Auction Clearing (`lean/Obend/Crypto/SameOpening.lean`)**: `verifySameOpening_sound` and `smudgeSafe_refuses_unsmudged` certify zero KKT primal-dual gap over dual-committed private orders while rejecting unsmudged threshold-decryption noise parameters.
 
+- **Fixed-Width 256-Bit Binding (`lean/Obend/Core/Digest.lean`, `lean/Obend/Receipt/Merkle.lean`)**: `Digest256` carries full 256-bit digests. `digest256_binds_or_collides` proves that equal digests of two pairs give equal pairs or an explicit collision among the two preimages (`CollisionAmong`), and `opens256_binds_or_collides` lifts this to Merkle openings of one index. Both extract the collision constructively, by deciding equality of the preimages.
+
 ---
 
 ## 4. Non-Monotonic Justification, HyperLaws, Vault Durability, and Genealogy
@@ -66,6 +72,7 @@ Obend's metatheory connects surface elaboration, graded/linear row typing, conte
 - `gamma_least` and `rounds_least` establish least-fixpoint existence (`wf`), yielding a three-valued `Status` (`supported`, `undefined`, `unsupported`).
 - `no_conclusion_from_cycles`, `survives_one_support`, `defeat_only_by_evidence`, and `action_needs_support` guarantee cycle-free, counter-evidence-driven defeat.
 - `Obend.Run.HyperLaw` (`lean/Obend/Run/HyperLaw.lean`) pairs `k=2` relational non-interference (`checkHyperLaw2NonInterference_sound`) with `glEquilibriumJudge` (`checkGLEquilibrium_sound`, `gamma_same_iff_stableEquilibrium`), proving that `Obend.Reasons.gamma` characterizes minimal Herbrand models of Gelfond–Lifschitz modal `□` reducts (`IsStableEquilibrium`).
+- Multi-turn noninterference: `Hyper2Safe` is the greatest fixed point of the two-run machine step, built with `gpaco` (`lean/Obend/Paco/GPaco.lean`). `hyper2Safe_multiTurn_nonInterference` proves that from two `Hyper2Safe` states, any list of turns whose replies are low-equivalent yields a `multiTurnTrace` satisfying `HyperLaw2NonInterference`; the statement ranges over turn sequences, so state carried across turns is covered.
 
 ### 4.2 Vault Replay, Sharded Worlds, Membranes, and Netting (`lean/Obend/Vault`, `lean/Obend/Judge/Netting.lean`)
 

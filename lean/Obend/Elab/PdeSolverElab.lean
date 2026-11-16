@@ -381,7 +381,10 @@ Every `ConservationLawSpec` accepted by `checkPdeSolverSpec` satisfies:
 2. Exact nonlinear Rusanov fluctuation conservation across every coordinate axis and component,
 3. Multi-dimensional Lie & Strang total integral conservation + multi-turn rollout CFL safety,
 4. Certified Futamura/CSE SSA DAG lowering (`specializedTotalFlops ≤ naiveTotalFlops` & topological
-   DAG well-formedness) and Q32.32 systolic RTL module validity on every axis. -/
+   DAG well-formedness) and Q32.32 systolic RTL module validity on every axis,
+5. Q32.32 overflow-freedom: for every input word vector inside `pdeQ32StateBox`, every directional
+   flux output word of `evalFluxSsaDagQ32` stays strictly inside the guard-bit range `(-2^62, 2^62)`
+   (`inferSsaDagQ32Intervals_encloses_eval`, with `evalQ32Reciprocal_residual_bound` on `invSafe`). -/
 theorem checkPdeSolverSpec_sound (spec : ConservationLawSpec) (dims : List Nat)
     (hCheck : checkPdeSolverSpec spec = true) (hPos : ∀ N ∈ dims, 0 < N) :
     spec.checkValid = true ∧
@@ -403,9 +406,16 @@ theorem checkPdeSolverSpec_sound (spec : ConservationLawSpec) (dims : List Nat)
     ((specializeFluxSweep spec).specializedTotalFlops ≤ (specializeFluxSweep spec).naiveTotalFlops ∧
       ∀ d, d < spec.numDims →
         checkFluxSsaDag (getOr (specializeFluxSweep spec).axisFluxDags d ⟨[], []⟩) = true ∧
-        checkRtlModule (buildSpecSystolicRtl spec d) = true) := by
+        checkRtlModule (buildSpecSystolicRtl spec d) = true) ∧
+    (∀ inputs : Nat → Word,
+      (∀ i, i < spec.numVars → (pdeQ32StateBox spec i).lo ≤ (inputs i).toInt ∧
+        (inputs i).toInt ≤ (pdeQ32StateBox spec i).hi) →
+      ∀ dag ∈ (specializeFluxSweep spec).axisFluxDags,
+        ∀ w ∈ evalFluxSsaDagQ32 inputs spec.paramEnv dag,
+          -((2 : Int)^62) < w.toInt ∧ w.toInt < (2 : Int)^62) := by
   obtain ⟨hVal, hRefl, hDags⟩ := checkPdeSolverSpec_valid spec hCheck
-  refine ⟨hVal, checkValid_cfl_bounds spec hVal, ?_, ?_, ?_⟩
+  refine ⟨hVal, checkValid_cfl_bounds spec hVal, ?_, ?_, ?_,
+    checkPdeQ32Intervals_sound spec (checkPdeSolverSpec_q32Intervals spec hCheck)⟩
   · intro d i hd hi uL uR hL hR
     exact (fluctuationConservation_of_reflective spec hRefl d i hd hi uL uR hL hR).1
   · exact (spec_sweep_conserves_integral spec dims hPos).1
@@ -463,8 +473,8 @@ theorem validatePdeSolverSexpr_certified (rawText : String)
     (∀ d, d < spec.numDims → checkRtlModule (buildSpecSystolicRtl spec d) = true) := by
   obtain ⟨_, hCheck, rfl⟩ := validatePdeSolverSexpr_checks rawText spec plan hOk
   have hSound := checkPdeSolverSpec_sound spec dims hCheck hPos
-  exact ⟨hCheck, rfl, hSound.1, hSound.2.1, hSound.2.2.2.2.1,
-    fun d hd => (hSound.2.2.2.2.2 d hd).2⟩
+  exact ⟨hCheck, rfl, hSound.1, hSound.2.1, hSound.2.2.2.2.1.1,
+    fun d hd => (hSound.2.2.2.2.1.2 d hd).2⟩
 
 /-- **CFL Violation Refusal (`checkPdeSolverSpec_refuses_cfl_violation`)**:
 Any specification violating `cfl * aMax ≤ 1` is deterministically refused by `checkPdeSolverSpec`. -/

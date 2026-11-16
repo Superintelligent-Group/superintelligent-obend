@@ -796,6 +796,20 @@ theorem q32_nr_seed_bound (d : Int) (hd : 2147483648 ≤ d ∧ d ≤ 4294967296)
   exact q32_seed_polynomial_bound d (z*z) (d*d) (a*d) _ hd
     ⟨hsq0, hsq1⟩ ⟨hdSq0, by omega⟩ ⟨had0, had1⟩ identity
 
+/-- A normalized iterate whose residual stays below `2^63` stays in the working range. -/
+theorem q32_nr_range_of_residual (d r E : Int) (hd : 2147483648 ≤ d ∧ d ≤ 4294967296)
+    (hE : E ≤ 9223372036854775808)
+    (hr : -E ≤ 18446744073709551616-d*r ∧ 18446744073709551616-d*r ≤ E) :
+    0 ≤ r ∧ r ≤ 12884901888 := by
+  have hr0 : 0 ≤ r := by
+    by_cases hp : 0 ≤ r
+    · exact hp
+    · have hh := Int.mul_le_mul_of_nonneg_left (show r ≤ 0 by omega) (show 0 ≤ d by omega)
+      simp only [Int.mul_zero] at hh
+      omega
+  have hh := Int.mul_le_mul_of_nonneg_right hd.1 hr0
+  exact ⟨hr0, by omega⟩
+
 /-- Four Newton steps reduce a 1/16 seed residual to three normalized word units. -/
 theorem q32_nr_four_steps (d x0 : Int)
     (hd : 2147483648 ≤ d ∧ d ≤ 4294967296)
@@ -807,18 +821,7 @@ theorem q32_nr_four_steps (d x0 : Int)
     -12884901888 ≤ 18446744073709551616-d*x4 ∧
       18446744073709551616-d*x4 ≤ 12884901888 := by
   let step := fun x : Int => x*(8589934592-d*x/4294967296)/4294967296
-  have range : ∀ r E : Int, E ≤ 9223372036854775808 →
-      -E ≤ 18446744073709551616-d*r ∧ 18446744073709551616-d*r ≤ E →
-      0 ≤ r ∧ r ≤ 12884901888 := by
-    intro r E hE hr
-    have hr0 : 0 ≤ r := by
-      by_cases hp : 0 ≤ r
-      · exact hp
-      · have hh := Int.mul_le_mul_of_nonneg_left (show r ≤ 0 by omega) (show 0 ≤ d by omega)
-        simp only [Int.mul_zero] at hh
-        omega
-    have hh := Int.mul_le_mul_of_nonneg_right hd.1 hr0
-    exact ⟨hr0, by omega⟩
+  have range := fun r E => q32_nr_range_of_residual d r E hd
   have h1 := q32_nr_residual_bound d x0 1152921504606846976 hd hx he
   have e1 : -144115188075855872 ≤ 18446744073709551616-d*(step x0) ∧
       18446744073709551616-d*(step x0) ≤ 144115188075855872 := by
@@ -932,6 +935,161 @@ theorem q32_interval_of_residual (lo hi d r : Int)
   have h2 := Int.lt_of_mul_lt_mul_right hru (Int.le_of_lt hd0)
   omega
 
+private theorem word_toInt_eq_toNat (w : Word) (h : w.toNat < 2^63 ∨ 0 ≤ w.toInt) :
+    w.toInt = (w.toNat : Int) := by
+  have hn := BitVec.toInt_eq_toNat_cond w
+  have hl := w.isLt
+  split at hn <;> omega
+
+/-- One hardware Newton step is the exact integer step and keeps the range and `2^60` envelope. -/
+theorem q32NewtonStep_invariant (d x : Word)
+    (hd : 2147483648 ≤ d.toInt ∧ d.toInt ≤ 4294967296)
+    (hx : (0 ≤ x.toInt ∧ x.toInt ≤ 12884901888) ∧
+      -1152921504606846976 ≤ 18446744073709551616-d.toInt*x.toInt ∧
+      18446744073709551616-d.toInt*x.toInt ≤ 1152921504606846976) :
+    (q32NewtonStep d x).toInt = x.toInt*(8589934592-d.toInt*x.toInt/4294967296)/4294967296 ∧
+    (0 ≤ (q32NewtonStep d x).toInt ∧ (q32NewtonStep d x).toInt ≤ 12884901888) ∧
+    -1152921504606846976 ≤ 18446744073709551616-d.toInt*(q32NewtonStep d x).toInt ∧
+      18446744073709551616-d.toInt*(q32NewtonStep d x).toInt ≤ 1152921504606846976 := by
+  have hw : (q32NewtonStep d x).toInt =
+      x.toInt*(8589934592-d.toInt*x.toInt/4294967296)/4294967296 := q32_nr_word_step d x hd hx.1
+  have hb := q32_nr_residual_bound d.toInt x.toInt 1152921504606846976 hd hx.1 hx.2
+  dsimp only at hb
+  rw [← hw] at hb
+  exact ⟨hw, q32_nr_range_of_residual d.toInt _ 1152921504606846976 hd (by decide) (by omega),
+    by omega⟩
+
+/-- The word-level seed and four Newton steps meet the normalized three-unit residual. -/
+theorem q32ReciprocalMantissa_residual (d : Word)
+    (hd : 2147483648 ≤ d.toInt ∧ d.toInt ≤ 4294967296) :
+    (0 ≤ (q32ReciprocalMantissa d).toInt ∧ (q32ReciprocalMantissa d).toInt ≤ 12884901888) ∧
+    -12884901888 ≤ 18446744073709551616-d.toInt*(q32ReciprocalMantissa d).toInt ∧
+      18446744073709551616-d.toInt*(q32ReciprocalMantissa d).toInt ≤ 12884901888 := by
+  have hc : (ratToQ32Word (32/17)).toInt = 8084644321 := by decide +kernel
+  have hs : (ratToQ32Word (48/17)).toInt = 12126966482 := by decide +kernel
+  have hq := qmul32_toInt (ratToQ32Word (32/17)) d (by rw [hc]; omega)
+  rw [hc] at hq
+  have hx0 : (ratToQ32Word (48/17) - evalAluOp .qmul32 (ratToQ32Word (32/17)) d).toInt =
+      12126966482 - 8084644321*d.toInt/4294967296 := by
+    rw [BitVec.toInt_sub, hs, hq]
+    change (12126966482 - 8084644321*d.toInt/4294967296).bmod 18446744073709551616 = _
+    exact Int.bmod_eq_of_le (by omega) (by omega)
+  obtain ⟨hr0, he0⟩ := q32_nr_seed_bound d.toInt hd
+  have hn := q32_nr_normalized_residual d.toInt hd
+  dsimp only at hn
+  rw [← hx0] at hr0 he0 hn
+  have s1 := q32NewtonStep_invariant d _ hd ⟨hr0, he0⟩
+  have s2 := q32NewtonStep_invariant d _ hd s1.2
+  have s3 := q32NewtonStep_invariant d _ hd s2.2
+  have s4 := q32NewtonStep_invariant d _ hd s3.2
+  rw [← s1.1, ← s2.1, ← s3.1, ← s4.1] at hn
+  exact ⟨s4.2.1, hn⟩
+
+private theorem q32_round_scale (A K Q u dp : Int) (hK : 0 < K) (hQK : Q*K = 2147483648)
+    (hu : A*K = u)
+    (hdp : dp*2147483648 ≤ u + 1073741824 ∧ u + 1073741824 < dp*2147483648 + 2147483648) :
+    -Q ≤ A - dp*Q ∧ A - dp*Q ≤ Q := by
+  have e : (A - dp*Q)*K = u - dp*2147483648 := by rw [Int.sub_mul, Int.mul_assoc, hQK, hu]
+  exact ⟨Int.le_of_mul_le_mul_right (by rw [e, Int.neg_mul, hQK]; omega) hK,
+    Int.le_of_mul_le_mul_right (by rw [e, hQK]; omega) hK⟩
+
+/-- Unsigned magnitude path of `evalQ32Reciprocal`: normalize, Newton mantissa, rescale. -/
+def q32ReciprocalMagnitude (a : Word) : Word :=
+  match q32NormalizeLoop [32,16,8,4,2,1] a 0 with
+  | (u, k) =>
+    let x := q32ReciprocalMantissa ((u + (1#64 <<< 30)) >>> 31)
+    if k < 31 then x >>> (31 - k) else x <<< (k - 31)
+
+theorem evalQ32Reciprocal_eq_magnitude (d : Word) : evalQ32Reciprocal d =
+    if d.slt 0#64 then -q32ReciprocalMagnitude (-d) else q32ReciprocalMagnitude d := by
+  unfold evalQ32Reciprocal q32ReciprocalMagnitude
+  conv => zeta
+  cases d.slt 0#64
+  · generalize hnk : q32NormalizeLoop [32,16,8,4,2,1] (if false = true then -d else d) 0 = nk
+    rw [show (if false = true then -d else d) = d from rfl] at hnk
+    rw [hnk]; obtain ⟨u, k⟩ := nk
+    simp only [Bool.false_eq_true, ↓reduceIte]; rfl
+  · generalize hnk : q32NormalizeLoop [32,16,8,4,2,1] (if true = true then -d else d) 0 = nk
+    rw [show (if true = true then -d else d) = -d from rfl] at hnk
+    rw [hnk]; obtain ⟨u, k⟩ := nk
+    simp only [↓reduceIte]; rfl
+
+/-- Full-range magnitude residual: `|mag * a - 2^64| ≤ 6 * 2^32 + a` for `16 ≤ a ≤ 2^60`. -/
+theorem q32ReciprocalMagnitude_residual (a : Word) (ha : 16 ≤ a.toNat ∧ a.toNat ≤ 2^60) :
+    (q32ReciprocalMagnitude a).toNat < 2^62 ∧
+    -(6 * (2 : Int)^32 + a.toNat) ≤
+        ((q32ReciprocalMagnitude a).toNat : Int) * a.toNat - (2 : Int)^64 ∧
+      ((q32ReciprocalMagnitude a).toNat : Int) * a.toNat - (2 : Int)^64 ≤
+        6 * (2 : Int)^32 + a.toNat := by
+  obtain ⟨hu0, hu1, hfac, hk0, hk1⟩ := q32NormalizeLoop_bounds a ha
+  unfold q32ReciprocalMagnitude
+  generalize q32NormalizeLoop [32,16,8,4,2,1] a 0 = nk at hu0 hu1 hfac hk0 hk1 ⊢
+  obtain ⟨u, k⟩ := nk
+  dsimp only at hu0 hu1 hfac hk0 hk1 ⊢
+  have h30 : (1#64 <<< 30).toNat = 1073741824 := by decide +kernel
+  have hdp : ((u + (1#64 <<< 30)) >>> 31).toNat = (u.toNat + 1073741824) / 2147483648 := by
+    rw [BitVec.toNat_ushiftRight, BitVec.toNat_add, h30, Nat.shiftRight_eq_div_pow,
+      Nat.mod_eq_of_lt (by omega)]
+  generalize (u + (1#64 <<< 30)) >>> 31 = dp at hdp ⊢
+  have hdi := word_toInt_eq_toNat dp (Or.inl (by omega))
+  obtain ⟨hx, hnr⟩ := q32ReciprocalMantissa_residual dp (by omega)
+  generalize q32ReciprocalMantissa dp = x at hx hnr ⊢
+  have hxi := word_toInt_eq_toNat x (Or.inr hx.1)
+  rw [hxi] at hx
+  rw [hxi, hdi, Int.mul_comm] at hnr
+  by_cases hk : k < 31
+  · rw [ite_eq_left hk, BitVec.toNat_ushiftRight, Nat.shiftRight_eq_div_pow]
+    have hQK : (2 : Nat)^(31-k) * 2^k = 2147483648 := by
+      rw [← Nat.pow_add, show 31 - k + k = 31 by omega]
+    have hKpos := Nat.two_pow_pos k
+    have hQpos := Nat.two_pow_pos (31-k)
+    generalize (2 : Nat)^(31-k) = Q at hQK hQpos ⊢
+    generalize (2 : Nat)^k = K at hQK hKpos hfac
+    have hround := q32_round_scale a.toNat K Q u.toNat dp.toNat (by omega)
+      (by omega) (by omega) (by omega)
+    have hp := q32_nr_postscale_residual a.toNat dp.toNat x.toNat Q (Int.natCast_nonneg _)
+      (by omega) hx hround (by omega)
+    have hle := Nat.div_le_self x.toNat Q
+    exact ⟨by omega, by rw [Int.natCast_ediv]; omega⟩
+  · rw [ite_eq_right hk, BitVec.toNat_shiftLeft, Nat.shiftLeft_eq]
+    have hpow : (2 : Nat)^k = 2^(k-31) * 2147483648 := by
+      rw [show (2147483648 : Nat) = 2^31 from rfl, ← Nat.pow_add, show k - 31 + 31 = k by omega]
+    have hT : (2 : Nat)^(k-31) ≤ 2^27 := Nat.pow_le_pow_right (by decide) (by omega)
+    rw [hpow, ← Nat.mul_assoc] at hfac
+    generalize (2 : Nat)^(k-31) = T at hT hfac ⊢
+    have hxT := Nat.mul_le_mul (show x.toNat ≤ 12884901888 by omega) hT
+    rw [Nat.mod_eq_of_lt (by omega)]
+    have hscale : (dp.toNat : Int) = a.toNat * T := by
+      rw [show dp.toNat = a.toNat * T by omega, Int.natCast_mul]
+    have hp := q32_nr_upscale_residual a.toNat dp.toNat x.toNat T hscale (by omega)
+    exact ⟨by omega, by rw [Int.natCast_mul]; omega⟩
+
+/-- **Full-range LUT-free reciprocal accuracy (`evalQ32Reciprocal_residual_bound`)**: for every
+64-bit word with `16 ≤ |d| ≤ 2^60`, the normalized four-step Newton reciprocal `r` satisfies
+`|r * d - 2^64| ≤ 6 * 2^32 + |d|`, with the sign restored and no intermediate wrap. -/
+theorem evalQ32Reciprocal_residual_bound (d : Word)
+    (hd : 16 ≤ d.toInt.natAbs ∧ d.toInt.natAbs ≤ 2^60) :
+    -(6 * (2 : Int)^32 + d.toInt.natAbs) ≤
+        (evalQ32Reciprocal d).toInt * d.toInt - (2 : Int)^64 ∧
+      (evalQ32Reciprocal d).toInt * d.toInt - (2 : Int)^64 ≤
+        6 * (2 : Int)^32 + d.toInt.natAbs := by
+  have hc := BitVec.toInt_eq_toNat_cond d
+  have hl := d.isLt
+  rw [evalQ32Reciprocal_eq_magnitude]
+  by_cases hneg : d.toInt < 0
+  · have ha : ((-d).toNat : Int) = -d.toInt := by rw [BitVec.toNat_neg]; split at hc <;> omega
+    obtain ⟨hm, hr⟩ := q32ReciprocalMagnitude_residual (-d) (by omega)
+    rw [ha, Int.mul_neg, ← Int.neg_mul] at hr
+    rw [ite_eq_left (by simp [BitVec.slt, hneg]), BitVec.toInt_neg, word_toInt_eq_toNat
+      (q32ReciprocalMagnitude (-d)) (Or.inl (by omega)), Int.bmod_eq_of_le (by omega) (by omega)]
+    omega
+  · have ha : (d.toNat : Int) = d.toInt := by split at hc <;> omega
+    obtain ⟨hm, hr⟩ := q32ReciprocalMagnitude_residual d (by omega)
+    rw [ha] at hr
+    rw [ite_eq_right (by simp [BitVec.slt, hneg]),
+      word_toInt_eq_toNat (q32ReciprocalMagnitude d) (Or.inl (by omega))]
+    omega
+
 theorem checkedQ32Interval_bounds (lo hi : Int) (iv : Q32Interval)
     (h : checkedQ32Interval lo hi = some iv) :
     iv.lo = lo ∧ iv.hi = hi ∧ -((2 : Int)^62) < iv.lo ∧ iv.hi < (2 : Int)^62 := by
@@ -959,15 +1117,10 @@ theorem propagateSsaInterval_bounds (numVars : Nat) (box : Nat → Q32Interval)
       -((2 : Int)^62) < iv.lo ∧ iv.hi < (2 : Int)^62 :=
     fun lo hi hh => (checkedQ32Interval_bounds lo hi iv hh).2.2
   cases n with
-  | const q | param q =>
-    obtain ⟨w, _, hw⟩ := Option.bind_eq_some_iff.mp h
-    exact hc _ _ hw
   | var i =>
     simp only [propagateSsaInterval] at h
-    split at h
-    · exact hc _ _ h
-    · contradiction
-  | neg a =>
+    split at h <;> first | exact hc _ _ h | contradiction
+  | const q | param q | neg a =>
     obtain ⟨x, _, hx⟩ := Option.bind_eq_some_iff.mp h
     exact hc _ _ hx
   | add a b | sub a b | mul a b =>
@@ -977,11 +1130,8 @@ theorem propagateSsaInterval_bounds (numVars : Nat) (box : Nat → Q32Interval)
   | invSafe a =>
     obtain ⟨x, _, hx⟩ := Option.bind_eq_some_iff.mp h
     unfold reciprocalQ32Interval at hx
-    split at hx
-    · exact hc _ _ hx
-    · split at hx
-      · exact hc _ _ hx
-      · contradiction
+    repeat' (split at hx <;> try contradiction)
+    all_goals exact hc _ _ hx
 
 theorem inferSsaDagQ32Intervals_bounds (numVars : Nat) (box : Nat → Q32Interval)
     (params : Nat → Rat) (dag : FluxSsaDag) (ivs : Array Q32Interval)
@@ -997,11 +1147,177 @@ theorem inferSsaDagQ32Intervals_bounds (numVars : Nat) (box : Nat → Q32Interva
   | cons n ns ih =>
     intro acc hb hh
     obtain ⟨iv, hn, ht⟩ := Option.bind_eq_some_iff.mp hh
-    apply ih (acc.push iv) _ ht
-    intro x hx
-    rcases Array.mem_push.mp hx with hx | rfl
-    · exact hb x hx
-    · exact propagateSsaInterval_bounds numVars box params acc n x hn
+    exact ih (acc.push iv) (fun x hx => (Array.mem_push.mp hx).elim (hb x)
+      (fun e => e ▸ propagateSsaInterval_bounds numVars box params acc n iv hn)) ht
+
+private theorem int_mul_le_max (a lo hi t : Int) (h : lo ≤ t ∧ t ≤ hi) :
+    a*t ≤ max (a*lo) (a*hi) := by
+  by_cases h0 : 0 ≤ a
+  · have h1 := Int.mul_le_mul_of_nonneg_left h.2 h0
+    omega
+  · have h1 := Int.mul_le_mul_of_nonneg_left h.1 (show 0 ≤ -a by omega)
+    rw [Int.neg_mul, Int.neg_mul] at h1
+    omega
+
+private theorem int_mul_le_corner (xl xh yl yh x y : Int) (hx : xl ≤ x ∧ x ≤ xh)
+    (hy : yl ≤ y ∧ y ≤ yh) :
+    x*y ≤ max (max (xl*yl) (xl*yh)) (max (xh*yl) (xh*yh)) := by
+  have h1 := int_mul_le_max y xl xh x hx
+  have h2 := int_mul_le_max xl yl yh y hy
+  have h3 := int_mul_le_max xh yl yh y hy
+  rw [Int.mul_comm y x, Int.mul_comm y xl, Int.mul_comm y xh] at h1
+  omega
+
+private theorem int_mul_div_corner_bounds (xl xh yl yh x y : Int) (hx : xl ≤ x ∧ x ≤ xh)
+    (hy : yl ≤ y ∧ y ≤ yh) :
+    min (min (xl*yl/(2 : Int)^32) (xl*yh/(2 : Int)^32))
+        (min (xh*yl/(2 : Int)^32) (xh*yh/(2 : Int)^32)) ≤ x*y/(2 : Int)^32 ∧
+      x*y/(2 : Int)^32 ≤ max (max (xl*yl/(2 : Int)^32) (xl*yh/(2 : Int)^32))
+        (max (xh*yl/(2 : Int)^32) (xh*yh/(2 : Int)^32)) := by
+  have hu := int_mul_le_corner xl xh yl yh x y hx hy
+  have hl := int_mul_le_corner (-xh) (-xl) yl yh (-x) y (by omega) hy
+  simp only [Int.neg_mul] at hl
+  omega
+
+/-- Signed enclosure with the guard bit: `w ∈ [iv.lo, iv.hi] ⊂ (-2^62, 2^62)`. -/
+@[expose, reducible] def q32Encloses (iv : Q32Interval) (w : Word) : Prop :=
+  -((2 : Int)^62) < iv.lo ∧ iv.lo ≤ w.toInt ∧ w.toInt ≤ iv.hi ∧ iv.hi < (2 : Int)^62
+
+/-- Unbounded-integer meaning of one SSA node over the words already evaluated. -/
+def q32NodeIntSem (inputs : Nat → Word) (params : Nat → Rat) (vals : Array Word) :
+    FluxSsaNode → Int
+  | .const q => ratToQ32Scaled q
+  | .var i => (inputs i).toInt
+  | .param p => ratToQ32Scaled (params p)
+  | .neg a => -(vals.getD a 0#64).toInt
+  | .add a b => (vals.getD a 0#64).toInt + (vals.getD b 0#64).toInt
+  | .sub a b => (vals.getD a 0#64).toInt - (vals.getD b 0#64).toInt
+  | .mul a b => (vals.getD a 0#64).toInt * (vals.getD b 0#64).toInt / (2 : Int)^32
+  | .invSafe a => (evalQ32Reciprocal (vals.getD a 0#64)).toInt
+
+/-- One accepted propagation step: the evaluated word lies in the inferred interval and equals
+the unbounded-integer node meaning, so no signed 64-bit wrap occurred. -/
+theorem propagateSsaInterval_encloses (numVars : Nat) (box : Nat → Q32Interval)
+    (params : Nat → Rat) (inputs : Nat → Word)
+    (hin : ∀ i, i < numVars → (box i).lo ≤ (inputs i).toInt ∧ (inputs i).toInt ≤ (box i).hi)
+    (acc : Array Q32Interval) (vals : Array Word)
+    (hacc : ∀ j iv, acc[j]? = some iv → q32Encloses iv (vals.getD j 0#64))
+    (n : FluxSsaNode) (iv : Q32Interval)
+    (h : propagateSsaInterval numVars box params acc n = some iv) :
+    q32Encloses iv (evalFluxSsaNodeQ32 inputs params vals n) ∧
+      (evalFluxSsaNodeQ32 inputs params vals n).toInt = q32NodeIntSem inputs params vals n := by
+  have hwrap : ∀ (lo hi z : Int) (w : Word), checkedQ32Interval lo hi = some iv →
+      (w.toInt = z ∨ w.toInt = z.bmod (2^64)) → lo ≤ z → z ≤ hi →
+      q32Encloses iv w ∧ w.toInt = z := by
+    intro lo hi z w hh hw h1 h2
+    obtain ⟨e1, e2, b1, b2⟩ := checkedQ32Interval_bounds lo hi iv hh
+    have e : w.toInt = z :=
+      hw.elim id fun hw => hw.trans (Int.bmod_eq_of_le (by omega) (by omega))
+    exact ⟨⟨b1, by omega, by omega, b2⟩, e⟩
+  cases n with
+  | const q | param q =>
+    obtain ⟨w, hw, hiv⟩ := Option.bind_eq_some_iff.mp h
+    obtain ⟨hs, _, _⟩ := ratToQ32Checked_sound _ w hw
+    exact hwrap _ _ (ratToQ32Scaled _) (ratToQ32Word _) hiv (.inr (BitVec.toInt_ofInt ..))
+      (by omega) (by omega)
+  | var i =>
+    simp only [propagateSsaInterval] at h
+    split at h
+    · exact hwrap _ _ _ (inputs i) h (.inl rfl) (hin i ‹_›).1 (hin i ‹_›).2
+    · contradiction
+  | neg a =>
+    obtain ⟨x, hx, hiv⟩ := Option.bind_eq_some_iff.mp h
+    obtain ⟨_, xl, xh, _⟩ := hacc a x hx
+    exact hwrap _ _ (-(vals.getD a 0#64).toInt) (-vals.getD a 0#64) hiv
+      (.inr (BitVec.toInt_neg ..)) (by omega) (by omega)
+  | add a b =>
+    obtain ⟨x, hx, h'⟩ := Option.bind_eq_some_iff.mp h
+    obtain ⟨y, hy, hiv⟩ := Option.bind_eq_some_iff.mp h'
+    obtain ⟨_, xl, xh, _⟩ := hacc a x hx
+    obtain ⟨_, yl, yh, _⟩ := hacc b y hy
+    exact hwrap _ _ ((vals.getD a 0#64).toInt + (vals.getD b 0#64).toInt)
+      (vals.getD a 0#64 + vals.getD b 0#64) hiv (.inr (BitVec.toInt_add ..)) (by omega) (by omega)
+  | sub a b =>
+    obtain ⟨x, hx, h'⟩ := Option.bind_eq_some_iff.mp h
+    obtain ⟨y, hy, hiv⟩ := Option.bind_eq_some_iff.mp h'
+    obtain ⟨_, xl, xh, _⟩ := hacc a x hx
+    obtain ⟨_, yl, yh, _⟩ := hacc b y hy
+    exact hwrap _ _ ((vals.getD a 0#64).toInt - (vals.getD b 0#64).toInt)
+      (vals.getD a 0#64 - vals.getD b 0#64) hiv (.inr (BitVec.toInt_sub ..)) (by omega) (by omega)
+  | mul a b =>
+    obtain ⟨x, hx, h'⟩ := Option.bind_eq_some_iff.mp h
+    obtain ⟨y, hy, hiv⟩ := Option.bind_eq_some_iff.mp h'
+    obtain ⟨xb1, xl, xh, xb2⟩ := hacc a x hx
+    obtain ⟨yb1, yl, yh, yb2⟩ := hacc b y hy
+    obtain ⟨hlo, hhi⟩ := int_mul_div_corner_bounds x.lo x.hi y.lo y.hi
+      (vals.getD a 0#64).toInt (vals.getD b 0#64).toInt ⟨xl, xh⟩ ⟨yl, yh⟩
+    obtain ⟨e1, e2, b1, b2⟩ := checkedQ32Interval_bounds _ _ iv hiv
+    rw [← e1] at hlo; rw [← e2] at hhi
+    have e := qmul32_toInt (vals.getD a 0#64) (vals.getD b 0#64) (by omega)
+    rw [← e] at hlo hhi
+    exact ⟨⟨b1, hlo, hhi, b2⟩, e⟩
+  | invSafe a =>
+    obtain ⟨x, hx, hiv⟩ := Option.bind_eq_some_iff.mp h
+    obtain ⟨xb1, xl, xh, xb2⟩ := hacc a x hx
+    unfold reciprocalQ32Interval at hiv
+    split at hiv
+    · rename_i hp
+      have hr := evalQ32Reciprocal_residual_bound (vals.getD a 0#64) (by omega)
+      obtain ⟨r1, r2⟩ := q32_interval_of_residual x.lo x.hi (vals.getD a 0#64).toInt
+        (evalQ32Reciprocal (vals.getD a 0#64)).toInt hp.1 ⟨xl, xh⟩ (by omega)
+      exact hwrap _ _ _ (evalQ32Reciprocal (vals.getD a 0#64)) hiv (.inl rfl) r1 r2
+    · split at hiv
+      · rename_i hn
+        have hr := evalQ32Reciprocal_residual_bound (vals.getD a 0#64) (by omega)
+        obtain ⟨r1, r2⟩ := q32_interval_of_residual (-x.hi) (-x.lo) (-(vals.getD a 0#64).toInt)
+          (-(evalQ32Reciprocal (vals.getD a 0#64)).toInt) (by omega) (by omega)
+          (by rw [Int.neg_mul_neg]; omega)
+        exact hwrap _ _ _ (evalQ32Reciprocal (vals.getD a 0#64)) hiv (.inl rfl)
+          (Int.neg_le_of_neg_le r2) (Int.le_neg_of_le_neg r1)
+      · contradiction
+
+/-- **Signed Q32 interval soundness (`inferSsaDagQ32Intervals_encloses_eval`)**: when inference
+accepts a DAG and every input word lies in its declared box, every evaluated SSA word lies in its
+inferred guard-bit interval, so every DAG output stays strictly inside `(-2^62, 2^62)`. -/
+theorem inferSsaDagQ32Intervals_encloses_eval (numVars : Nat) (box : Nat → Q32Interval)
+    (params : Nat → Rat) (dag : FluxSsaDag) (ivs : Array Q32Interval)
+    (h : inferSsaDagQ32Intervals numVars box params dag = some ivs) (inputs : Nat → Word)
+    (hin : ∀ i, i < numVars → (box i).lo ≤ (inputs i).toInt ∧ (inputs i).toInt ≤ (box i).hi) :
+    (∀ j iv, ivs[j]? = some iv → q32Encloses iv ((dag.nodes.foldl
+      (fun a n => a.push (evalFluxSsaNodeQ32 inputs params a n)) #[]).getD j 0#64)) ∧
+    ∀ w ∈ evalFluxSsaDagQ32 inputs params dag,
+      -((2 : Int)^62) < w.toInt ∧ w.toInt < (2 : Int)^62 := by
+  have key : ∀ (ns : List FluxSsaNode) (acc : Array Q32Interval) (vals : Array Word),
+      vals.size = acc.size →
+      (∀ j iv, acc[j]? = some iv → q32Encloses iv (vals.getD j 0#64)) →
+      inferNodesQ32Intervals numVars box params ns acc = some ivs →
+      (ns.foldl (fun a n => a.push (evalFluxSsaNodeQ32 inputs params a n)) vals).size = ivs.size ∧
+      ∀ j iv, ivs[j]? = some iv → q32Encloses iv
+        ((ns.foldl (fun a n => a.push (evalFluxSsaNodeQ32 inputs params a n)) vals).getD j 0#64) := by
+    intro ns
+    induction ns with
+    | nil => intro acc vals hs ha h; cases Option.some.inj h; exact ⟨hs, ha⟩
+    | cons n ns ih =>
+      intro acc vals hs ha h
+      obtain ⟨iv, hn, ht⟩ := Option.bind_eq_some_iff.mp h
+      refine ih (acc.push iv) (vals.push _) (by simp [hs]) ?_ ht
+      intro j iv' hj
+      rw [Array.getElem?_push] at hj
+      rw [Array.getD_eq_getD_getElem?, Array.getElem?_push]
+      split at hj
+      · cases Option.some.inj hj
+        rw [ite_eq_left (by omega)]
+        exact (propagateSsaInterval_encloses numVars box params inputs hin acc vals ha n _ hn).1
+      · rw [ite_eq_right (by omega), ← Array.getD_eq_getD_getElem?]; exact ha j iv' hj
+  obtain ⟨hs, he⟩ := key dag.nodes #[] #[] rfl (by simp) h
+  refine ⟨he, ?_⟩
+  intro w hw
+  obtain ⟨r, _, rfl⟩ := List.mem_map.mp hw
+  by_cases hr : r < ivs.size
+  · obtain ⟨b1, l, u, b2⟩ := he r ivs[r] (Array.getElem?_eq_getElem hr)
+    omega
+  · rw [Array.getD_eq_getD_getElem?, Array.getElem?_eq_none (by omega)]
+    decide
 
 /-- Canonical admissible state box: declared positive variables are in [0.5,4]. -/
 def pdeQ32StateBox (spec : ConservationLawSpec) (i : Nat) : Q32Interval :=
@@ -1012,6 +1328,23 @@ def pdeQ32StateBox (spec : ConservationLawSpec) (i : Nat) : Q32Interval :=
 def checkPdeQ32Intervals (spec : ConservationLawSpec) : Bool :=
   (specializeFluxSweep spec).axisFluxDags.all fun dag =>
     (inferSsaDagQ32Intervals spec.numVars (pdeQ32StateBox spec) spec.paramEnv dag).isSome
+
+/-- Every accepted solver keeps each directional flux output word inside the guard-bit range
+for all inputs in the canonical state box. -/
+theorem checkPdeQ32Intervals_sound (spec : ConservationLawSpec)
+    (h : checkPdeQ32Intervals spec = true) (inputs : Nat → Word)
+    (hin : ∀ i, i < spec.numVars → (pdeQ32StateBox spec i).lo ≤ (inputs i).toInt ∧
+      (inputs i).toInt ≤ (pdeQ32StateBox spec i).hi) :
+    ∀ dag ∈ (specializeFluxSweep spec).axisFluxDags,
+      ∀ w ∈ evalFluxSsaDagQ32 inputs spec.paramEnv dag,
+        -((2 : Int)^62) < w.toInt ∧ w.toInt < (2 : Int)^62 := by
+  intro dag hm
+  unfold checkPdeQ32Intervals at h
+  rw [List.all_eq_true] at h
+  obtain ⟨ivs, hivs⟩ := Option.isSome_iff_exists.mp (h dag hm)
+  exact (inferSsaDagQ32Intervals_encloses_eval _ _ _ _ ivs hivs inputs hin).2
+example : checkPdeQ32Intervals ⟨"inv", ["x"], ["u"], [], [.stateVar 0], [[.invSafe (.var 0)]], 1, 1/2,
+    .minmod⟩ = true := by decide +kernel
 
 /-- Check fixed-point constants before any modular encoding, including specialized flux constants. -/
 def checkPdeQ32Constants (spec : ConservationLawSpec) : Bool :=

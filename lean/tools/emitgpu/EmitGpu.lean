@@ -141,11 +141,26 @@ private def pdeMhdFlux (axis : Nat) : List FluxExpr :=
         (.mul (velocities.getD j (.const 0)) bn)) ++
     [.sub (.mul (.add (.var 7) pressure) v) (.mul bn vDotB), .mul (.const 4) bn]
 
+/-- Source-free principal flux of the 1+1 Bona–Massó system over `(alpha, gxx, Ax, Dx, Kxx)`:
+shift `beta = 1/5`, slicing `fBM = 2`, and one shared trace `trK = Kxx / gxx`. -/
+private def pdeBonaMassoFlux : List FluxExpr :=
+  let beta := FluxExpr.const (1/5)
+  let trK := FluxExpr.mul (.var 4) (.invSafe (.var 1))
+  let advect := fun i => FluxExpr.neg (.mul beta (.var i))
+  [advect 0, advect 1,
+   .add (advect 2) (.mul (.const 2) (.mul (.var 0) trK)),
+   .add (advect 3) (.mul (.var 0) trK),
+   .add (advect 4) (.mul (.var 0) (.var 2))]
+
 private def writePdeVerilate (root : System.FilePath) : IO Unit := do
   let mut manifest : List String := []
-  for (modelName, names, axes, flux) in
-      [("EulerGas3D", ["rho", "rhou", "rhov", "rhow", "E"], 3, pdeEulerFlux),
-       ("IdealMhd8Wave", ["rho", "rhou", "rhov", "rhow", "Bx", "By", "Bz", "E", "psi"], 2, pdeMhdFlux)] do
+  for (modelName, names, axes, flux, state) in
+      [("EulerGas3D", ["rho", "rhou", "rhov", "rhow", "E"], 3, pdeEulerFlux,
+        fun (rho sign : Rat) => [rho, sign*3/4, -sign/2, sign/4, 8]),
+       ("IdealMhd8Wave", ["rho", "rhou", "rhov", "rhow", "Bx", "By", "Bz", "E", "psi"], 2, pdeMhdFlux,
+        fun rho sign => [rho, sign*3/4, -sign/2, sign/4, 1/2, -1/4, 3/8, 8, sign/8]),
+       ("BonaMasso1D", ["alpha", "gxx", "Ax", "Dx", "Kxx"], 1, fun _ => pdeBonaMassoFlux,
+        fun rho sign => [rho, 5/4 - sign/2, sign*3/4, -sign/2, sign*3/2])] do
     for axis in List.range axes do
       let name := s!"{modelName}_axis{axis}"
       let dag := compileFluxSsaDag none (flux axis)
@@ -157,8 +172,7 @@ private def writePdeVerilate (root : System.FilePath) : IO Unit := do
       let mut cpp := s!"#include <cstdint>\n#include <cstdio>\n#include <verilated.h>\n#include \"V{name}.h\"\nint main() " ++ "{ " ++ s!"V{name} top; top.clk=0; top.rst=1; top.eval(); top.clk=1; top.eval(); top.rst=0;\n"
       for (rho, index) in ([1/2, 3/2, 2, 5/4, 1, 4] : List Rat).zipIdx do
         let sign : Rat := if index % 2 == 0 then 1 else -1
-        let values := if names.length == 5 then [rho, sign*3/4, -sign/2, sign/4, 8]
-          else [rho, sign*3/4, -sign/2, sign/4, 1/2, -1/4, 3/8, 8, sign/8]
+        let values := state rho sign
         let words := values.map ratToQ32Word
         let inputs := fun i => words.getD i 0#64
         let expected := evalFluxSsaDagQ32 inputs (fun _ => 0) dag
@@ -178,20 +192,23 @@ private def writePdeVerilate (root : System.FilePath) : IO Unit := do
       cpp := cpp ++ s!"std::puts(\"{name}: 6 vectors, 0 ULP mismatch\"); return 0; " ++ "}\n"
       IO.FS.writeFile (dir / "test.cpp") cpp
       manifest := name :: manifest
-      IO.println s!"  {name}: {m.wires.length} wires, six signed/non-unit-density vectors -> {dir}"
+      IO.println s!"  {name}: {m.wires.length} wires, six signed vectors with varying density or lapse -> {dir}"
   IO.FS.writeFile (root / "modules.txt") (String.intercalate "\n" manifest.reverse ++ "\n")
 
 open Obend.Analysis.HyperbolicPde Obend.Hardware.Gpu.StencilTile
 
 private def pdeSpec (kind : Nat) : ConservationLawSpec :=
-  let m := if kind == 0 then 1 else if kind == 1 then 5 else 9
-  let dims := if kind == 0 then 1 else if kind == 1 then 3 else 2
-  { name := if kind == 0 then "burgers-1d-q32" else if kind == 1 then "euler-3d-q32" else "mhd-8wave-q32"
+  let m := if kind == 0 then 1 else if kind == 2 then 9 else 5
+  let dims := if kind == 1 then 3 else if kind == 2 then 2 else 1
+  { name := if kind == 0 then "burgers-1d-q32" else if kind == 1 then "euler-3d-q32"
+      else if kind == 2 then "mhd-8wave-q32" else "bona-masso-1d-q32"
     coords := (List.range dims).map (fun i => s!"x{i}"), vars := (List.range m).map (fun i => s!"u{i}")
-    params := [], domain := if kind == 0 then [] else [.stateVar 0]
+    params := [], domain := if kind == 0 then [] else if kind == 3 then [.stateVar 0, .stateVar 1]
+      else [.stateVar 0]
     fluxes := (List.range dims).map fun axis => if kind == 0 then [.mul (.const (1/2)) (.mul (.var 0) (.var 0))]
-      else if kind == 1 then pdeEulerFlux axis else pdeMhdFlux axis
-    aMax := 4, cfl := 1/16, limiter := .minmod }
+      else if kind == 1 then pdeEulerFlux axis else if kind == 2 then pdeMhdFlux axis
+      else pdeBonaMassoFlux
+    aMax := if kind == 3 then 9 else 4, cfl := if kind == 3 then 1/10 else 1/16, limiter := .minmod }
 
 private def pdeInput (kind variant : Nat) (dims : List Nat) : List (List Word) :=
   let spec := pdeSpec kind
@@ -201,7 +218,9 @@ private def pdeInput (kind variant : Nat) (dims : List Nat) : List (List Word) :
     let rho : Rat := if x < 4 then 3/2 else 3/4
     ratToQ32Word (if kind == 0 then 1/2 + wave else if kind == 1 then
       ([rho, rho*wave, rho*(1/8), -rho*(1/16), if x < 4 then 3 else 2] : List Rat).getD c 0
-      else ([rho, rho*(1/8), -rho*wave, rho*wave, 1/2, wave, -wave, 3, 0] : List Rat).getD c 0)
+      else if kind == 2 then
+      ([rho, rho*(1/8), -rho*wave, rho*wave, 1/2, wave, -wave, 3, 0] : List Rat).getD c 0
+      else ([rho, 1 + wave, wave, 1/8, -rho*wave] : List Rat).getD c 0)
 
 private def pdeNeighbor (b : StencilBoundary) (dims : List Nat) (axis idx : Nat) (offset : Int) : Nat :=
   let coords := decodeMultiIdx dims idx
@@ -229,9 +248,9 @@ private def pdeRatReference (spec : ConservationLawSpec) (b : StencilBoundary) (
     u 0 c-spec.cfl*(face 0-face (-1))
 
 private def writePdeNonlinear (root : System.FilePath) (plant : Plant) : IO Unit := do
-  for kind in [:3] do
+  for kind in [:4] do
     let spec := pdeSpec kind
-    let dims := if kind == 0 then [8] else if kind == 1 then [4,2,2] else [4,4]
+    let dims := if kind == 1 then [4,2,2] else if kind == 2 then [4,4] else [8]
     let dir := root / spec.name
     IO.println s!"  {spec.name}: compiling shared nonlinear array source"
     (← IO.getStdout).flush

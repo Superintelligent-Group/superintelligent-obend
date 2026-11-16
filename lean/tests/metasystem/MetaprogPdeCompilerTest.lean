@@ -180,9 +180,10 @@ import all Obend.Judge.RealAnalysis
 # Metaprogrammed Multi-Dimensional Nonlinear PDE Solver & Accelerator Test Suite
 
 End-to-end verification of `#pde_solver` (`Obend.Elab.PdeSolverElab`), `SymDiffAndFlux`,
-`NonlinearMultiDPde`, and `MultiDStencilTile` across 5 real nonlinear and multi-dimensional
-conservation-law systems, adversarial boundary/domain/CFL edge cases, 30 `#tooth` mutation-kill
-witnesses, and computational choice / axiom tree audits.
+`NonlinearMultiDPde`, and `MultiDStencilTile` across Burgers, 3D Euler, 8-wave GLM MHD,
+curved-spacetime Maxwell, Vlasov–Poisson and the 1+1 Bona–Massó principal system, adversarial
+boundary/domain/CFL edge cases, `#tooth` mutation witnesses, and computational choice / axiom
+tree audits.
 -/
 
 public section
@@ -200,7 +201,7 @@ open Obend.Tactic.SymDiffAndFlux
 open Obend.Elab.PdeSolverElab
 set_option autoImplicit false
 
-/-! ## 1. Five Real Nonlinear & Multi-Dimensional Conservation-Law Systems via `#pde_solver` -/
+/-! ## 1. Nonlinear & Multi-Dimensional Conservation-Law Systems via `#pde_solver` -/
 
 -- 1.1: 1D Nonlinear Inviscid Burgers Equation: ∂_t u + ∂_x (1/2 u^2) = 0
 #pde_solver Burgers1D :=
@@ -341,6 +342,32 @@ set_option autoImplicit false
      (wavespeed 3 1/6)
      (limiter minmod))"
 
+-- 1.6: 1+1 Bona–Massó hyperbolic ADM relativity, principal part only.
+-- `BonaMasso1D` models the source-free principal flux operator ∂_t U + ∂_x F^x(U) = 0 of the
+-- Bona–Massó–Seidel–Stela (1995) 1+1 first-order hyperbolic ADM system, with
+-- U = (alpha, gxx, Ax, Dx, Kxx), lapse alpha > 0, spatial metric gxx > 0, constant shift
+-- beta = 1/5, slicing function fBM = 2, and the trace trK = Kxx / gxx shared by CSE between the
+-- Ax and Dx fluxes. The inhomogeneous source terms S(U) of the full system (for example
+-- -2 alpha Kxx in the gxx equation) are not part of this operator and are not modelled here.
+-- The declared wavespeed 9 bounds |beta| + alpha sqrt(fBM / gxx) on the Q32 state box
+-- alpha, gxx in [1/2, 4]; Lean takes it as a parameter and does not derive it.
+#pde_solver BonaMasso1D :=
+  "(conservation-law
+     (name BonaMasso1D)
+     (coords x)
+     (vars alpha gxx Ax Dx Kxx)
+     (params (fBM 2) (beta 1/5))
+     (domain (> alpha 0) (> gxx 0))
+     (fluxes
+       (x (let ((trK (/ Kxx gxx)))
+            (- (* beta alpha))
+            (- (* beta gxx))
+            (+ (- (* beta Ax)) (* fBM (* alpha trK)))
+            (+ (- (* beta Dx)) (* alpha trK))
+            (+ (- (* beta Kxx)) (* alpha Ax)))))
+     (wavespeed 9 1/10)
+     (limiter minmod))"
+
 /-! ## 2. Inhabitedness, Exact Symbolic Fréchet AD, Tadmor Entropy & Symmetrizer Proofs -/
 
 -- Strict compile-time Futamura + CSE FLOP reduction on nonlinear multi-D Euler & 8-wave MHD:
@@ -349,6 +376,8 @@ set_option autoImplicit false
 #guard IdealMhd8Wave.spec.numDims == 2 && IdealMhd8Wave.spec.numVars == 9
 #guard CurvedSpacetimeMaxwell.spec.numDims == 3 && CurvedSpacetimeMaxwell.spec.numVars == 6
 #guard VlasovPoissonPhase.spec.numDims == 2 && VlasovPoissonPhase.spec.numVars == 2
+#guard BonaMasso1D.spec.numDims == 1 && BonaMasso1D.spec.numVars == 5
+#guard BonaMasso1D.specializedPlan.specializedTotalFlops < BonaMasso1D.specializedPlan.naiveTotalFlops
 #guard EulerGas3D.specializedPlan.specializedTotalFlops < EulerGas3D.specializedPlan.naiveTotalFlops
 #guard IdealMhd8Wave.specializedPlan.specializedTotalFlops < IdealMhd8Wave.specializedPlan.naiveTotalFlops
 #guard CurvedSpacetimeMaxwell.specializedPlan.specializedTotalFlops <
@@ -404,6 +433,90 @@ example :
         (getOr fluxX 1 (.const 0)) ⟨eulerTestState, EulerGas3D.spec.paramEnv⟩ eulerTestPerturb h :=
   EulerGas3D.jacobian_frechet_sound 0 1 (by decide) (by decide)
     eulerTestState eulerTestPerturb (1 / 10) eulerTestState_domainValid eulerTestShifted_domainValid
+
+-- Bona–Massó: a positive-lapse, positive-metric state and perturbation (inhabited `DomainValid`).
+def bonaMassoTestState : Vec
+  | 0 => 1        -- alpha = 1 > 0
+  | 1 => 5 / 4    -- gxx = 5/4 > 0
+  | 2 => 1 / 10   -- Ax
+  | 3 => -1 / 5   -- Dx
+  | 4 => 1 / 4    -- Kxx
+  | _ => 0
+
+def bonaMassoTestPerturb : Vec
+  | 0 => 1 / 2
+  | 1 => -1 / 4
+  | 2 => 1
+  | 3 => 1 / 3
+  | 4 => -1
+  | _ => 0
+
+theorem bonaMassoTestState_domainValid :
+    DomainValid BonaMasso1D.spec.domain ⟨bonaMassoTestState, BonaMasso1D.spec.paramEnv⟩ := by
+  intro t ht
+  have htEq : t = .stateVar 0 ∨ t = .stateVar 1 := by
+    revert ht; decide +kernel +revert
+  rcases htEq with rfl | rfl <;> decide +kernel
+
+theorem bonaMassoTestShifted_domainValid :
+    DomainValid BonaMasso1D.spec.domain
+      (shiftVecEnv BonaMasso1D.spec.numVars
+        ⟨bonaMassoTestState, BonaMasso1D.spec.paramEnv⟩ (1 / 10) bonaMassoTestPerturb) := by
+  intro t ht
+  have htEq : t = .stateVar 0 ∨ t = .stateVar 1 := by
+    revert ht; decide +kernel +revert
+  rcases htEq with rfl | rfl <;> simp only [shiftVecEnv] <;> decide +kernel
+
+-- `BonaMasso1D.jacobian_frechet_sound` on the nonlinear `Ax` flux `-beta Ax + fBM alpha Kxx / gxx`:
+example :
+    let fluxX := getOr BonaMasso1D.spec.fluxes 0 []
+    let jacX := getOr BonaMasso1D.jacobians 0 []
+    let h : Rat := 1 / 10
+    evalFlux (getOr fluxX 2 (.const 0))
+        (shiftVecEnv BonaMasso1D.spec.numVars ⟨bonaMassoTestState, BonaMasso1D.spec.paramEnv⟩ h
+          bonaMassoTestPerturb) -
+      evalFlux (getOr fluxX 2 (.const 0)) ⟨bonaMassoTestState, BonaMasso1D.spec.paramEnv⟩ =
+      h * mulVec BonaMasso1D.spec.numVars
+        (evalSymJacobianMat jacX ⟨bonaMassoTestState, BonaMasso1D.spec.paramEnv⟩) bonaMassoTestPerturb 2 +
+      (h * h) * symDirectionalRem BonaMasso1D.spec.numVars
+        (getOr fluxX 2 (.const 0)) ⟨bonaMassoTestState, BonaMasso1D.spec.paramEnv⟩ bonaMassoTestPerturb h :=
+  BonaMasso1D.jacobian_frechet_sound 0 2 (by decide) (by decide)
+    bonaMassoTestState bonaMassoTestPerturb (1 / 10)
+    bonaMassoTestState_domainValid bonaMassoTestShifted_domainValid
+
+/-- Every two-state Bona–Massó Rusanov fluctuation pair telescopes to the flux difference, for all
+states with positive lapse and metric. -/
+theorem bonaMasso_fluctuation_conservative (i : Nat) (hi : i < BonaMasso1D.spec.numVars)
+    (uL uR : Vec)
+    (hL : DomainValid BonaMasso1D.spec.domain ⟨uL, BonaMasso1D.spec.paramEnv⟩)
+    (hR : DomainValid BonaMasso1D.spec.domain ⟨uR, BonaMasso1D.spec.paramEnv⟩) :
+    let fluxX := getOr BonaMasso1D.spec.fluxes 0 []
+    rusanovFluctMinus fluxX BonaMasso1D.spec.paramEnv BonaMasso1D.spec.aMax uL uR i +
+        rusanovFluctPlus fluxX BonaMasso1D.spec.paramEnv BonaMasso1D.spec.aMax uL uR i =
+      evalFlux (getOr fluxX i (.const 0)) ⟨uR, BonaMasso1D.spec.paramEnv⟩ -
+        evalFlux (getOr fluxX i (.const 0)) ⟨uL, BonaMasso1D.spec.paramEnv⟩ :=
+  (BonaMasso1D.fluctuation_conservative 0 i (by decide) hi uL uR hL hR).1
+
+/-- Lie and Strang Bona–Massó sweeps conserve every component integral on every nonempty ring. -/
+theorem bonaMasso_sweep_conserves (N : Nat) (hN : 0 < N) (ν : Rat) (U : MultiDGrid) (c : Nat) :
+    let axisFlux := fun d => rusanovNonlinearFlux (getOr BonaMasso1D.spec.fluxes d [])
+      BonaMasso1D.spec.paramEnv BonaMasso1D.spec.aMax
+    totalGridIntegral [N] (evalMultiDSweep [N] ν axisFlux U) c = totalGridIntegral [N] U c ∧
+      totalGridIntegral [N] (evalStrangSweep [N] ν axisFlux U) c = totalGridIntegral [N] U c :=
+  (BonaMasso1D.sweep_conserves_integral [N]
+    (fun M hM => by rw [List.mem_singleton] at hM; omega)).1 ν U c
+
+/-- Q32.32 overflow-freedom for Bona–Massó: for every word state in the canonical box (lapse and
+metric in `[1/2, 4]`, the rest in `[-4, 4]`), every flux word, including the shared Newton
+reciprocal `1 / gxx`, stays strictly inside `(-2^62, 2^62)`. -/
+theorem bonaMasso_q32_flux_guarded (inputs : Nat → Word)
+    (hin : ∀ i, i < BonaMasso1D.spec.numVars →
+      (pdeQ32StateBox BonaMasso1D.spec i).lo ≤ (inputs i).toInt ∧
+      (inputs i).toInt ≤ (pdeQ32StateBox BonaMasso1D.spec i).hi) :
+    ∀ dag ∈ BonaMasso1D.specializedPlan.axisFluxDags,
+      ∀ w ∈ evalFluxSsaDagQ32 inputs BonaMasso1D.spec.paramEnv dag,
+        -((2 : Int)^62) < w.toInt ∧ w.toInt < (2 : Int)^62 :=
+  (checkPdeSolverSpec_sound BonaMasso1D.spec [] (by decide +kernel) (by simp)).2.2.2.2.2 inputs hin
 
 -- Concrete Tadmor Quadratic Entropy Dissipation for Nonlinear Burgers:
 -- η(u) = 1/2 u^2, v(u) = u, q(u) = 1/3 u^3, ψ(u) = v(u)f(u) - q(u) = 1/6 u^3,
@@ -589,6 +702,7 @@ def vpInitState : PdeRolloutState :=
 -- Signed propagation accepts physical positive-density boxes.
 #guard checkPdeQ32Intervals EulerGas3D.spec
 #guard checkPdeQ32Intervals IdealMhd8Wave.spec
+#guard checkPdeQ32Intervals BonaMasso1D.spec && checkRtlModule (BonaMasso1D.systolicRtl 0)
 #guard checkRtlModule (EulerGas3D.systolicRtl 0) &&
        checkRtlModule (IdealMhd8Wave.systolicRtl 1) &&
        checkRtlModule (CurvedSpacetimeMaxwell.systolicRtl 2) &&
@@ -600,6 +714,10 @@ example : checkPdeSolverSpec EulerGas3D.spec = true := by decide +kernel
 example : checkPdeSolverSpec IdealMhd8Wave.spec = true := by decide +kernel
 example : checkPdeSolverSpec CurvedSpacetimeMaxwell.spec = true := by decide +kernel
 example : checkPdeSolverSpec VlasovPoissonPhase.spec = true := by decide +kernel
+example : checkPdeSolverSpec BonaMasso1D.spec = true := by decide +kernel
+-- Without the `gxx > 0` declaration the shared `trK = Kxx / gxx` is refused.
+example : checkPdeSolverSpec { BonaMasso1D.spec with domain := [.stateVar 0] } = false := by
+  decide +kernel
 example : checkPdeSolverSpec { Burgers1D.spec with cfl := (2 : Rat)^32 } = false := by decide +kernel
 example : checkPdeSolverSpec { Burgers1D.spec with
     fluxes := [[.const ((2 : Rat)^32)]] } = false := by decide +kernel
@@ -642,6 +760,16 @@ example : evalQ32Reciprocal 4503599627370496#64 = 4095#64 := by decide +kernel
 
 #tooth reciprocalTwo by mutation evalQ32Reciprocal := fun d => evalAluOp .qmul32 (ratToQ32Word 1) d
 
+-- Full-range residual: a non-reciprocal datapath and a dropped normalization shift each lose
+-- the universal proof.
+#tooth evalQ32Reciprocal_residual_bound by mutation evalQ32Reciprocal :=
+  fun d => evalAluOp .qmul32 (ratToQ32Word 1) d
+#tooth evalQ32Reciprocal_residual_bound by mutation q32NormalizeStep := fun _ u k => (u, k)
+-- The premise is inhabited at both ends of the accepted range and at both signs.
+example := evalQ32Reciprocal_residual_bound 16#64 (by decide +kernel)
+example := evalQ32Reciprocal_residual_bound (BitVec.ofInt 64 (-1152921504606846976))
+  (by decide +kernel)
+
 def zeroCrossingQ32 : Q32Interval := ⟨-((2 : Int)^32), (2 : Int)^32, by decide⟩
 example : propagateSsaInterval 1 (fun _ => zeroCrossingQ32) (fun _ => 0)
     #[zeroCrossingQ32] (.invSafe 0) = none := by decide +kernel
@@ -656,6 +784,21 @@ example : reciprocalQ32Interval ⟨-15, -1, by decide⟩ = none := by decide +ke
 
 #tooth propagateSsaInterval_refuses_zero_crossing by mutation reciprocalQ32Interval := fun iv => some iv
 #tooth checkPdeSolverSpec_q32Intervals by mutation checkPdeSolverSpec := fun _ => true
+
+-- Enclosure soundness: an interval rule without the guard bit, a reciprocal rule that returns
+-- its argument, an inference that skips every node, and an accept-all gate each lose the proof.
+def unguardedQ32Interval (lo hi : Int) : Option Q32Interval :=
+  if h : lo ≤ hi then some ⟨lo, hi, h⟩ else none
+#tooth inferSsaDagQ32Intervals_encloses_eval by mutation checkedQ32Interval := unguardedQ32Interval
+#tooth inferSsaDagQ32Intervals_encloses_eval by mutation reciprocalQ32Interval := fun iv => some iv
+#tooth inferSsaDagQ32Intervals_encloses_eval by mutation inferNodesQ32Intervals :=
+  fun _ _ _ _ acc => some acc
+#tooth checkPdeQ32Intervals_sound by mutation checkPdeQ32Intervals := fun _ => true
+#tooth checkPdeSolverSpec_sound by mutation checkPdeQ32Intervals := fun _ => true
+-- The input hypothesis is needed: the word `2^47` (outside every state box) squares to `2^62`.
+example : (evalFluxSsaDagQ32 (fun _ => 140737488355328#64) (fun _ => 0)
+    ⟨[.var 0, .mul 0 0], [1]⟩).all (fun w => decide (w.toInt < (2 : Int)^62)) = false := by
+  decide +kernel
 
 -- Both backends use the signed floor product, including negative fractional words.
 #tooth scalarQmul32_eval_eq_qmul32 by mutation scalarQmul32 := fun a _ => a
@@ -686,7 +829,7 @@ private theorem reciprocalRtlTwo (d : Word) (hd : d = 8589934592#64) :
 #tooth evalNonlinearFluxCellQ32_constant by mutation evalNonlinearFluxCellQ32 :=
   fun spec _ sample => (List.range spec.numVars).map (fun c => sample 0 c + sample 0 c)
 
-#guard [Burgers1D.spec, EulerGas3D.spec, IdealMhd8Wave.spec].all fun spec =>
+#guard [Burgers1D.spec, EulerGas3D.spec, IdealMhd8Wave.spec, BonaMasso1D.spec].all fun spec =>
   let dims := List.replicate spec.numDims 2
   let grids := fun c => List.replicate (gridCellCount dims) (ratToQ32Word (if c == 0 then 3/2 else 1/4))
   evalFused grids (buildSpecFusedGpuKernel spec .periodic dims) == (List.range spec.numVars).map grids
@@ -697,7 +840,7 @@ def nonlinearSourceValues (spec : ConservationLawSpec) (dims : List Nat) (axis :
   (compileMultiDNonlinearFluxSweepSource spec .periodic dims axis).eval
     (fun c => grids (spec.numVars-1-c))
 
-#guard [Burgers1D.spec, EulerGas3D.spec, IdealMhd8Wave.spec].all fun spec =>
+#guard [Burgers1D.spec, EulerGas3D.spec, IdealMhd8Wave.spec, BonaMasso1D.spec].all fun spec =>
   let dims := List.replicate spec.numDims 2
   let grids := fun c => List.replicate (gridCellCount dims) (ratToQ32Word (if c == 0 then 3/2 else 1/4))
   nonlinearSourceValues spec dims 0 grids == (List.range spec.numVars).map grids
@@ -710,7 +853,7 @@ def nonlinearSourceValues (spec : ConservationLawSpec) (dims : List Nat) (axis :
 #guard [Burgers1D.spec, EulerGas3D.spec, IdealMhd8Wave.spec].all fun spec =>
   (compileMultiDNonlinearFluxSweepSource spec .periodic (List.replicate spec.numDims 2)).scopedB spec.numVars
 
-/-! ## 4. Mutation-Sensitivity `#tooth` Suite (21 Kernel-Checked Mutation Kills) -/
+/-! ## 4. Mutation-Sensitivity `#tooth` Suite -/
 
 def acceptPos (_ : List PosTarget) (_ : FluxExpr) : Bool := true
 def zeroSymPartial (_ : Nat) (_ : FluxExpr) : FluxExpr := .const 0

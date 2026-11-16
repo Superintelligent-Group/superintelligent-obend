@@ -207,7 +207,7 @@ fi
 if run_stage 5; then
   echo '=== [5] nonlinear Q32 PDE: RX 6750 XT WGSL and bit-exact systolic Verilator ==='
   ADAPTER_ARGS=(--adapter "${GPU_ADAPTER:-6750}")
-  PDE_GRAPHS=(burgers-1d-q32 euler-3d-q32 mhd-8wave-q32)
+  PDE_GRAPHS=(burgers-1d-q32 euler-3d-q32 mhd-8wave-q32 bona-masso-1d-q32)
   "${EMIT}" pde-nonlinear --out "${WORK}/pde"
   for g in "${PDE_GRAPHS[@]}"; do
     run_graph "${WORK}/pde/${g}"
@@ -233,10 +233,12 @@ if run_stage 5; then
     done
     (( caught == ${#PDE_GRAPHS[@]} )) || { echo "[FAIL] ${plant}: only ${caught} PDE shaders detected the fault" >&2; exit 1; }
   done
-  # The seeded 5.020 installation is relocatable; supply both its data root and binary.
+  # The seeded 5.020 installation is relocatable; supply its data root and binary, and put its
+  # driver first on PATH so another Verilator there (oss-cad-suite ships 5.033) is not paired with it.
   if [[ -z "${VERILATOR_ROOT:-}" && -d /tmp/verilator-ok/usr_root/usr/share/verilator ]]; then
     export VERILATOR_ROOT=/tmp/verilator-ok/usr_root/usr/share/verilator
     export VERILATOR_BIN=../../bin/verilator_bin
+    export PATH="/tmp/verilator-ok/bin:${PATH}"
   fi
   verilator --version | grep -q 'Verilator 5.020' || { echo '[FAIL] Stage 5 requires Verilator 5.020' >&2; exit 1; }
   "${EMIT}" pde-verilate --out "${WORK}/rtl"
@@ -249,7 +251,7 @@ if run_stage 5; then
       }
     "${dir}/obj_dir/V${name}"
   done < "${WORK}/rtl/modules.txt"
-  echo '[PASS] nonlinear PDE shaders, planted faults, and five systolic RTL modules'
+  echo '[PASS] nonlinear PDE shaders, planted faults, and six systolic RTL modules'
 fi
 
 echo "[PASS] hardware/gpu${STAGE:+ (stage ${STAGE})}"
