@@ -380,6 +380,7 @@ import Obend.Hardware.SmallSignalMna
 import Obend.Hardware.SwitchedCapRf
 import Obend.Hardware.SymplecticVehicle6Dof
 import Obend.Hardware.Synth
+import Obend.Hardware.SystolicDataflowThroughput
 import Obend.Hardware.TapeoutPipeline
 import Obend.Hardware.ThermalPassivity
 import Obend.Hardware.Tpu.CryptoSystolic

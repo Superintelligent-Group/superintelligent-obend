@@ -2115,6 +2115,20 @@ module = "Obend.Analysis.LaxWendroffConvergence"
 theorem = "endToEnd_q32_silicon_weak_form_bound"
 description = "End-to-end continuum-to-Q32 silicon weak-form certificate welding `EndToEndPdeCert` (`q32_scheme_trajectory_error_tube`, Lie/Strang fused GPU kernel sweeps, and systolic RTL DAG refinement) to `lax_wendroff_weak_residual_bound`."
 
+[[apex]]
+id = "hardware-systolic-retiming-and-wavefront-throughput"
+subsystem = "Hardware"
+module = "Obend.Hardware.SystolicDataflowThroughput"
+theorem = "systolic_retiming_preserves_stream_semantics"
+description = "Karp–Miller positive-cycle causality (`positive_cycle_weight_preserved_and_deadlock_free`), multi-node Leiserson–Saxe stream retiming equivalence (`systolic_retiming_preserves_stream_semantics`), and II = 1 `(D - 1) * K + L` wavefront throughput (`systolic_wavefront_latency_and_throughput`)."
+
+[[apex]]
+id = "hardware-multiplexed-systolic-single-cell-and-time-march"
+subsystem = "Hardware"
+module = "Obend.Hardware.SystolicDataflowThroughput"
+theorem = "multiplexed_systolic_time_march_sound"
+description = "Time-multiplexed single symmetry-reduced `EulerGas3D`/`IdealMhd8Wave` systolic RTL cell matches the unrolled d-cell array in `d * N^d + 1` cycles (`multiplexed_single_cell_matches_unrolled_array`) and across multi-step Lie-split `stepQ32Axis` time-marching (`multiplexed_systolic_time_march_sound`)."
+
 # ==============================================================================
 # Planned Wave 5+ Vertical Spine Apex Theorems (`master_interface_and_systems_architecture.md`)
 # ==============================================================================
