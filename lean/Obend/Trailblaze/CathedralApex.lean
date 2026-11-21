@@ -16,6 +16,8 @@ import Init.Data.List.Sublist
 import Init.Data.String.Lemmas
 import all Init.Data.String.Legacy
 public import Obend.Run.HyperLaw
+public import Obend.Hardware.OspcProver
+import all Obend.Hardware.OspcProver
 
 public section
 
@@ -2521,6 +2523,42 @@ theorem checkInRackFpgaReceipt_zero_covert_channel
   rfl
 
 
+/-- Witness binding an `InRackFpgaReceipt` to a 4-tile $Q_2$ hypercube `Obend.Hardware.OspcProver`
+    multi-cycle hardware execution (`tile0_exprcam_face4`, `tile1_discrtree_lut`,
+    `tile2_deltanet_redex`, `tile3_stream_lrat`). -/
+structure OspcInRackProverWitness where
+  inst  : Obend.Hardware.OspcProver.OspcPublicInstance
+  turns : List Obend.Hardware.OspcProver.OspcProverCycleTurn
+  cert  : Obend.Hardware.OspcProver.OspcProverCert
+
+/-- Verify that an `InRackFpgaReceipt` is backed by a complete, non-empty 4-tile $Q_2$ hypercube
+    `OspcProver` execution whose `LawfulTranscriptEncode OspcPublicInstance` Fiat-Shamir seed is
+    exact-bound to `rcpt.verifierReceipt256 = computeFpgaVerifierReceipt256 ... true`. -/
+def checkOspcInRackFpgaReceipt (H : Hash) (treeRoot : Nat) (step : AriadneStep)
+    (w : OspcInRackProverWitness) (rcpt : InRackFpgaReceipt) : Bool :=
+  checkInRackFpgaReceipt H treeRoot step rcpt &&
+  !w.turns.isEmpty &&
+  decide (w.inst.protocolId = rcpt.rackId) &&
+  decide (w.inst.numCycles = w.turns.length) &&
+  decide (Obend.Hardware.OspcProver.packReceiptLimbs256
+      w.inst.seedLimb0 w.inst.seedLimb1 w.inst.seedLimb2 w.inst.seedLimb3 =
+    rcpt.verifierReceipt256) &&
+  match Obend.Hardware.OspcProver.runOspc4TileTrace H
+      (Obend.Hardware.OspcProver.initOspc4TileState H w.inst) w.turns with
+  | .error _ => false
+  | .ok stFinal =>
+    decide (Obend.Hardware.OspcProver.packReceiptLimbs256
+        w.cert.limb0 w.cert.limb1 w.cert.limb2 w.cert.limb3 =
+      stFinal.verifierReceipt256) &&
+    decide (w.cert.finalClaim = stFinal.currentClaim)
+
+/-- Optional in-rack `OspcProver` witness gate checked inside `auditCathedralTurn`. -/
+def checkCathedralOspcOpt (H : Hash) (treeRoot : Nat) (step : AriadneStep)
+    (wOpt : Option OspcInRackProverWitness) (rcpt : InRackFpgaReceipt) : Bool :=
+  match wOpt with
+  | none => true
+  | some w => checkOspcInRackFpgaReceipt H treeRoot step w rcpt
+
 /-! ## §2. Whole-System `CathedralGovernanceTurn` Carrier & Joint `Reasons` Program -/
 
 /-- Unified governance turn wiring a domain-bound `ZkStripe` multi-hop `CallTree` into a verifiable
@@ -2537,6 +2575,7 @@ structure CathedralGovernanceTurn where
   scheduleTracePair        : List (ClusterReduceWorld × ClusterReduceWorld)
   cathedralRules           : List Obend.Reasons.Rule
   cathedralTarget          : String
+  ospcWitness              : Option OspcInRackProverWitness := none
 
 /-- Named refusal diagnostic for whole-cathedral `ZkStripe → ClusterGov` turn admission. -/
 inductive CathedralTurnRefusal where
@@ -2547,6 +2586,7 @@ inductive CathedralTurnRefusal where
   | clusterStepRefused (err : ClusterGovRefusal)
   | physicalEnvelopeFailed
   | fpgaReceiptInvalid (payloadBytes : Nat)
+  | ospcProverFailed
   | covertChannelDetected
   | cathedralPolicyUnsupported (target : String) (status : Obend.Reasons.Status)
   deriving DecidableEq, Repr
@@ -2591,6 +2631,9 @@ def auditCathedralTurn (turn : CathedralGovernanceTurn) :
             else if !checkInRackFpgaReceipt turn.hashFn treeDigest
                 turn.clusterCtx.step turn.fpgaReceipt then
               .error (.fpgaReceiptInvalid turn.fpgaReceipt.receiptPayloadBytes.data.size)
+            else if !checkCathedralOspcOpt turn.hashFn treeDigest
+                turn.clusterCtx.step turn.ospcWitness turn.fpgaReceipt then
+              .error .ospcProverFailed
             else if !checkHyperLaw2NonInterference clusterPublicView turn.scheduleTracePair then
               .error .covertChannelDetected
             else
@@ -2741,19 +2784,25 @@ theorem apex_cathedral_zkstripe_to_clustergov_sound
                 simp only [checkInRackFpgaReceipt, Bool.and_eq_true, decide_eq_true_eq]
                   at hFpgaProps
                 rcases hFpgaProps with ⟨⟨⟨_, hPayloadLe⟩, hRcptEq⟩, _hCanonicalPayload⟩
-                cases hHL : checkHyperLaw2NonInterference clusterPublicView turn.scheduleTracePair
-                · rw [hHL] at hTurn; cases hTurn
-                · rw [hHL] at hTurn
+                cases hOspcOpt : checkCathedralOspcOpt turn.hashFn
+                    (callTreeDigest turn.hashFn turn.batchCallTree)
+                    turn.clusterCtx.step turn.ospcWitness turn.fpgaReceipt
+                · rw [hOspcOpt] at hTurn; cases hTurn
+                · rw [hOspcOpt] at hTurn
                   simp only [Bool.not_true, Bool.false_eq_true, ↓reduceIte] at hTurn
-                  cases hCatSt : (Obend.Reasons.statusIn
-                      (Obend.Reasons.wf (buildCathedralProgram turn))
-                      turn.cathedralTarget == .supported)
-                  · rw [hCatSt] at hTurn; cases hTurn
-                  · exact ⟨hVerifyZk, hAllHops, hBytesEq, hWeldEq, hBind,
-                      hStepProps.1, hDotExecEq.symm ▸ hStepProps.2.1,
-                      checkHyperLaw2NonInterference_sound hHL,
-                      hStepProps.2.2.2.1, hRtt, hEnergy, hPayloadLe, hRcptEq,
-                      beq_iff_eq.mp hCatSt⟩
+                  cases hHL : checkHyperLaw2NonInterference clusterPublicView turn.scheduleTracePair
+                  · rw [hHL] at hTurn; cases hTurn
+                  · rw [hHL] at hTurn
+                    simp only [Bool.not_true, Bool.false_eq_true, ↓reduceIte] at hTurn
+                    cases hCatSt : (Obend.Reasons.statusIn
+                        (Obend.Reasons.wf (buildCathedralProgram turn))
+                        turn.cathedralTarget == .supported)
+                    · rw [hCatSt] at hTurn; cases hTurn
+                    · exact ⟨hVerifyZk, hAllHops, hBytesEq, hWeldEq, hBind,
+                        hStepProps.1, hDotExecEq.symm ▸ hStepProps.2.1,
+                        checkHyperLaw2NonInterference_sound hHL,
+                        hStepProps.2.2.2.1, hRtt, hEnergy, hPayloadLe, hRcptEq,
+                        beq_iff_eq.mp hCatSt⟩
 
 
 /-! ## §4. Multi-Turn Cathedral Governance Trace (`List CathedralGovernanceTurn`) & Cumulative Invariants -/
@@ -2966,9 +3015,40 @@ theorem checkCathedralTrace_sound (init : CathedralTraceState)
 
 /-! ## §5. Concrete End-to-End Cathedral Turn & Multi-Turn Trace Witnesses -/
 
+/-- Canonical 1-cycle 4-tile $Q_2$ hypercube `OspcProver` execution turn for in-rack FPGA
+    witnesses (`DeltaNet` linear flag preserved, `StreamLRAT` idle, zero-sum Sumcheck poly). -/
+def mkSampleOspcCycleTurn : Obend.Hardware.OspcProver.OspcProverCycleTurn :=
+  let zPort : Obend.Hardware.OspcProver.DeltaPortWord64 := ⟨0#16, 0#2, 0#16, 0#2, 1#1, 0#27⟩
+  ⟨false,
+   ⟨1#2, 0#64, 0#17, 0#1, 0#8, 0#64, 0#64⟩,
+   ⟨0#1, 0#6, 0#1, 0#12, 0#64⟩,
+   ⟨0#1, zPort, 0#1, 0#8, zPort⟩,
+   ⟨0#1, 0#1, 0#8, ⟨0#32, 0#32⟩⟩,
+   fun _ => ⟨[Obend.Crypto.Goldilocks.zero, Obend.Crypto.Goldilocks.zero]⟩,
+   1⟩
+
+/-- Construct an `OspcInRackProverWitness` whose `OspcPublicInstance` Fiat-Shamir seed is exact-bound
+    to `rcpt256` and whose `OspcProverCert` carries the 4-limb 256-bit post-cycle receipt. -/
+def mkSampleOspcInRackWitness (H : Hash) (rackId : Nat) (rcpt256 : BitVec 256) :
+    OspcInRackProverWitness :=
+  let (s0, s1, s2, s3) := Obend.Hardware.OspcProver.unpackReceiptLimbs256 rcpt256
+  let inst : Obend.Hardware.OspcProver.OspcPublicInstance :=
+    ⟨rackId, 1, Obend.Crypto.Goldilocks.zero, s0, s1, s2, s3⟩
+  let turns : List Obend.Hardware.OspcProver.OspcProverCycleTurn := [mkSampleOspcCycleTurn]
+  let cert : Obend.Hardware.OspcProver.OspcProverCert :=
+    match Obend.Hardware.OspcProver.runOspc4TileTrace H
+        (Obend.Hardware.OspcProver.initOspc4TileState H inst) turns with
+    | .ok stFinal =>
+      let (l0, l1, l2, l3) :=
+        Obend.Hardware.OspcProver.unpackReceiptLimbs256 stFinal.verifierReceipt256
+      ⟨l0, l1, l2, l3, stFinal.currentClaim⟩
+    | .error _ => ⟨0#64, 0#64, 0#64, 0#64, Obend.Crypto.Goldilocks.zero⟩
+  ⟨inst, turns, cert⟩
+
 /-- Canonical end-to-end `CathedralGovernanceTurn` welding `ZkStripe.validFourHopCallTree`'s
     domain-bound Merkle commitment into `ClusterGov.validClusterStepCtx.step.batchCallTreeRoot`,
-    `defaultPhysicalEnvelope`, and a 32-byte (`BitVec 256`) in-rack FPGA boolean verifier receipt. -/
+    `defaultPhysicalEnvelope`, and a 32-byte (`BitVec 256`) in-rack FPGA boolean verifier receipt
+    backed by a live 4-tile $Q_2$ hypercube `OspcProver` witness. -/
 def sampleCathedralTurn : CathedralGovernanceTurn :=
   let digestBytes := callTreeDigestBytes ZkStripe.fastMerkleHash ZkStripe.validFourHopCallTree
   let batchRoot := callTreeDigest ZkStripe.fastMerkleHash ZkStripe.validFourHopCallTree
@@ -3006,6 +3086,7 @@ def sampleCathedralTurn : CathedralGovernanceTurn :=
       neg   := ["global_halt"]
     }]
     cathedralTarget := "cathedral_turn_admitted"
+    ospcWitness := some (mkSampleOspcInRackWitness ZkStripe.fastMerkleHash 7 rcpt256)
   }
 
 /-- Second consecutive governance turn welding `prevWeightsRoot := 0x33334444` (the output weight
@@ -3031,6 +3112,7 @@ def sampleSecondCathedralTurn : CathedralGovernanceTurn :=
       verifierReceipt256  := rcpt256
       receiptPayloadBytes := encodeReceipt256 rcpt256
     }
+    ospcWitness := some (mkSampleOspcInRackWitness ZkStripe.fastMerkleHash 7 rcpt256)
   }
 
 /-- Initial multi-turn governance envelope with 20M FLOPs and 10 shadow-ops budget. -/
@@ -3054,6 +3136,9 @@ theorem checkCathedralTurn_complete (turn : CathedralGovernanceTurn)
     (hPhys : checkPhysicalEnergyEnvelope turn.physicalEnvelope = true)
     (hFpga : checkInRackFpgaReceipt turn.hashFn (callTreeDigest turn.hashFn turn.batchCallTree)
       turn.clusterCtx.step turn.fpgaReceipt = true)
+    (hOspc : checkCathedralOspcOpt turn.hashFn
+      (callTreeDigest turn.hashFn turn.batchCallTree)
+      turn.clusterCtx.step turn.ospcWitness turn.fpgaReceipt = true)
     (hHL : checkHyperLaw2NonInterference clusterPublicView turn.scheduleTracePair = true)
     (hCat : Obend.Reasons.statusIn (Obend.Reasons.wf (buildCathedralProgram turn))
       turn.cathedralTarget = .supported) :
@@ -3078,7 +3163,7 @@ theorem checkCathedralTurn_complete (turn : CathedralGovernanceTurn)
   simp only [Bool.not_true, Bool.false_eq_true, ↓reduceIte]
   rw [hCluster]
   dsimp only
-  rw [hPhys, hFpga, hHL, hCatBeq]
+  rw [hPhys, hFpga, hOspc, hHL, hCatBeq]
   rfl
 
 /-- **Multi-Turn Trace Completeness (`checkCathedralTrace_complete`)**:
@@ -3167,6 +3252,372 @@ def silverCathedralApexSmoke : Bool :=
     | .error e => e == .fpgaReceiptInvalid 64
     | .ok _ => false
   validOk && multiTurnOk && replayEpochRefused && weldRefused && egressRefused
+
+
+/-! ## §6. 4-Tile $Q_2$ Hypercube `OspcProver` In-Rack FPGA Hardware Prover Weld -/
+
+/-- Governance turn backed by a mandatory 4-tile $Q_2$ hypercube `Obend.Hardware.OspcProver`
+    in-rack FPGA hardware witness (`tile0_exprcam_face4`, `tile1_discrtree_lut`,
+    `tile2_deltanet_redex`, `tile3_stream_lrat`). -/
+structure CathedralOspcTurn where
+  govTurn     : CathedralGovernanceTurn
+  ospcWitness : OspcInRackProverWitness
+
+/-- Total boolean gate verifying both `checkCathedralTurn` and the mandatory 4-tile $Q_2$ hypercube
+    `OspcProver` receipt-seed witness. -/
+def checkCathedralOspcTurn (turn : CathedralOspcTurn) : Bool :=
+  checkCathedralTurn turn.govTurn &&
+  checkOspcInRackFpgaReceipt turn.govTurn.hashFn
+    (callTreeDigest turn.govTurn.hashFn turn.govTurn.batchCallTree)
+    turn.govTurn.clusterCtx.step turn.ospcWitness turn.govTurn.fpgaReceipt
+
+/-- Advance persistent `CathedralTraceState` by one `OspcProver`-backed governance turn. -/
+def stepCathedralOspcTrace (st : CathedralTraceState) (turn : CathedralOspcTurn) :
+    Option CathedralTraceState :=
+  if checkOspcInRackFpgaReceipt turn.govTurn.hashFn
+      (callTreeDigest turn.govTurn.hashFn turn.govTurn.batchCallTree)
+      turn.govTurn.clusterCtx.step turn.ospcWitness turn.govTurn.fpgaReceipt then
+    stepCathedralTrace st turn.govTurn
+  else
+    none
+
+/-- Execute an arbitrary-length multi-turn sequence of `OspcProver`-backed governance turns. -/
+def runCathedralOspcTrace (init : CathedralTraceState) :
+    List CathedralOspcTurn → Option CathedralTraceState
+  | [] => some init
+  | t :: ts =>
+    match stepCathedralOspcTrace init t with
+    | none => none
+    | some st' => runCathedralOspcTrace st' ts
+
+/-- Boolean decision gate for multi-turn `OspcProver`-backed Cathedral traces. -/
+def checkCathedralOspcTrace (init : CathedralTraceState)
+    (turns : List CathedralOspcTurn) : Bool :=
+  (runCathedralOspcTrace init turns).isSome
+
+/-- Canonical 1st `OspcProver`-backed Cathedral turn. -/
+def sampleCathedralOspcTurn : CathedralOspcTurn :=
+  ⟨sampleCathedralTurn,
+   mkSampleOspcInRackWitness ZkStripe.fastMerkleHash
+     sampleCathedralTurn.fpgaReceipt.rackId sampleCathedralTurn.fpgaReceipt.verifierReceipt256⟩
+
+/-- Canonical 2nd `OspcProver`-backed Cathedral turn chaining weights and epochs. -/
+def sampleSecondCathedralOspcTurn : CathedralOspcTurn :=
+  ⟨sampleSecondCathedralTurn,
+   mkSampleOspcInRackWitness ZkStripe.fastMerkleHash
+     sampleSecondCathedralTurn.fpgaReceipt.rackId
+     sampleSecondCathedralTurn.fpgaReceipt.verifierReceipt256⟩
+
+/-- Soundness of `checkOspcInRackFpgaReceipt`: extracts full 4-tile $Q_2$ hypercube
+    `OspcTraceReach`, synthesizable `checkRtlMemModuleW`, `tileMemStateBounded`, `DeltaNet`
+    linearity (`regs 1 = 1#64`), canonical Merkle root, 256-bit receipt roundtrip, and exact
+    Fiat-Shamir seed binding to `computeFpgaVerifierReceipt256 ... true`. -/
+theorem checkOspcInRackFpgaReceipt_sound (H : Hash) (treeRoot : Nat) (step : AriadneStep)
+    (w : OspcInRackProverWitness) (rcpt : InRackFpgaReceipt)
+    (hOk : checkOspcInRackFpgaReceipt H treeRoot step w rcpt = true) :
+    checkInRackFpgaReceipt H treeRoot step rcpt = true ∧
+    w.turns ≠ [] ∧
+    w.inst.protocolId = rcpt.rackId ∧
+    w.inst.numCycles = w.turns.length ∧
+    Obend.Hardware.OspcProver.packReceiptLimbs256
+      w.inst.seedLimb0 w.inst.seedLimb1 w.inst.seedLimb2 w.inst.seedLimb3 =
+      computeFpgaVerifierReceipt256 H rcpt.rackId rcpt.epoch treeRoot step true ∧
+    ∃ stFinal : Obend.Hardware.OspcProver.Ospc4TileProverState,
+      Obend.Hardware.OspcProver.OspcTraceReach H
+        (Obend.Hardware.OspcProver.initOspc4TileState H w.inst) w.turns stFinal ∧
+      stFinal.cycleCount = w.turns.length ∧
+      (∀ t : Fin 4, Obend.Hardware.HDL.checkRtlMemModuleW (Obend.Hardware.OspcProver.ospcTileRtl t) = true ∧
+        Obend.Hardware.OspcProver.tileMemStateBounded (Obend.Hardware.OspcProver.ospcTileRtl t) (stFinal.tiles t)) ∧
+      (stFinal.tiles ⟨2, by omega⟩).regs 1 = 1#64 ∧
+      stFinal.merkleRoot = Obend.Receipt.Merkle.root H (Obend.Hardware.OspcProver.tileLeafList stFinal.tiles) ∧
+      (Obend.Hardware.OspcProver.encodeOspcReceipt256 stFinal.verifierReceipt256).size = 32 ∧
+      Obend.Hardware.OspcProver.packReceiptLimbs256
+        w.cert.limb0 w.cert.limb1 w.cert.limb2 w.cert.limb3 = stFinal.verifierReceipt256 ∧
+      w.cert.finalClaim = stFinal.currentClaim ∧
+      (let (l0, l1, l2, l3) := Obend.Hardware.OspcProver.unpackReceiptLimbs256 stFinal.verifierReceipt256
+       Obend.Hardware.OspcProver.packReceiptLimbs256 l0 l1 l2 l3 = stFinal.verifierReceipt256) := by
+  unfold checkOspcInRackFpgaReceipt at hOk
+  simp only [Bool.and_eq_true, Bool.not_eq_true', List.isEmpty_eq_false_iff,
+    decide_eq_true_eq] at hOk
+  obtain ⟨⟨⟨⟨⟨hRcpt, hNe⟩, hProto⟩, hNumCyc⟩, hSeed⟩, hRunMatch⟩ := hOk
+  have hRcptParts := hRcpt
+  unfold checkInRackFpgaReceipt at hRcptParts
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at hRcptParts
+  have hRcptEq := hRcptParts.1.2
+  cases hRun : Obend.Hardware.OspcProver.runOspc4TileTrace H
+      (Obend.Hardware.OspcProver.initOspc4TileState H w.inst) w.turns with
+  | error e => rw [hRun] at hRunMatch; cases hRunMatch
+  | ok stFinal =>
+    rw [hRun] at hRunMatch
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at hRunMatch
+    obtain ⟨hReach, hCnt, hTiles, hLin, hRoot, hEncSz, hRoundtrip⟩ :=
+      Obend.Hardware.OspcProver.ospc_four_tile_prover_multi_cycle_sound H w.inst w.turns stFinal hRun
+    exact ⟨hRcpt, hNe, hProto, hNumCyc, hSeed.trans hRcptEq,
+      stFinal, hReach, hCnt, hTiles, hLin, hRoot, hEncSz, hRunMatch.1, hRunMatch.2, hRoundtrip⟩
+
+/-- **Unconditional Whole-Cathedral `ZkStripe → ClusterGov → OspcProver` End-to-End Theorem
+    (`apex_cathedral_ospc_end_to_end_sound`)**:
+    Simultaneously certifies full `ZkStripe` multi-hop `HopAudited` + `CollisionAmong` binding,
+    `Sable` $F_O$ overflow-free `intDotExec`, `Ozaki` `HyperLaw2`, physical energy/RTT shadow-FLOP
+    cap, `≤ 32`-byte zero-covert-channel `computeFpgaVerifierReceipt256`, AND 4-tile $Q_2$ hypercube
+    `OspcTraceReach` with Fiat-Shamir seed binding to `computeFpgaVerifierReceipt256`. -/
+theorem apex_cathedral_ospc_end_to_end_sound
+    (turn : CathedralOspcTurn)
+    (otherTree : HttpsSessionNode)
+    (hTurn : checkCathedralOspcTurn turn = true)
+    (hOtherCan : checkCanonicalSessionTree turn.govTurn.hashFn otherTree = true)
+    (hOtherBytes : callTreeDigestBytes turn.govTurn.hashFn otherTree =
+      turn.govTurn.committedTreeDigestBytes) :
+    let g := turn.govTurn
+    let w := turn.ospcWitness
+    verifyZkStripeCallTree g.zkPolicy g.batchCallTree = true ∧
+    (∀ hop ∈ allSessionNodes g.batchCallTree, HopAudited g.zkPolicy hop) ∧
+    callTreeDigestBytes g.hashFn g.batchCallTree = g.committedTreeDigestBytes ∧
+    callTreeDigest g.hashFn g.batchCallTree = g.clusterCtx.step.batchCallTreeRoot ∧
+    (g.batchCallTree = otherTree ∨ CollisionAmong g.hashFn
+      (fun x => x ∈ treePreimages g.hashFn g.batchCallTree ++
+        treePreimages g.hashFn otherTree)) ∧
+    2 * (intDot g.clusterCtx.sampleWeights g.clusterCtx.sampleActs).natAbs <
+      g.clusterCtx.tensorBound.modulusP ∧
+    decodeSignedModP g.clusterCtx.tensorBound.modulusP
+      (embedModP g.clusterCtx.tensorBound.modulusP
+        (intDotExec g.clusterCtx.sampleWeights.toArray g.clusterCtx.sampleActs.toArray)) =
+      intDot g.clusterCtx.sampleWeights g.clusterCtx.sampleActs ∧
+    HyperLaw2NonInterference clusterPublicView g.scheduleTracePair ∧
+    g.clusterCtx.step.flopsUsed ≤ g.clusterCtx.step.flopsCap ∧
+    g.physicalEnvelope.measuredRttMicros ≤ g.physicalEnvelope.authorityBudgetMicros ∧
+    (∀ hiddenOps : Nat,
+      g.physicalEnvelope.minHiddenOpMilliJ * hiddenOps ≤
+        (g.physicalEnvelope.meterEnergyMilliJ + g.physicalEnvelope.toleranceMilliJ) -
+          g.physicalEnvelope.lowerCurveProvenMilliJ -
+          g.physicalEnvelope.idleEnergyMilliJ →
+      hiddenOps ≤ g.physicalEnvelope.hiddenOpsCap) ∧
+    g.fpgaReceipt.receiptPayloadBytes.data.size ≤ maxRackReceiptBytes ∧
+    g.fpgaReceipt.verifierReceipt256 =
+      computeFpgaVerifierReceipt256 g.hashFn g.fpgaReceipt.rackId g.fpgaReceipt.epoch
+        (callTreeDigest g.hashFn g.batchCallTree) g.clusterCtx.step true ∧
+    Obend.Reasons.statusIn (Obend.Reasons.wf (buildCathedralProgram g))
+      g.cathedralTarget = .supported ∧
+    w.turns ≠ [] ∧
+    w.inst.protocolId = g.fpgaReceipt.rackId ∧
+    Obend.Hardware.OspcProver.packReceiptLimbs256
+      w.inst.seedLimb0 w.inst.seedLimb1 w.inst.seedLimb2 w.inst.seedLimb3 =
+      computeFpgaVerifierReceipt256 g.hashFn g.fpgaReceipt.rackId g.fpgaReceipt.epoch
+        (callTreeDigest g.hashFn g.batchCallTree) g.clusterCtx.step true ∧
+    ∃ stFinal : Obend.Hardware.OspcProver.Ospc4TileProverState,
+      Obend.Hardware.OspcProver.OspcTraceReach g.hashFn
+        (Obend.Hardware.OspcProver.initOspc4TileState g.hashFn w.inst) w.turns stFinal ∧
+      (∀ t : Fin 4, Obend.Hardware.HDL.checkRtlMemModuleW (Obend.Hardware.OspcProver.ospcTileRtl t) = true ∧
+        Obend.Hardware.OspcProver.tileMemStateBounded (Obend.Hardware.OspcProver.ospcTileRtl t) (stFinal.tiles t)) ∧
+      (stFinal.tiles ⟨2, by omega⟩).regs 1 = 1#64 ∧
+      stFinal.merkleRoot = Obend.Receipt.Merkle.root g.hashFn (Obend.Hardware.OspcProver.tileLeafList stFinal.tiles) ∧
+      Obend.Hardware.OspcProver.packReceiptLimbs256
+        w.cert.limb0 w.cert.limb1 w.cert.limb2 w.cert.limb3 = stFinal.verifierReceipt256 ∧
+      (let (l0, l1, l2, l3) := Obend.Hardware.OspcProver.unpackReceiptLimbs256 stFinal.verifierReceipt256
+       Obend.Hardware.OspcProver.packReceiptLimbs256 l0 l1 l2 l3 = stFinal.verifierReceipt256) := by
+  unfold checkCathedralOspcTurn at hTurn
+  rw [Bool.and_eq_true] at hTurn
+  have hApex := apex_cathedral_zkstripe_to_clustergov_sound turn.govTurn otherTree
+    hTurn.1 hOtherCan hOtherBytes
+  have hOspc := checkOspcInRackFpgaReceipt_sound turn.govTurn.hashFn
+    (callTreeDigest turn.govTurn.hashFn turn.govTurn.batchCallTree)
+    turn.govTurn.clusterCtx.step turn.ospcWitness turn.govTurn.fpgaReceipt hTurn.2
+  obtain ⟨_, hNe, hProto, _, hSeed, stFinal, hReach, _, hTiles, hLin, hRoot, _, hCertPack, _, hRt⟩ := hOspc
+  exact ⟨hApex.1, hApex.2.1, hApex.2.2.1, hApex.2.2.2.1, hApex.2.2.2.2.1,
+    hApex.2.2.2.2.2.1, hApex.2.2.2.2.2.2.1, hApex.2.2.2.2.2.2.2.1,
+    hApex.2.2.2.2.2.2.2.2.1, hApex.2.2.2.2.2.2.2.2.2.1, hApex.2.2.2.2.2.2.2.2.2.2.1,
+    hApex.2.2.2.2.2.2.2.2.2.2.2.1, hApex.2.2.2.2.2.2.2.2.2.2.2.2.1,
+    hApex.2.2.2.2.2.2.2.2.2.2.2.2.2,
+    hNe, hProto, hSeed, stFinal, hReach, hTiles, hLin, hRoot, hCertPack, hRt⟩
+
+private theorem runCathedralOspcTrace_implies_base (init final : CathedralTraceState)
+    (turns : List CathedralOspcTurn)
+    (hRun : runCathedralOspcTrace init turns = some final) :
+    runCathedralTrace init (turns.map CathedralOspcTurn.govTurn) = some final ∧
+    ∀ t ∈ turns,
+      checkOspcInRackFpgaReceipt t.govTurn.hashFn
+        (callTreeDigest t.govTurn.hashFn t.govTurn.batchCallTree)
+        t.govTurn.clusterCtx.step t.ospcWitness t.govTurn.fpgaReceipt = true := by
+  induction turns generalizing init with
+  | nil =>
+    cases hRun
+    exact ⟨rfl, fun _ h => by cases h⟩
+  | cons t ts ih =>
+    unfold runCathedralOspcTrace at hRun
+    cases hStep : stepCathedralOspcTrace init t with
+    | none => rw [hStep] at hRun; cases hRun
+    | some stMid =>
+      rw [hStep] at hRun
+      unfold stepCathedralOspcTrace at hStep
+      cases hOspc : checkOspcInRackFpgaReceipt t.govTurn.hashFn
+          (callTreeDigest t.govTurn.hashFn t.govTurn.batchCallTree)
+          t.govTurn.clusterCtx.step t.ospcWitness t.govTurn.fpgaReceipt
+      · rw [hOspc] at hStep; cases hStep
+      · rw [hOspc] at hStep
+        simp only [↓reduceIte] at hStep
+        obtain ⟨hBaseRest, hOspcRest⟩ := ih stMid hRun
+        refine ⟨?_, ?_⟩
+        · simp only [List.map_cons, runCathedralTrace, hStep, hBaseRest]
+        · intro u hu
+          rcases List.mem_cons.mp hu with rfl | huR
+          · exact hOspc
+          · exact hOspcRest u huR
+
+/-- **Multi-Turn Cathedral + 4-Tile $Q_2$ Hypercube `OspcProver` Trace Soundness
+    (`apex_cathedral_ospc_multi_turn_sound`)**:
+    Across an arbitrary sequence `turns : List CathedralOspcTurn`, proves weight-lineage continuity,
+    strict epoch monotonicity, exact FLOP conservation, persistent DECO nonce/intent history
+    (replay resistance), AND for every turn `t ∈ turns`, full `checkCathedralOspcTurn t = true`
+    plus 4-tile $Q_2$ hypercube `OspcTraceReach`, `checkRtlMemModuleW`, `tileMemStateBounded`,
+    `DeltaNet` linearity (`regs 1 = 1#64`), canonical Merkle root, and Fiat-Shamir seed binding to
+    `computeFpgaVerifierReceipt256`. -/
+theorem apex_cathedral_ospc_multi_turn_sound
+    (init final : CathedralTraceState) (turns : List CathedralOspcTurn)
+    (hRun : runCathedralOspcTrace init turns = some final) :
+    WeightAndEpochChain init.weightsRoot init.lastEpoch
+      (turns.map CathedralOspcTurn.govTurn) final.weightsRoot final.lastEpoch ∧
+    init.lastEpoch ≤ final.lastEpoch ∧
+    final.usedFlops = init.usedFlops + turnsTotalFlops (turns.map CathedralOspcTurn.govTurn) ∧
+    final.usedFlops + final.remFlopsBudget = init.usedFlops + init.remFlopsBudget ∧
+    turnsTotalFlops (turns.map CathedralOspcTurn.govTurn) ≤ init.remFlopsBudget ∧
+    turnsTotalHiddenOpsCap (turns.map CathedralOspcTurn.govTurn) ≤ init.remHiddenOpsBudget ∧
+    (∀ n ∈ init.decoLedger.consumedNonces, n ∈ final.decoLedger.consumedNonces) ∧
+    (∀ n ∈ init.decoLedger.consumedIntents, n ∈ final.decoLedger.consumedIntents) ∧
+    ∀ t ∈ turns,
+      checkCathedralOspcTurn t = true ∧
+      t.ospcWitness.turns ≠ [] ∧
+      Obend.Hardware.OspcProver.packReceiptLimbs256
+        t.ospcWitness.inst.seedLimb0 t.ospcWitness.inst.seedLimb1
+        t.ospcWitness.inst.seedLimb2 t.ospcWitness.inst.seedLimb3 =
+        computeFpgaVerifierReceipt256 t.govTurn.hashFn t.govTurn.fpgaReceipt.rackId
+          t.govTurn.fpgaReceipt.epoch (callTreeDigest t.govTurn.hashFn t.govTurn.batchCallTree)
+          t.govTurn.clusterCtx.step true ∧
+      ∃ stFinal : Obend.Hardware.OspcProver.Ospc4TileProverState,
+        Obend.Hardware.OspcProver.OspcTraceReach t.govTurn.hashFn
+          (Obend.Hardware.OspcProver.initOspc4TileState t.govTurn.hashFn t.ospcWitness.inst)
+          t.ospcWitness.turns stFinal ∧
+        (∀ tile : Fin 4, Obend.Hardware.HDL.checkRtlMemModuleW (Obend.Hardware.OspcProver.ospcTileRtl tile) = true ∧
+          Obend.Hardware.OspcProver.tileMemStateBounded (Obend.Hardware.OspcProver.ospcTileRtl tile) (stFinal.tiles tile)) ∧
+        (stFinal.tiles ⟨2, by omega⟩).regs 1 = 1#64 ∧
+        stFinal.merkleRoot = Obend.Receipt.Merkle.root t.govTurn.hashFn (Obend.Hardware.OspcProver.tileLeafList stFinal.tiles) ∧
+        (let (l0, l1, l2, l3) := Obend.Hardware.OspcProver.unpackReceiptLimbs256 stFinal.verifierReceipt256
+         Obend.Hardware.OspcProver.packReceiptLimbs256 l0 l1 l2 l3 = stFinal.verifierReceipt256) := by
+  obtain ⟨hBaseRun, hAllOspc⟩ := runCathedralOspcTrace_implies_base init final turns hRun
+  obtain ⟨hAllTurns, hChain, hEpLe, hUsedEq, hConsEq, hFlopsLe, hHidLe⟩ :=
+    cathedralTrace_sound init final (turns.map CathedralOspcTurn.govTurn) hBaseRun
+  obtain ⟨hNonces, hIntents⟩ :=
+    cathedralTrace_deco_history init final (turns.map CathedralOspcTurn.govTurn) hBaseRun
+  refine ⟨hChain, hEpLe, hUsedEq, hConsEq, hFlopsLe, hHidLe, hNonces, hIntents, fun t ht => ?_⟩
+  have hGovOk : checkCathedralTurn t.govTurn = true :=
+    hAllTurns t.govTurn (List.mem_map_of_mem ht)
+  have hOspcOk := hAllOspc t ht
+  have hOspcTurnOk : checkCathedralOspcTurn t = true := by
+    unfold checkCathedralOspcTurn; simp [hGovOk, hOspcOk]
+  obtain ⟨_, hNe, _, _, hSeed, stFinal, hReach, _, hTiles, hLin, hRoot, _, _, _, hRt⟩ :=
+    checkOspcInRackFpgaReceipt_sound t.govTurn.hashFn
+      (callTreeDigest t.govTurn.hashFn t.govTurn.batchCallTree)
+      t.govTurn.clusterCtx.step t.ospcWitness t.govTurn.fpgaReceipt hOspcOk
+  exact ⟨hOspcTurnOk, hNe, hSeed, stFinal, hReach, hTiles, hLin, hRoot, hRt⟩
+
+private theorem initOspc4TileState_tiles_eq (H : Hash) (inst : Obend.Hardware.OspcProver.OspcPublicInstance) :
+    (Obend.Hardware.OspcProver.initOspc4TileState H inst).tiles =
+      Obend.Hardware.OspcProver.initOspcTiles := rfl
+
+private theorem initOspc4TileState_claim_eq (H : Hash) (inst : Obend.Hardware.OspcProver.OspcPublicInstance) :
+    (Obend.Hardware.OspcProver.initOspc4TileState H inst).currentClaim = inst.claimedSum := rfl
+
+private theorem sampleOspcCycleTurn_tile2_lin :
+    (Obend.Hardware.HDL.stepMemModule
+      (Obend.Hardware.OspcProver.ospcTileRtl ⟨2, by omega⟩)
+      mkSampleOspcCycleTurn.rst
+      (mkSampleOspcCycleTurn.inputsFor ⟨2, by omega⟩)
+      (Obend.Hardware.OspcProver.initOspcTiles ⟨2, by omega⟩)).regs 1 = 1#64 := by
+  decide +kernel
+
+private theorem sampleOspcCycleTurn_sumcheck :
+    let agg := Obend.Hardware.OspcProver.stepButterflySumcheck2Hop
+      mkSampleOspcCycleTurn.tilePolys ⟨0, by omega⟩
+    agg.degLe 1 = true ∧
+    Obend.Crypto.CommRingOps.add (agg.eval Obend.Crypto.CommRingOps.zero)
+      (agg.eval Obend.Crypto.CommRingOps.one) = Obend.Crypto.Goldilocks.zero := by
+  decide +kernel
+
+/-- **Constructive Inhabitedness Witness (`checkOspcInRackFpgaReceipt_inhabited`)**:
+    For every hash `H`, rack ID, epoch, tree root, and `AriadneStep`, constructs a canonical
+    32-byte `InRackFpgaReceipt` and a 4-tile $Q_2$ hypercube `OspcInRackProverWitness` that
+    pass `checkOspcInRackFpgaReceipt` unconditionally. -/
+theorem checkOspcInRackFpgaReceipt_inhabited
+    (H : Hash) (rackId epoch treeRoot : Nat) (step : AriadneStep) :
+    let rcpt256 := computeFpgaVerifierReceipt256 H rackId epoch treeRoot step true
+    let rcpt : InRackFpgaReceipt := ⟨rackId, epoch, true, rcpt256, encodeReceipt256 rcpt256⟩
+    let w := mkSampleOspcInRackWitness H rackId rcpt256
+    checkOspcInRackFpgaReceipt H treeRoot step w rcpt = true := by
+  intro rcpt256 rcpt w
+  have hRcptOk : checkInRackFpgaReceipt H treeRoot step rcpt = true :=
+    checkInRackFpgaReceipt_canonical_inhabited H rackId epoch treeRoot step
+  let limbs := Obend.Hardware.OspcProver.unpackReceiptLimbs256 rcpt256
+  let inst : Obend.Hardware.OspcProver.OspcPublicInstance :=
+    ⟨rackId, 1, Obend.Crypto.Goldilocks.zero, limbs.1, limbs.2.1, limbs.2.2.1, limbs.2.2.2⟩
+  have hSeedEq : Obend.Hardware.OspcProver.packReceiptLimbs256
+      limbs.1 limbs.2.1 limbs.2.2.1 limbs.2.2.2 = rcpt256 :=
+    Obend.Hardware.OspcProver.pack_unpack_receiptLimbs256 rcpt256
+  let initSt := Obend.Hardware.OspcProver.initOspc4TileState H inst
+  let turn0 := mkSampleOspcCycleTurn
+  let tiles' : Fin 4 → Obend.Hardware.HDL.MemState :=
+    fun t => Obend.Hardware.HDL.stepMemModule (Obend.Hardware.OspcProver.ospcTileRtl t)
+      turn0.rst (turn0.inputsFor t) (initSt.tiles t)
+  let aggPoly := Obend.Hardware.OspcProver.stepButterflySumcheck2Hop turn0.tilePolys ⟨0, by omega⟩
+  let sq := Obend.Crypto.absorbAndSqueezeRound aggPoly initSt.transcript
+  let mRoot := Obend.Hardware.OspcProver.stepButterflyMerkle2Hop H
+    (Obend.Hardware.OspcProver.tileLeavesOf tiles') ⟨0, by omega⟩
+  let recOut := Obend.Hardware.OspcProver.computeCycleReceipt256 H sq.2.state mRoot
+  let st1 : Obend.Hardware.OspcProver.Ospc4TileProverState :=
+    ⟨tiles', sq.2, aggPoly.eval sq.1, mRoot, recOut, initSt.cycleCount + 1⟩
+  have hLin : (tiles' ⟨2, by omega⟩).regs 1 = 1#64 := by
+    dsimp only [tiles', initSt]
+    rw [initOspc4TileState_tiles_eq]
+    exact sampleOspcCycleTurn_tile2_lin
+  have hSc := sampleOspcCycleTurn_sumcheck
+  have hSum : Obend.Crypto.CommRingOps.add (aggPoly.eval Obend.Crypto.CommRingOps.zero)
+      (aggPoly.eval Obend.Crypto.CommRingOps.one) = initSt.currentClaim := by
+    dsimp only [initSt]; rw [initOspc4TileState_claim_eq]; exact hSc.2
+  have hSpec : Obend.Hardware.OspcProver.OspcCycleSpec H initSt turn0 st1 :=
+    ⟨hLin, fun _ hen => by simp [turn0, mkSampleOspcCycleTurn] at hen, hSc.1, hSum, rfl⟩
+  have hRun : Obend.Hardware.OspcProver.runOspc4TileTrace H initSt [turn0] = .ok st1 :=
+    (Obend.Hardware.OspcProver.runOspc4TileTrace_eq_ok_iff H [turn0] initSt st1).mpr
+      (.cons hSpec (.nil st1))
+  have hRt1 := Obend.Hardware.OspcProver.pack_unpack_receiptLimbs256 st1.verifierReceipt256
+  have hInstEq : w.inst = inst := rfl
+  have hTurnsEq : w.turns = [turn0] := rfl
+  have hCertEq : w.cert =
+      let (l0, l1, l2, l3) := Obend.Hardware.OspcProver.unpackReceiptLimbs256 st1.verifierReceipt256
+      ⟨l0, l1, l2, l3, st1.currentClaim⟩ := by
+    dsimp only [w, mkSampleOspcInRackWitness]
+    change (match Obend.Hardware.OspcProver.runOspc4TileTrace H initSt [turn0] with
+      | .ok sf =>
+        let (l0, l1, l2, l3) := Obend.Hardware.OspcProver.unpackReceiptLimbs256 sf.verifierReceipt256
+        Obend.Hardware.OspcProver.OspcProverCert.mk l0 l1 l2 l3 sf.currentClaim
+      | .error _ =>
+        Obend.Hardware.OspcProver.OspcProverCert.mk 0#64 0#64 0#64 0#64 Obend.Crypto.Goldilocks.zero) = _
+    rw [hRun]
+  unfold checkOspcInRackFpgaReceipt
+  rw [hRcptOk, hInstEq, hTurnsEq, hCertEq]
+  change true && !([turn0].isEmpty) && decide (inst.protocolId = rackId) &&
+    decide (inst.numCycles = [turn0].length) &&
+    decide (Obend.Hardware.OspcProver.packReceiptLimbs256
+      limbs.1 limbs.2.1 limbs.2.2.1 limbs.2.2.2 = rcpt256) &&
+    (match Obend.Hardware.OspcProver.runOspc4TileTrace H initSt [turn0] with
+     | .error _ => false
+     | .ok stFinal =>
+       decide (Obend.Hardware.OspcProver.packReceiptLimbs256
+         (Obend.Hardware.OspcProver.unpackReceiptLimbs256 st1.verifierReceipt256).1
+         (Obend.Hardware.OspcProver.unpackReceiptLimbs256 st1.verifierReceipt256).2.1
+         (Obend.Hardware.OspcProver.unpackReceiptLimbs256 st1.verifierReceipt256).2.2.1
+         (Obend.Hardware.OspcProver.unpackReceiptLimbs256 st1.verifierReceipt256).2.2.2 =
+         stFinal.verifierReceipt256) &&
+       decide (st1.currentClaim = stFinal.currentClaim)) = true
+  rw [hRun]
+  simp [inst, hSeedEq, hRt1]
 
 end Obend.Trailblaze.CathedralApex
 

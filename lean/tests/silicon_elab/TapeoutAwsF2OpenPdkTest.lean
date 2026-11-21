@@ -36,7 +36,7 @@ open Obend.Hardware.Process
 open Obend.Hardware.HDL
 open Obend.Hardware.Synth
 open Obend.Hardware.PlaceRoute
-open Obend.Hardware.DRC
+open Obend.Hardware.PlaneSweepDrcLvs
 open Obend.Hardware.DprStutter
 open Obend.Hardware.TapeoutPipeline
 open Obend.Hardware.AwsF2Shell

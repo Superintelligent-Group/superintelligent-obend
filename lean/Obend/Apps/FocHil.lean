@@ -15,7 +15,7 @@ import all Obend.Hardware.Compiler
 public import Obend.Hardware.Synth
 public import Obend.Hardware.Types
 public import Obend.Hardware.CurrentLoop
-public import Obend.Hardware.Analog
+public import Obend.Hardware.SmallSignalMna
 public import Obend.Judge.RealAnalysis
 public import Obend.Analysis.TaylorModel
 public import Obend.Analysis.SosLyapunov
@@ -102,7 +102,7 @@ open Obend.Hardware.Types
 open Obend.Hardware.Compiler
 open Obend.Hardware.Synth
 open Obend.Hardware.CurrentLoop
-open Obend.Hardware.Analog
+open Obend.Hardware.SmallSignalMna
 open Obend.Hardware.OpenHypergraph
 open Obend.Analysis
 
@@ -381,7 +381,6 @@ theorem focTaylorTrigRefuted {grade : Nat} {q : FocTaylorTrigQuery} {tm : Taylor
   mono := by intros; rfl
 example : FocTaylorTrigFragment ⟨⟨0,0⟩,⟨-2,2⟩⟩ := by decide
 example : verifyFocTaylorTrigCert ⟨⟨0,0⟩,⟨-2,2⟩⟩ (focTrigModel ⟨⟨0,0⟩,⟨-2,2⟩⟩) = true := by decide +kernel
-#tooth checkFocTaylorTrigJudge_sound by mutation verifyFocTaylorTrigCert := fun _ _ => true
 
 def focEncodeTaylorTrigQuery (q : FocTaylorTrigQuery) : String :=
   let wire := focEncodeIntervalWire q.domain ++ "|" ++ focEncodeIntervalWire q.claimedBound

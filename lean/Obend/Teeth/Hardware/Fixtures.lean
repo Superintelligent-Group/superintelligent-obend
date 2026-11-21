@@ -8,7 +8,7 @@ push and not on every library build. Each carries the module it came from and wh
 file is tier 2: `lake build Teeth`; a plain file, so it sees every definition with its body.
 -/
 
-import Obend.Hardware.AgenticEDA
+import Obend.Hardware.PinoutEquiv
 import Obend.Hardware.GeometryCAM
 import Obend.Hardware.Kinematics
 import Obend.Hardware.OpenUSD
@@ -16,52 +16,52 @@ import Obend.Hardware.Retiming
 
 set_option autoImplicit false
 
--- from Obend/Hardware/AgenticEDA.lean:407: refusal witness inside a 33-line fixture; worth a pre-push run
-namespace Obend.Hardware.AgenticEDA
+-- from Obend/Hardware/PinoutEquiv.lean: refusal witness inside a fixture; worth a pre-push run
+namespace Obend.Hardware.PinoutEquiv
 open Obend.Vault
 open Obend.Spec.Law (LawExpr Facts)
 open Obend.Hardware.Datasheet
-/-- Theorem (`goldenAgenticBomSwap_admitted_and_overbudget_refused`):
-1. `goldenEdaLaws` enforces 4 `.obend` smart-contract invariants (`drc_zero`, `thermal_cap`,
+/-- Fixture check (`defaultAgenticBomSwap_admitted_and_overbudget_refused`):
+1. `defaultEdaLaws` enforces 4 `.obend` smart-contract invariants (`drc_zero`, `thermal_cap`,
    `rf_vswr_cap`, `bom_budget`),
 2. `judgeAgenticEdaProposal` **admits** `procurement_scout`'s valid QFN-16 second-source swap
-   (`goldenSecondSourcePart`) after executing the compiled `Core4` smart contracts and verifying
-   datasheet freshness and $400\,\text{mV}$ CMOS noise margins,
+   (`secondSourceLdoPart`) after executing the compiled `Core4` smart contracts and verifying
+   256-bit datasheet freshness and $400\,\text{mV}$ CMOS noise margins,
 3. `judgeAgenticEdaProposal` **refuses** `overbudgetSecondSourcePart` by blaming the exact
    smart-contract law `"bom_budget"` (`new.cost_cents <= 250`),
-4. `judgeAgenticEdaProposal` **refuses** a stale datasheet citation (`pinnedBlockHash ≠ currentDatasheetHash`)
+4. `judgeAgenticEdaProposal` **refuses** a stale datasheet citation (`pinnedDigest256 ≠ currentDigest256`)
    with `.refusedByPhysics "stale-datasheet-cite"`. -/
 example :
-    goldenEdaLaws.length = 4 ∧
+    defaultEdaLaws.length = 4 ∧
     judgeAgenticEdaProposal
-      goldenEdaLaws
-      goldenBaselinePart
-      goldenSecondSourcePart
+      defaultEdaLaws
+      baselineLdoPart
+      secondSourceLdoPart
       lvcmos33ReceiverSpec
       400
-      goldenFreshDatasheetCite
+      defaultDatasheetCite256
       "procurement_scout"
       defaultEdaFacts = .admitted ∧
     judgeAgenticEdaProposal
-      goldenEdaLaws
-      goldenBaselinePart
+      defaultEdaLaws
+      baselineLdoPart
       overbudgetSecondSourcePart
       lvcmos33ReceiverSpec
       400
-      goldenFreshDatasheetCite
+      defaultDatasheetCite256
       "procurement_scout"
       defaultEdaFacts = .refusedBySmartContract "bom_budget" "bom_budget" ∧
     judgeAgenticEdaProposal
-      goldenEdaLaws
-      goldenBaselinePart
-      goldenSecondSourcePart
+      defaultEdaLaws
+      baselineLdoPart
+      secondSourceLdoPart
       lvcmos33ReceiverSpec
       400
-      { goldenFreshDatasheetCite with currentDatasheetHash := 0x9A4F2C02 }
+      { defaultDatasheetCite256 with currentDigest256 := 0x9A4F2C02#256 }
       "procurement_scout"
       defaultEdaFacts = .refusedByPhysics "stale-datasheet-cite" := by
   decide +kernel
-end Obend.Hardware.AgenticEDA
+end Obend.Hardware.PinoutEquiv
 
 -- from Obend/Hardware/GeometryCAM.lean:662: end-to-end run on a fixture (16 lines); worth a pre-push run, not every library build
 namespace Obend.Hardware.GeometryCAM

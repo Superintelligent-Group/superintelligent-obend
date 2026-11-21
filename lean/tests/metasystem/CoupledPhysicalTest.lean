@@ -12,8 +12,8 @@ import Obend.Hardware.OpenUSD
 import Obend.Hardware.Magnetics
 import Obend.Hardware.OpenHypergraph
 import Obend.Hardware.CurrentLoop
-import Obend.Hardware.Analog
-import Obend.Hardware.DSP
+import Obend.Hardware.SmallSignalMna
+import Obend.Hardware.DigitalFilterAndArray
 import Obend.Tactic.Tooth
 
 namespace Obend.Tests.CoupledPhysicalTest
@@ -27,8 +27,8 @@ open Obend.Hardware.OpenUSD
 open Obend.Hardware.Magnetics
 open Obend.Hardware.OpenHypergraph
 open Obend.Hardware.CurrentLoop
-open Obend.Hardware.Analog
-open Obend.Hardware.DSP
+open Obend.Hardware.SmallSignalMna
+open Obend.Hardware.DigitalFilterAndArray
 
 set_option autoImplicit false
 set_option maxHeartbeats 800000

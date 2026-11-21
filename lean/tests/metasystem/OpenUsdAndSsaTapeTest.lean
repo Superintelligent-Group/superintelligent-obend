@@ -341,8 +341,8 @@ theorem test_wire_numeric_field_parsers :
                tileY := (extractNatField "{\"cell1TileY\": 0}" "cell1TileY").getD 1,
                belSlot := 0, lutInit := 0x6 } ] }
      checkPnrJudge 0 2000 pnr = .refused (.pnrCollisionShortOrTiming "obend_routed_adder2") []) ∧
-    (let cand : Obend.Hardware.AgenticEDA.EdaVaultPart :=
-       { Obend.Hardware.AgenticEDA.goldenBaselinePart with
+    (let cand : Obend.Hardware.PinoutEquiv.EdaVaultPart :=
+       { Obend.Hardware.PinoutEquiv.baselineLdoPart with
          costCents := (extractNatField "{\"costCents\": 320}" "costCents").getD 120 }
      checkAgenticEdaJudge 0 400 cand = .refused (.agenticEdaSwapViolation "U4_LDO") []) :=
   extractNatField_and_extractIntField_verified

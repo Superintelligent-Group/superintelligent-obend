@@ -13,6 +13,7 @@ public import Obend.Tactic.Tooth
 public import Obend.Teeth.Leaf.ReviewTeeth
 public import Obend.Apps.SiliconKernelVerilator
 import all Obend.Apps.SiliconKernelVerilator
+import all Obend.Apps.FocHil
 import all Obend.Lower.Inductive
 import all Obend.Lower.LeanKernel
 import all Obend.Lower.ExprCAM
@@ -28,8 +29,8 @@ import all Obend.Lower.Proofs.Hardware
 import all Obend.Hardware.Synth
 import all Obend.Hardware.Retiming
 import all Obend.Hardware.PlaceRoute
-import all Obend.Hardware.DRC
-import all Obend.Hardware.Analog
+import all Obend.Hardware.PlaneSweepDrcLvs
+import all Obend.Hardware.SmallSignalMna
 import all Obend.Hardware.Datasheet
 import all Obend.Hardware.Circuits
 import all Obend.Hardware.Device.Sky130Diode
@@ -37,8 +38,8 @@ import all Obend.Hardware.Device.Wafer
 import all Obend.Hardware.Photonics
 import all Obend.Hardware.PCB
 import all Obend.Hardware.ReductionMachine
-import all Obend.Hardware.DSP
-import all Obend.Hardware.AgenticEDA
+import all Obend.Hardware.DigitalFilterAndArray
+import all Obend.Hardware.PinoutEquiv
 import all Obend.Hardware.Magnetics
 import all Obend.Hardware.CurrentLoop
 import all Obend.Hardware.ThermalPassivity
@@ -58,10 +59,10 @@ open Obend.Core.Term Obend.Logic Obend.Leaf Obend.Slot Obend.Slot.World
 open Obend.Hardware.Silicon Obend.Hardware.Process
 open Obend.Hardware.HDL Obend.Hardware.Types
 open Obend.Hardware.Compiler Obend.Hardware.Synth Obend.Hardware.Retiming Obend.Hardware.PlaceRoute
-open Obend.Hardware.DRC Obend.Hardware.Analog
+open Obend.Hardware.PlaneSweepDrcLvs Obend.Hardware.SmallSignalMna
 open Obend.Hardware.Datasheet Obend.Hardware.Circuits
 open Obend.Hardware.Photonics Obend.Hardware.PCB
-open Obend.Hardware.ReductionMachine Obend.Hardware.DSP Obend.Hardware.AgenticEDA
+open Obend.Hardware.ReductionMachine Obend.Hardware.DigitalFilterAndArray Obend.Hardware.PinoutEquiv
 open Obend.Hardware.Magnetics Obend.Hardware.CurrentLoop Obend.Hardware.ThermalPassivity
 open Obend.Hardware.Accelerators Obend.Hardware.GeometryCAM
 open Obend.Hardware.Kinematics Obend.Hardware.OpenUSD
@@ -250,26 +251,26 @@ def mutantCheckPlacementInjectiveAcceptAll (_cells : List PlacedCell) : Bool := 
 
 #tooth Obend.Hardware.PlaceRoute.checkPnrCertificate_sound by mutation Obend.Hardware.PlaceRoute.checkPlacementInjective := mutantCheckPlacementInjectiveAcceptAll
 
-/-- 18. Broken `checkTrenchFillVoidFree` in `Obend.Hardware.DRC` that ignores top-corner bread-loafing pinch-off. -/
+/-- 18. Broken `checkTrenchFillVoidFree` in `Obend.Hardware.PlaneSweepDrcLvs` that ignores top-corner bread-loafing pinch-off. -/
 def checkTrenchFillIgnoreOverhang (spec : TrenchFillSpec) : Bool :=
   (spec.trenchWidthNm > 0) && (spec.stepCoveragePct > 0) && (spec.stepCoveragePct ≤ 100)
 
-#tooth Obend.Hardware.DRC.pvd_high_ar_keyhole_refused by mutation Obend.Hardware.DRC.checkTrenchFillVoidFree := checkTrenchFillIgnoreOverhang
+#tooth Obend.Hardware.PlaneSweepDrcLvs.pvd_high_ar_keyhole_refused by mutation Obend.Hardware.PlaneSweepDrcLvs.checkTrenchFillVoidFree := checkTrenchFillIgnoreOverhang
 
-/-- 19. Broken `abbaCentroidMismatch` in `Obend.Hardware.Analog` that uses an unmatched `AABB` placement instead of `ABBA`. -/
+/-- 19. Broken `abbaCentroidMismatch` in `Obend.Hardware.SmallSignalMna` that uses an unmatched `AABB` placement instead of `ABBA`. -/
 def abbaAsUnmatchedAabb (p0 gradPerUm x0 pitch : Int) : Int :=
   aabbUnmatchedMismatch p0 gradPerUm x0 pitch
 
-#tooth Obend.Hardware.Analog.commonCentroid_cancels_linear_gradient by mutation Obend.Hardware.Analog.abbaCentroidMismatch := abbaAsUnmatchedAabb
+#tooth Obend.Hardware.SmallSignalMna.commonCentroid_cancels_linear_gradient by mutation Obend.Hardware.SmallSignalMna.abbaCentroidMismatch := abbaAsUnmatchedAabb
 
-/-- 20. Broken `prouhetThueMorseMismatch1D` in `Obend.Hardware.Analog` that falls back to 4-cell `ABBA`. -/
+/-- 20. Broken `prouhetThueMorseMismatch1D` in `Obend.Hardware.SmallSignalMna` that falls back to 4-cell `ABBA`. -/
 def ptm8BrokenAsAbba4 (p0 gx cxx pitch : Int) : Int :=
   abbaQuadraticMismatch1D p0 gx cxx pitch
 
-#tooth Obend.Hardware.Analog.prouhetThueMorse_cancels_linear_and_quadratic_bow by mutation Obend.Hardware.Analog.prouhetThueMorseMismatch1D := ptm8BrokenAsAbba4
+#tooth Obend.Hardware.SmallSignalMna.prouhetThueMorse_cancels_linear_and_quadratic_bow by mutation Obend.Hardware.SmallSignalMna.prouhetThueMorseMismatch1D := ptm8BrokenAsAbba4
 
--- 21. Broken `chiralityBalanced2DMismatch` in `Obend.Hardware.Analog` that falls back to 4-cell `crossCoupledQuad2DMismatch` (leaving a non-zero $8 c_{xy} p_x p_y$ saddle residual!).
-#tooth Obend.Hardware.Analog.chiralityBalanced2D_cancels_full_hessian by mutation Obend.Hardware.Analog.chiralityBalanced2DMismatch := Obend.Hardware.Analog.crossCoupledQuad2DMismatch
+-- 21. Broken `chiralityBalanced2DMismatch` in `Obend.Hardware.SmallSignalMna` that falls back to 4-cell `crossCoupledQuad2DMismatch` (leaving a non-zero $8 c_{xy} p_x p_y$ saddle residual!).
+#tooth Obend.Hardware.SmallSignalMna.chiralityBalanced2D_cancels_full_hessian by mutation Obend.Hardware.SmallSignalMna.chiralityBalanced2DMismatch := Obend.Hardware.SmallSignalMna.crossCoupledQuad2DMismatch
 
 /-- 22. Broken `checkRtlSynth` in `Obend.Hardware.Judge` that accepts any `RtlModule` without checking `checkRtlModule`. -/
 def mutantCheckRtlSynthAcceptAll (_grade : Nat) (_expectedName : String) (_m : RtlModule) : Obend.Judge.Verdict HwClause :=
@@ -320,20 +321,20 @@ def dprPhase2IgnoreCrc (frame : IcapBitstreamFrame) (t : ReconfigTileState) : Re
 
 #tooth Obend.Hardware.ReductionMachine.dpr_corrupt_crc_keeps_tile_isolated by mutation Obend.Hardware.ReductionMachine.dprPhase2LoadFrame := dprPhase2IgnoreCrc
 
-/-- 30. Broken `checkRollettUnconditionalStability` in `Obend.Hardware.DSP` that omits the $K > 1$ check. -/
+/-- 30. Broken `checkRollettUnconditionalStability` in `Obend.Hardware.DigitalFilterAndArray` that omits the $K > 1$ check. -/
 def checkRollettIgnoreK (sp : TwoPortSParams) : Bool :=
   decide (0 ≤ sp.s11MagSqPermilleSq ∧ sp.s11MagSqPermilleSq < 1000000) &&
   decide (0 ≤ sp.s22MagSqPermilleSq ∧ sp.s22MagSqPermilleSq < 1000000) &&
   decide (0 ≤ sp.deltaMagSqPermilleSq ∧ sp.deltaMagSqPermilleSq < 1000000) &&
   decide (0 < evalRollettDenominator sp)
 
-#tooth Obend.Hardware.DSP.rollettStability_sound by mutation Obend.Hardware.DSP.checkRollettUnconditionalStability := checkRollettIgnoreK
+#tooth Obend.Hardware.DigitalFilterAndArray.rollettStability_sound by mutation Obend.Hardware.DigitalFilterAndArray.checkRollettUnconditionalStability := checkRollettIgnoreK
 
-/-- 31. Broken `checkDatasheetCiteFresh` in `Obend.Hardware.AgenticEDA` that ignores `cite.pinnedBlockHash = cite.currentDatasheetHash`. -/
-def checkDatasheetCiteIgnoreHash (cite : DatasheetCitePin) : Bool :=
-  decide (0 < cite.currentDatasheetHash)
+/-- 31. Broken `checkDatasheetCite256Fresh` in `Obend.Hardware.PinoutEquiv` that ignores `cite.pinnedDigest256 = cite.currentDigest256`. -/
+def checkDatasheetCiteIgnoreHash (cite : DatasheetCite256) : Bool :=
+  decide (cite.currentDigest256 ≠ 0#256)
 
-#tooth Obend.Hardware.AgenticEDA.staleDatasheetCite_refused by mutation Obend.Hardware.AgenticEDA.checkDatasheetCiteFresh := checkDatasheetCiteIgnoreHash
+#tooth Obend.Hardware.PinoutEquiv.staleDatasheetCite256_refused by mutation Obend.Hardware.PinoutEquiv.checkDatasheetCite256Fresh := checkDatasheetCiteIgnoreHash
 
 /-- 32. Broken `encodeBinaryHwCert` in `Obend.Hardware.Codec` that emits wrong CBOR tag byte `0xEE` instead of `0xED`. -/
 def encodeBinaryHwCertBadTag (c : BinaryHwCert) : List UInt8 :=
@@ -583,3 +584,6 @@ open Obend.Hardware.ReductionMachine in
 
 #tooth Obend.Hardware.Judge.checkPnrProblemJudge_ok_iff by
   mutation Obend.Hardware.Judge.checkPnrProblemJudge := fun _ _ _ => .ok
+
+#tooth Obend.Apps.FocHil.checkFocTaylorTrigJudge_sound by
+  mutation Obend.Apps.FocHil.verifyFocTaylorTrigCert := fun _ _ => true

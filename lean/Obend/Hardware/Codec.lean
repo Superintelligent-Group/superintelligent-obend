@@ -32,13 +32,13 @@ public import Obend.Hardware.Retiming
 public import Obend.Hardware.Photonics
 public import Obend.Hardware.PCB
 public import Obend.Hardware.ReductionMachine
-public import Obend.Hardware.AgenticEDA
+public import Obend.Hardware.PinoutEquiv
 public import Obend.Hardware.ThermalPassivity
-public import Obend.Hardware.Analog
-public import Obend.Hardware.DSP
+public import Obend.Hardware.SmallSignalMna
+public import Obend.Hardware.DigitalFilterAndArray
 public import Obend.Hardware.Magnetics
 
-@[expose] public section
+public section
 
 namespace Obend.Hardware.Codec
 
@@ -52,7 +52,7 @@ open Obend.Hardware.Retiming
 open Obend.Hardware.Photonics
 open Obend.Hardware.PCB
 open Obend.Hardware.ReductionMachine
-open Obend.Hardware.AgenticEDA
+open Obend.Hardware.PinoutEquiv
 
 set_option autoImplicit false
 
@@ -495,7 +495,7 @@ def verifyBinaryHwCert (c : BinaryHwCert) : Bool :=
   | .edaBomSwap =>
     -- p0: vohMinMv, p1: volMaxMv, p2: maxTempMc, p3: vswrMilli, p4: costCents, p5: minMarginMv
     let candPart : EdaVaultPart := {
-      goldenBaselinePart with
+      baselineLdoPart with
       vohMinMv := c.p0.toNat
       volMaxMv := c.p1.toNat
       maxTempMc := c.p2.toNat
@@ -503,12 +503,12 @@ def verifyBinaryHwCert (c : BinaryHwCert) : Bool :=
       costCents := c.p4.toNat
     }
     judgeAgenticEdaProposal
-      goldenEdaLaws
-      goldenBaselinePart
+      defaultEdaLaws
+      baselineLdoPart
       candPart
       lvcmos33ReceiverSpec
       c.p5
-      goldenFreshDatasheetCite
+      defaultDatasheetCite256
       "procurement_scout"
       defaultEdaFacts == .admitted
   | .multiphysics =>
@@ -521,12 +521,12 @@ def verifyBinaryHwCert (c : BinaryHwCert) : Bool :=
     decide (c.p0 ≥ 0 ∧ c.p1 ≥ 0 ∧ Obend.Hardware.ThermalPassivity.evalLaplacianQuadratic temps edges ≥ 0)
   | .analog2d =>
     -- p0: p0, p1: gx, p2: gy, p3: cxx, p4: cxy, p5: cyy
-    decide (Obend.Hardware.Analog.chiralityBalanced2DMismatch c.p0 c.p1 c.p2 c.p3 c.p4 c.p5 10 10 == 0) &&
-    decide (Obend.Hardware.Analog.prouhetThueMorseMismatch1D c.p0 c.p1 c.p3 10 == 0)
+    decide (Obend.Hardware.SmallSignalMna.chiralityBalanced2DMismatch c.p0 c.p1 c.p2 c.p3 c.p4 c.p5 10 10 == 0) &&
+    decide (Obend.Hardware.SmallSignalMna.prouhetThueMorseMismatch1D c.p0 c.p1 c.p3 10 == 0)
   | .dspBeamformer =>
     -- p0: sigI, p1: sigQ, p2: cordicX0, p3: cordicY0, p4: cordicZ0, p5: expectedGain
-    let sig : Obend.Hardware.DSP.IqPhasor := ⟨c.p0, c.p1⟩
-    let matched := Obend.Hardware.DSP.iqConjMul sig sig
+    let sig : Obend.Hardware.DigitalFilterAndArray.IqPhasor := ⟨c.p0, c.p1⟩
+    let matched := Obend.Hardware.DigitalFilterAndArray.iqConjMul sig sig
     decide (matched.q == 0 ∧ matched.i == c.p0 * c.p0 + c.p1 * c.p1 ∧ matched.i ≥ 0)
   | .magnetics =>
     -- p0: a0, p1: a1, p2: a2, p3: nuLinear, p4: kSat, p5: bSq

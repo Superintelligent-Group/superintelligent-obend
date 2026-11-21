@@ -5,13 +5,13 @@ public import Obend.Hardware.Silicon
 public import Obend.Hardware.Synth
 public import Obend.Hardware.Retiming
 public import Obend.Hardware.PlaceRoute
-public import Obend.Hardware.DRC
+public import Obend.Hardware.PlaneSweepDrcLvs
 public import Obend.Hardware.TapeoutPipeline
 import all Obend.Hardware.Silicon
 import all Obend.Hardware.Synth
 import all Obend.Hardware.Retiming
 import all Obend.Hardware.PlaceRoute
-import all Obend.Hardware.DRC
+import all Obend.Hardware.PlaneSweepDrcLvs
 import all Obend.Hardware.TapeoutPipeline
 
 /-!
@@ -29,7 +29,7 @@ kernel mutation-killing probes, and `#print axioms` verification (`0 sorryAx`) a
    - `SteinerTree`, `downstreamCapFf`, `maxSteinerElmoreDelayFsOhm`,
    - `downstreamCapFf_monotone_load`, `maxSteinerElmoreDelay_nonneg`,
    - `steiner_fanout_buffer_insertion_reduces_elmore_delay`.
-3. `Obend.Hardware.DRC`:
+3. `Obend.Hardware.PlaneSweepDrcLvs`:
    - `LayoutBox2D`, `checkBoxSpacing2D`, `checkViaEnclosure2D`,
    - `boxSpacing2D_disjoint`, `viaEnclosure2D_contained`.
 4. `Obend.Hardware.Silicon` & `Obend.Hardware.TapeoutPipeline`:
@@ -47,7 +47,7 @@ open Obend.Hardware.Silicon
 open Obend.Hardware.Synth
 open Obend.Hardware.Retiming
 open Obend.Hardware.PlaceRoute
-open Obend.Hardware.DRC
+open Obend.Hardware.PlaneSweepDrcLvs
 open Obend.Hardware.TapeoutPipeline
 set_option autoImplicit false
 
@@ -294,8 +294,8 @@ def downstreamCapFfDropRight : SteinerTree → Nat
 #tooth Obend.Hardware.PlaceRoute.steiner_fanout_buffer_insertion_reduces_elmore_delay
   by mutation Obend.Hardware.PlaceRoute.downstreamCapFf := downstreamCapFfDropRight
 
-#tooth Obend.Hardware.DRC.boxSpacing2D_disjoint
-  by mutation Obend.Hardware.DRC.checkBoxSpacing2D := fun _ b1 b2 => b1.wf && b2.wf
+#tooth Obend.Hardware.PlaneSweepDrcLvs.boxSpacing2D_disjoint
+  by mutation Obend.Hardware.PlaneSweepDrcLvs.checkBoxSpacing2D := fun _ b1 b2 => b1.wf && b2.wf
 
 #print axioms Obend.Hardware.Synth.synthesizeModuleToBels_trace_equiv
 #print axioms Obend.Hardware.Retiming.solveVerifiedRetiming_sound
@@ -305,8 +305,8 @@ def downstreamCapFfDropRight : SteinerTree → Nat
 #print axioms Obend.Hardware.PlaceRoute.downstreamCapFf_monotone_load
 #print axioms Obend.Hardware.PlaceRoute.maxSteinerElmoreDelay_nonneg
 #print axioms Obend.Hardware.PlaceRoute.steiner_fanout_buffer_insertion_reduces_elmore_delay
-#print axioms Obend.Hardware.DRC.boxSpacing2D_disjoint
-#print axioms Obend.Hardware.DRC.viaEnclosure2D_contained
+#print axioms Obend.Hardware.PlaneSweepDrcLvs.boxSpacing2D_disjoint
+#print axioms Obend.Hardware.PlaneSweepDrcLvs.viaEnclosure2D_contained
 #print axioms Obend.Hardware.TapeoutPipeline.compileCompositionToSiliconTapeout_sound
 
 end Obend.Tests.Metasystem.PhysicalSiliconSpineTest

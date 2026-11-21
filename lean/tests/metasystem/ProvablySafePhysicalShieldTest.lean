@@ -2,7 +2,7 @@ module
 public import Obend.Hardware.SafePhysicalShield
 public import Obend.Hardware.Device.DriftDiffusion
 public import Obend.Hardware.SiliconOuroboros
-public import Obend.Hardware.Analog
+public import Obend.Hardware.SmallSignalMna
 public import Obend.Teeth.Hardware.DeviceFixtures
 public import Obend.Tactic.Tooth
 public import Obend.AssertAxioms
@@ -11,7 +11,7 @@ meta import all Obend.Hardware.Device.DriftDiffusion
 meta import all Obend.Hardware.Device.Enclosure
 meta import all Obend.Hardware.SiliconOuroboros
 meta import all Obend.Hardware.DprStutter
-meta import all Obend.Hardware.Analog
+meta import all Obend.Hardware.SmallSignalMna
 meta import all Obend.Analysis.Flowpipe
 meta import all Obend.Analysis.RealAnalysis
 meta import all Obend.Judge.ReflectiveGate
@@ -102,7 +102,7 @@ import all Obend.Equiv.Quote
 import all Obend.Equiv.Reduction
 import all Obend.Equiv.Simulation
 import all Obend.Fold
-import all Obend.Hardware.Analog
+import all Obend.Hardware.SmallSignalMna
 import all Obend.Hardware.ArrayFold
 import all Obend.Hardware.Device.Constants
 import all Obend.Hardware.Device.DriftDiffusion

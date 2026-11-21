@@ -22,6 +22,7 @@ public import Obend.Doc.Merge
 public import Obend.Codec.DetCbor
 import all Obend.Codec.DetCbor
 public import Obend.Digest.HashBytes
+public import Obend.Receipt.Merkle
 public import Obend.Judge.Class
 
 public section
@@ -818,6 +819,55 @@ theorem mergeAndJudgeAgenticEdaBoard_commutative (prop : MultiAgentBoardMergePro
         mergeFieldVal3_comm prop.baseBoard.maxTempMc, mergeFieldVal3_comm prop.baseBoard.vswrMilli, mergeFieldVal3_comm prop.baseBoard.drcErrors,
         mergeFieldVal3_comm prop.baseBoard.costCents]
   unfold mergeAndJudgeAgenticEdaBoard; simp only [hC, hM]
+
+/-- Commit the 12 scalar fields of an `EdaVaultPart` as a `Receipt.Merkle` value list. -/
+def edaBoardScalarValues (p : EdaVaultPart) : List Nat :=
+  (p.toScalarFields).map Prod.snd
+
+/-- Compute the Merkle leaf digests (`Obend.Receipt.Merkle.leaves`) of an `EdaVaultPart`'s scalar fields. -/
+def edaBoardMerkleLeaves (H : Obend.Digest.HashBytes.Hash) (p : EdaVaultPart) : List Nat :=
+  Obend.Receipt.Merkle.leaves H (edaBoardScalarValues p)
+
+/-- Compute the Merkle root (`Obend.Receipt.Merkle.mapRoot`) of an `EdaVaultPart`'s scalar fields. -/
+def commitEdaBoardMerkleRoot (H : Obend.Digest.HashBytes.Hash) (p : EdaVaultPart) : Nat :=
+  Obend.Receipt.Merkle.mapRoot H (edaBoardScalarValues p)
+
+/-- Construct a `MerkleBatchProof` opening a list of scalar field indices `fieldIndices`
+against the committed board root `commitEdaBoardMerkleRoot H p`. -/
+def buildEdaBoardBatchProof
+    (H : Obend.Digest.HashBytes.Hash) (p : EdaVaultPart) (fieldIndices : List Nat) :
+    Obend.Receipt.Merkle.MerkleBatchProof :=
+  Obend.Receipt.Merkle.honestBatchProof H (edaBoardMerkleLeaves H p) fieldIndices
+
+/-- Soundness and completeness of EDA board Merkle batch receipts. -/
+theorem buildEdaBoardBatchProof_verifies
+    {H : Obend.Digest.HashBytes.Hash} (hb : Obend.Receipt.Merkle.Bounded H)
+    (p : EdaVaultPart) (fieldIndices : List Nat)
+    (hNodup : fieldIndices.Nodup)
+    (hBounds : ∀ i ∈ fieldIndices, i < 12) :
+    Obend.Receipt.Merkle.verifyMerkleBatchProof H
+      (buildEdaBoardBatchProof H p fieldIndices)
+      (commitEdaBoardMerkleRoot H p) = true := by
+  have hLen : (edaBoardMerkleLeaves H p).length = 12 := by
+    simp [edaBoardMerkleLeaves, Obend.Receipt.Merkle.leaves_length,
+      edaBoardScalarValues, EdaVaultPart.toScalarFields]
+  have hSmall : ∀ x ∈ edaBoardMerkleLeaves H p, x < 2 ^ 256 :=
+    Obend.Receipt.Merkle.leaves_small hb (edaBoardScalarValues p)
+  have hLenSmall : (edaBoardMerkleLeaves H p).length < 2 ^ 256 := by
+    rw [hLen]; decide
+  exact Obend.Receipt.Merkle.verifyMerkleBatchProof_honest hb
+    (edaBoardMerkleLeaves H p) hSmall hLenSmall fieldIndices hNodup
+    (fun i hi => by rw [hLen]; exact hBounds i hi)
+
+/-- Deployed cSHAKE256 instantiation of `buildEdaBoardBatchProof_verifies`. -/
+theorem deployed_edaBoardBatchProof_verifies
+    (p : EdaVaultPart) (fieldIndices : List Nat)
+    (hNodup : fieldIndices.Nodup)
+    (hBounds : ∀ i ∈ fieldIndices, i < 12) :
+    Obend.Receipt.Merkle.verifyMerkleBatchProof Obend.Core.Digest.deployed
+      (buildEdaBoardBatchProof Obend.Core.Digest.deployed p fieldIndices)
+      (commitEdaBoardMerkleRoot Obend.Core.Digest.deployed p) = true :=
+  buildEdaBoardBatchProof_verifies Obend.Receipt.Merkle.deployed_bounded p fieldIndices hNodup hBounds
 
 /-! ## 4. Non-Tautological `pinoutEquivJudge` & Multi-Turn Revision Trace -/
 structure PinoutSwapObj where

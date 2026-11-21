@@ -122,7 +122,7 @@ end AwsF2
 
 /-! ## 2. Artifact-bound tapeout signoff -/
 section Tapeout
-open Obend.Hardware.HDL Obend.Hardware.Synth Obend.Hardware.PlaceRoute Obend.Hardware.Process Obend.Hardware.DRC
+open Obend.Hardware.HDL Obend.Hardware.Synth Obend.Hardware.PlaceRoute Obend.Hardware.Process Obend.Hardware.PlaneSweepDrcLvs
 open Obend.Hardware.TapeoutPipeline
 
 /-- `n` chained 64-bit adders between input and output: `n` LUT levels and `n` carry chains, no register. -/
@@ -210,7 +210,7 @@ theorem slow_paths_refused_under_clean_config :
   by mutation Obend.Hardware.TapeoutPipeline.checkGraphArrivals := fun _ _ _ => true
 -- Accepting any pad spacing.
 #tooth Obend.Hardware.TapeoutPipeline.checkArtifactBoundTapeout_sound
-  by mutation Obend.Hardware.DRC.checkBoxSpacing2D := fun _ _ _ => true
+  by mutation Obend.Hardware.PlaneSweepDrcLvs.checkBoxSpacing2D := fun _ _ _ => true
 #tooth Obend.Hardware.TapeoutPipeline.runArtifactBoundTapeoutSignoff_sound
   by mutation Obend.Hardware.TapeoutPipeline.runArtifactBoundTapeoutSignoff :=
     fun env _ deck nl pnr => some (derivePhysicalChecksFromBelNetlist env.slowCorner deck nl pnr)

@@ -1,13 +1,13 @@
 module
 
 public import Obend.Tactic.Tooth
-public import Obend.Hardware.Analog
-public import Obend.Hardware.DSP
+public import Obend.Hardware.SmallSignalMna
+public import Obend.Hardware.DigitalFilterAndArray
 public import Obend.Hardware.PCB
 public import Obend.Hardware.Datasheet
 public import Obend.Hardware.Circuits
-import all Obend.Hardware.Analog
-import all Obend.Hardware.DSP
+import all Obend.Hardware.SmallSignalMna
+import all Obend.Hardware.DigitalFilterAndArray
 import all Obend.Hardware.PCB
 import all Obend.Hardware.Datasheet
 import all Obend.Hardware.Circuits
@@ -17,15 +17,15 @@ import all Obend.Hardware.Circuits
 
 Comprehensive universal theorem checks, boundary & multi-resolution quantization checks,
 negative refusal poles, and `#tooth` kernel mutation-killing probes (`0 sorry`) across:
-1. `Obend.Hardware.Analog`:
-   - `runSarAdcN`, `evalSarAdcN`, `runSarAdcN_matches_runSarAdc4`, `runSarAdcN_lower_bound`,
+1. `Obend.Hardware.SmallSignalMna`:
+   - `runSarAdcN`, `evalSarAdcN`, `runSarAdcN_eq_runSarAdc4`, `runSarAdcN_lower_bound`,
      `runSarAdcN_exact_quantization_bounds`,
    - `prouhetThueMorse_cancels_linear_and_quadratic_bow`,
      `crossCoupledQuad2D_cancels_gradients_and_axial_bow`,
-     `octuple2DCells_nodup`, `chiralityBalanced2D_cancels_full_hessian`,
+     `octuple2DCellsA`, `octuple2DCellsB`, `chiralityBalanced2D_cancels_full_hessian`,
    - `eval2DCommonCentroidMismatch`, `commonCentroid2D_cancels_planar_gradient`,
      `unmatched2D_suffers_planar_gradient`.
-2. `Obend.Hardware.DSP`:
+2. `Obend.Hardware.DigitalFilterAndArray`:
    - `runCordicPipeline`, `runCordicPipeline_append`, `stepCordicStage1`, `cordic_stage1_norm_identity`,
      `stepCordicTwoStage`, `cordic_twoStage_exact_gain_10x`,
    - `nco_phase_in_bounds`, `cic_register_width_sound`, `firSymmetric_folds_multipliers`,
@@ -41,14 +41,14 @@ negative refusal poles, and `#tooth` kernel mutation-killing probes (`0 sorry`) 
 @[expose] public section
 namespace Obend.Tests.Metasystem.MixedSignalSdrPcbTest
 
-open Obend.Hardware.Analog
-open Obend.Hardware.DSP
+open Obend.Hardware.SmallSignalMna
+open Obend.Hardware.DigitalFilterAndArray
 open Obend.Hardware.PCB
 open Obend.Hardware.Datasheet
 open Obend.Hardware.Circuits
 set_option autoImplicit false
 
-/-! ## 1. Parametric $N$-Bit SAR ADC & 2D Octuple Hessian-Canceling Array (`Obend.Hardware.Analog`) -/
+/-! ## 1. Parametric $N$-Bit SAR ADC & 2D Octuple Hessian-Canceling Array (`Obend.Hardware.SmallSignalMna`) -/
 
 -- 1.1 Universal agreement with 4-bit SAR ADC and exact quantization bounds
 example :
@@ -58,7 +58,7 @@ example :
       runSarAdcN 4 0 (q * 100) 100 = q ∧
       runSarAdcN 4 0 (q * 100 + 50) 100 = q ∧
       runSarAdcN 4 0 (q * 100 + 99) 100 = q) :=
-  runSarAdcN_matches_runSarAdc4
+  ⟨runSarAdcN_eq_runSarAdc4, by decide +kernel⟩
 
 example (bits vInMv vLsbMv : Nat) (hPos : 0 < vLsbMv) :
     (runSarAdcN bits 0 vInMv vLsbMv) * vLsbMv ≤ vInMv ∧
@@ -85,8 +85,8 @@ example (p0 gx cxx pitch : Int) :
     prouhetThueMorseMismatch1D p0 gx cxx pitch = 0 :=
   prouhetThueMorse_cancels_linear_and_quadratic_bow p0 gx cxx pitch
 
-example : (octuple2DCellsA ++ octuple2DCellsB).Nodup :=
-  octuple2DCells_nodup
+example : (octuple2DCellsA ++ octuple2DCellsB).Nodup := by
+  decide
 
 example (p0 gx gy cxx cxy cyy px py : Int) :
     chiralityBalanced2DMismatch p0 gx gy cxx cxy cyy px py = 0 :=
@@ -107,19 +107,19 @@ def runSarAdcNBrokenAlwaysMax (bits accCode _vInMv _vLsbMv : Nat) : Nat :=
 def runSarAdcNBrokenAlwaysZero (_bits accCode _vInMv _vLsbMv : Nat) : Nat :=
   accCode
 
-#tooth Obend.Hardware.Analog.runSarAdcN_matches_runSarAdc4 by mutation
-  Obend.Hardware.Analog.runSarAdcN := runSarAdcNBrokenAlwaysMax
+#tooth Obend.Hardware.SmallSignalMna.runSarAdcN_eq_runSarAdc4 by mutation
+  Obend.Hardware.SmallSignalMna.runSarAdcN := runSarAdcNBrokenAlwaysMax
 
-#tooth Obend.Hardware.Analog.runSarAdcN_acc_upper_bound by mutation
-  Obend.Hardware.Analog.runSarAdcN := runSarAdcNBrokenAlwaysZero
+#tooth Obend.Hardware.SmallSignalMna.runSarAdcN_acc_upper_bound by mutation
+  Obend.Hardware.SmallSignalMna.runSarAdcN := runSarAdcNBrokenAlwaysZero
 
-#tooth Obend.Hardware.Analog.commonCentroid2D_cancels_planar_gradient by mutation
-  Obend.Hardware.Analog.eval2DCommonCentroidMismatch := eval2DUnmatchedMismatch
+#tooth Obend.Hardware.SmallSignalMna.commonCentroid2D_cancels_planar_gradient by mutation
+  Obend.Hardware.SmallSignalMna.eval2DCommonCentroidMismatch := eval2DUnmatchedMismatch
 
-#tooth Obend.Hardware.Analog.chiralityBalanced2D_cancels_full_hessian by mutation
-  Obend.Hardware.Analog.chiralityBalanced2DMismatch := crossCoupledQuad2DMismatch
+#tooth Obend.Hardware.SmallSignalMna.chiralityBalanced2D_cancels_full_hessian by mutation
+  Obend.Hardware.SmallSignalMna.chiralityBalanced2DMismatch := crossCoupledQuad2DMismatch
 
-/-! ## 2. Multi-Stage CORDIC, CIC/FIR Datapaths, Phased-Array ULA & Rollett LNA (`Obend.Hardware.DSP`) -/
+/-! ## 2. Multi-Stage CORDIC, CIC/FIR Datapaths, Phased-Array ULA & Rollett LNA (`Obend.Hardware.DigitalFilterAndArray`) -/
 
 example (v : CordicVec) (dirPos : Bool) :
     evalCordicNormSq (stepCordicStage1 v dirPos) = 5 * evalCordicNormSq v :=
@@ -162,14 +162,14 @@ example (s : IqPhasor) :
 #guard runCordicPipeline ⟨100, 0⟩ [] == ⟨100, 0⟩
 #guard runCordicPipeline ⟨100, 0⟩ [(true, 1), (false, 2)] == ⟨150, 50⟩
 #guard evalCordicNormSq (stepCordicTwoStage ⟨30, 40⟩ true false) == 10 * evalCordicNormSq ⟨30, 40⟩
-#guard checkRollettUnconditionalStability golden2mHamLnaSParams == true
+#guard checkRollettUnconditionalStability vhf2mHamLnaSParams == true
 #guard checkRollettUnconditionalStability unstableFeedbackLnaSParams == false
 
 def stepCordicStage1BrokenSign (v : CordicVec) (_dirPos : Bool) : CordicVec :=
   { x := 2 * v.x + v.y, y := 2 * v.y + v.x }
 
-#tooth Obend.Hardware.DSP.cordic_stage1_norm_identity by mutation
-  Obend.Hardware.DSP.stepCordicStage1 := stepCordicStage1BrokenSign
+#tooth Obend.Hardware.DigitalFilterAndArray.cordic_stage1_norm_identity by mutation
+  Obend.Hardware.DigitalFilterAndArray.stepCordicStage1 := stepCordicStage1BrokenSign
 
 /-! ## 3. Hammerstad–Jensen Microstrip $Z_0$ & Mixed-Signal Datasheet Calibration (`PCB`, `Datasheet`, `Circuits`) -/
 

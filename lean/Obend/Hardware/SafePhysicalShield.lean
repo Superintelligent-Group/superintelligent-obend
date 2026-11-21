@@ -53,14 +53,14 @@ rejects), `interSampleFlow_exists` (the trajectory class is inhabited at every g
 `ota_install_completes`. §7 is a thermal stage with a 12-bit converter and a five-period valid trace.
 -/
 public import Obend.Hardware.SiliconOuroboros
-public import Obend.Hardware.Analog
+public import Obend.Hardware.SmallSignalMna
 public import Obend.Analysis.Flowpipe
 import all Obend.Judge.SvenvsCorrigibility
 import all Obend.Judge.CertifierRatchet
 import all Obend.Judge.ReflectiveGate
 import all Obend.Hardware.DprStutter
 import all Obend.Hardware.SiliconOuroboros
-import all Obend.Hardware.Analog
+import all Obend.Hardware.SmallSignalMna
 import all Obend.Hardware.HDL
 
 public import Obend.Hardware.CurrentLoop
@@ -160,8 +160,8 @@ def actionOk (p : SampledPhysicalPlantSpec) (z : HWState) (u : HWAct) : Bool :=
 def SensorReads (p : SampledPhysicalPlantSpec) (x : CanonicalRat) (vInMv : Nat) : Prop :=
   ratAbs (x - (p.sensOffset + p.sensGain * (vInMv : CanonicalRat))) ≤ p.epsSensor
 
-/-- The converter: `Analog.evalSarAdcN`. -/
-def adcCode (p : SampledPhysicalPlantSpec) (vInMv : Nat) : Nat := Analog.evalSarAdcN p.adcBits vInMv p.vLsbMv
+/-- The converter: `SmallSignalMna.evalSarAdcN`. -/
+def adcCode (p : SampledPhysicalPlantSpec) (vInMv : Nat) : Nat := SmallSignalMna.evalSarAdcN p.adcBits vInMv p.vLsbMv
 
 instance (p : SampledPhysicalPlantSpec) (x : CanonicalRat) (vInMv : Nat) : Decidable (p.SensorReads x vInMv) :=
   inferInstanceAs (Decidable (ratAbs (x - (p.sensOffset + p.sensGain * (vInMv : CanonicalRat))) ≤ p.epsSensor))
@@ -203,7 +203,7 @@ theorem adc_estimate_within_eps (p : SampledPhysicalPlantSpec) (hwf : p.wf = tru
   obtain ⟨_, _, hg, he, _, hlsb, hrange, _, _⟩ := (wf_iff p).1 hwf
   rw [SensorReads, ratAbs_le_iff] at hs
   rw [Interval.mem_iff] at hx
-  have hq := Analog.runSarAdcN_exact_quantization_bounds p.adcBits vInMv p.vLsbMv hlsb
+  have hq := SmallSignalMna.runSarAdcN_exact_quantization_bounds p.adcBits vInMv p.vLsbMv hlsb
   have hin : vInMv < 2 ^ p.adcBits * p.vLsbMv := by
     apply Nat.lt_of_not_le
     intro hle

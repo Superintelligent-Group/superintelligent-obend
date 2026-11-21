@@ -13,14 +13,14 @@ public import Obend.Hardware.Process
 public import Obend.Hardware.HDL
 public import Obend.Hardware.Synth
 public import Obend.Hardware.PlaceRoute
-public import Obend.Hardware.DRC
+public import Obend.Hardware.PlaneSweepDrcLvs
 public import Obend.Hardware.DprStutter
+import all Obend.Hardware.PlaneSweepDrcLvs
 public section
 namespace Obend.Hardware.AwsF2Shell
 open Obend.Category Obend.Hardware.Process Obend.Hardware.HDL
-open Obend.Hardware.Synth Obend.Hardware.PlaceRoute Obend.Hardware.DRC Obend.Hardware.DprStutter
+open Obend.Hardware.Synth Obend.Hardware.PlaceRoute Obend.Hardware.PlaneSweepDrcLvs Obend.Hardware.DprStutter
 set_option autoImplicit false
-
 /-! ## 1. Authentic AWS EC2 F2 (`xcvu47p-fsvh2892-2-e`) `cl_ports.vh` Shell Interface & Wrapper -/
 @[expose] def awsF2TargetDevice : String := "xcvu47p-fsvh2892-2-e"
 @[expose] def awsF2MainClockPeriodPs : Nat := 4000
