@@ -11,7 +11,7 @@ by `W.holds_hi` and `grind` on the 64-bit words (`Lift`).
 module
 public import Obend.Hardware.Gpu.Rdna2.Lift
 meta import Std.Tactic.BVDecide
-@[expose] public section
+public section
 
 namespace Obend.Hardware.Gpu.Rdna2.Residuals
 open Obend.Hardware.Gpu.Rdna2 Obend.Hardware.Gpu.Rdna2.Tm
@@ -48,8 +48,7 @@ def r_0 : Tm.Residual :=
   ⟨n25, n27⟩
 
 set_option linter.unusedSimpArgs false in
-theorem r_0_holds : r_0.Holds := by
-  intro env
+theorem r_0_holds (env : UInt64 → UInt32) : r_0.lhs.eval env = r_0.rhs.eval env := by
   simp only [r_0, eval_node, TOp.sem, List.map, List.getD_cons_zero, List.getD_cons_succ, List.foldr, b2w, join64, carryBV, carrycBV, borrowBV, borrowcBV, mulHiBV, lshlrev64, lshrrev64, packWord, bne]
   first | grind | bv_decide (config := { timeout := 120 })
 
@@ -69,8 +68,7 @@ def r_1 : Tm.Residual :=
   ⟨n7, n11⟩
 
 set_option linter.unusedSimpArgs false in
-theorem r_1_holds : r_1.Holds := by
-  intro env
+theorem r_1_holds (env : UInt64 → UInt32) : r_1.lhs.eval env = r_1.rhs.eval env := by
   simp only [r_1, eval_node, TOp.sem, List.map, List.getD_cons_zero, List.getD_cons_succ, List.foldr, b2w, join64, carryBV, carrycBV, borrowBV, borrowcBV, mulHiBV, lshlrev64, lshrrev64, packWord, bne]
   first | grind | bv_decide (config := { timeout := 120 })
 
@@ -111,8 +109,7 @@ def r_2 : Tm.Residual :=
   ⟨n27, n32⟩
 
 set_option linter.unusedSimpArgs false in
-theorem r_2_holds : r_2.Holds := by
-  intro env
+theorem r_2_holds (env : UInt64 → UInt32) : r_2.lhs.eval env = r_2.rhs.eval env := by
   simp only [r_2, eval_node, TOp.sem, List.map, List.getD_cons_zero, List.getD_cons_succ, List.foldr, b2w, join64, carryBV, carrycBV, borrowBV, borrowcBV, mulHiBV, lshlrev64, lshrrev64, packWord, bne]
   bv_decide (config := { timeout := 120 })
 
@@ -168,8 +165,7 @@ def r_3 : Tm.Residual :=
   ⟨n38, n47⟩
 
 set_option linter.unusedSimpArgs false in
-theorem r_3_holds : r_3.Holds := by
-  intro env
+theorem r_3_holds (env : UInt64 → UInt32) : r_3.lhs.eval env = r_3.rhs.eval env := by
   simp only [r_3, eval_node, TOp.sem, List.map, List.getD_cons_zero, List.getD_cons_succ, List.foldr, b2w, join64, carryBV, carrycBV, borrowBV, borrowcBV, mulHiBV, lshlrev64, lshrrev64, packWord, bne]
   bv_decide (config := { timeout := 120 })
 
@@ -226,8 +222,7 @@ def r_4 : Tm.Residual :=
   ⟨n39, n48⟩
 
 set_option linter.unusedSimpArgs false in
-theorem r_4_holds : r_4.Holds := by
-  intro env
+theorem r_4_holds (env : UInt64 → UInt32) : r_4.lhs.eval env = r_4.rhs.eval env := by
   simp only [r_4, eval_node, TOp.sem, List.map, List.getD_cons_zero, List.getD_cons_succ, List.foldr, b2w, join64, carryBV, carrycBV, borrowBV, borrowcBV, mulHiBV, lshlrev64, lshrrev64, packWord, bne]
   bv_decide (config := { timeout := 120 })
 
@@ -269,8 +264,7 @@ def r_5 : Tm.Residual :=
   ⟨n28, n33⟩
 
 set_option linter.unusedSimpArgs false in
-theorem r_5_holds : r_5.Holds := by
-  intro env
+theorem r_5_holds (env : UInt64 → UInt32) : r_5.lhs.eval env = r_5.rhs.eval env := by
   simp only [r_5, eval_node, TOp.sem, List.map, List.getD_cons_zero, List.getD_cons_succ, List.foldr, b2w, join64, carryBV, carrycBV, borrowBV, borrowcBV, mulHiBV, lshlrev64, lshrrev64, packWord, bne]
   bv_decide (config := { timeout := 120 })
 

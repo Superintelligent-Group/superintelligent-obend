@@ -7,7 +7,7 @@ barrier witnesses into the concatenated shape and uses source scatter ownership 
 -/
 public import Obend.Hardware.Gpu.SourceProtocol
 public import Obend.Hardware.ArrayKernelOwnership
-@[expose] public section
+public section
 
 namespace Obend.Hardware.Gpu.DispatchProtocol
 open Obend.Hardware.Gpu.Memory
@@ -109,7 +109,7 @@ private theorem row_embed {α : Type} (rows : List (List α)) (g i : Nat)
       · simp only [rowBase, List.flatten_cons, List.length_append]; omega
       · simp only [rowBase, List.flatten_cons, List.getD_eq_getElem?_getD,
           List.getElem?_append]
-        rw [if_neg (by omega)]
+        rw [ite_eq_right (by omega)]
         simpa only [Nat.add_assoc, Nat.add_sub_cancel_left, List.getD_eq_getElem?_getD] using he
 
 private theorem row_origin {α : Type} (rows : List (List α)) (i : Nat)
@@ -183,7 +183,7 @@ theorem tagLoc_injective (groups g : Nat) (hg : g < groups) (l m : Loc)
     (he : tagLoc groups g l = tagLoc groups g m) : l = m := by
   cases l with | mk ls li =>
     cases m with | mk ms mi =>
-      cases ls <;> cases ms <;> simp only [tagLoc, Loc.mk.injEq, and_true, true_and] at he ⊢
+      cases ls <;> cases ms <;> simp only [tagLoc, Loc.mk.injEq, true_and] at he ⊢
       · exact he
       · cases he.1
       · cases he.1
@@ -195,7 +195,7 @@ theorem tagLoc_cross (groups g h : Nat) (hg : g < groups) (hh : h < groups) (hne
     l.space = .storage ∧ m = l := by
   cases l with | mk ls li =>
     cases m with | mk ms mi =>
-      cases ls <;> cases ms <;> simp only [tagLoc, Loc.mk.injEq, and_true, true_and] at he ⊢
+      cases ls <;> cases ms <;> simp only [tagLoc, Loc.mk.injEq, true_and] at he ⊢
       · exact he.symm
       · cases he.1
       · cases he.1
@@ -234,7 +234,7 @@ private theorem thread_origin (p : Program) (ps : List Phase) (m : ArrayKernel.M
   | nil => simp [Workgroup.sourcePhases, Workgroup.tracePhases] at he
   | cons ph ps ih =>
     simp only [Workgroup.sourcePhases, Workgroup.tracePhases, List.mem_append,
-      List.mem_cons, List.mem_singleton, List.not_mem_nil, or_false] at he
+      List.mem_cons, List.not_mem_nil, or_false] at he
     rcases he with (hphase | (hbar | hbar)) | hrest
     · obtain ⟨logical,hlogical,hevent⟩ := List.mem_flatMap.mp hphase
       have hbound : logical < ph.lanes := List.mem_range.mp (List.mem_filter.mp hlogical).1
