@@ -1,10 +1,9 @@
 /-
-# `tests/metasystem/VerifiableSemanticKgTest.lean` — Wave-1 Stage 1–3 Verification Suite
+# `tests/metasystem/VerifiableSemanticKgTest.lean` — End-to-End 4-Stage Verifiable Semantic KG Suite
 
-Verifies `Obend.SemanticKG.Databank` (Stage 1), `Obend.SemanticKG.SpanParse` (Stage 2), and
-`Obend.SemanticKG.HypergraphChase` (Stage 3) via:
-1. Eleven live `#tooth` mutation-sensitivity kills guarding universal Stage-1, Stage-2, and Stage-3 theorems.
-2. Concrete redaction token-splice, `\"` escape-smuggling, cross-string-boundary, and positive
+Verifies `Obend.SemanticKG.{Databank,SpanParse,HypergraphChase,SemanticCert}` and `Obend.Doc.SemanticKG`:
+1. Seventeen live `#tooth` mutation-sensitivity kills guarding universal theorems across all 4 stages + multi-turn spine.
+2. Concrete Stage-1 redaction token-splice, `\"` escape-smuggling, cross-string-boundary, and positive
    delimiter-confined redaction regression vectors (`decide +kernel`).
 3. Concrete Stage-2 `SpanParse` acceptance (multi-field multi-object JSON chunk) and refusal vectors
    (`spanInsideStringLiteral` / escaped-quote `\"` fake object, `forbiddenDelimiterMatched`,
@@ -12,7 +11,10 @@ Verifies `Obend.SemanticKG.Databank` (Stage 1), `Obend.SemanticKG.SpanParse` (St
 4. Concrete Stage-3 `HypergraphChase` regression vectors (`ProvVec4` multi-eval, guarded saturation
    positive/negative, RMFA vs Weak Acyclicity separation, GL/VGRS stratified vs even-cycle negation,
    evidenced Ocap query guard, and `coreQuotientBcqHom` tracker `rfl` reduction).
-5. `#assert_axioms_tree` plus `Obend.SemanticKG` closed-theorem census guard.
+5. Concrete Stage-4 `SemanticCert` & Multi-Turn `Doc.SemanticKG` vectors (`PositiveSemanticReceipt` DAG &
+   masked Ajtai opening, `WhyNotSemanticReceipt` Modes A & B, `"semantic-kg@1"` `semanticKgJudge`
+   `.ok`/`.refused`/`.uncovered`, and multi-turn revocation/tightening/mandate refusals).
+6. `#assert_axioms_tree` plus `Obend.SemanticKG.*` & `Obend.Doc.SemanticKG` closed-theorem census guard.
 -/
 
 import Obend.Tactic.Tooth
@@ -20,6 +22,8 @@ import Obend.AssertAxioms
 import Obend.SemanticKG.Databank
 import Obend.SemanticKG.SpanParse
 import Obend.SemanticKG.HypergraphChase
+import Obend.SemanticKG.SemanticCert
+import Obend.Doc.SemanticKG
 
 namespace Obend.Tests.Metasystem.VerifiableSemanticKgTest
 
@@ -531,16 +535,283 @@ example :
   decide +kernel
 
 
-/-! ## §5. Whole-Tree Axiom Guard & Closed-Theorem Census -/
+/-! ## §5. Stage-4 `SemanticCert` & Multi-Turn `Doc.SemanticKG` `#tooth` Kills & Regression Vectors -/
+
+-- Tooth 12 (SemanticCert): bypassing `verifyPosLineageDag` breaks positive receipt derivation soundness.
+#guard_msgs (drop info) in
+#tooth Obend.SemanticKG.semantic_positive_cert_sound by mutation
+  Obend.SemanticKG.verifyPosLineageDag := fun _ _ _ _ _ => true
+
+-- Tooth 13 (SemanticCert): bypassing `verifyMaskedAjtaiOpening` breaks short-norm & commitment split soundness.
+#guard_msgs (drop info) in
+#tooth Obend.SemanticKG.verifyMaskedAjtaiOpening_sound by mutation
+  Obend.SemanticKG.verifyMaskedAjtaiOpening := fun _ _ _ _ _ => true
+
+-- Tooth 14 (SemanticCert): bypassing `verifyWhyNotReceipt` breaks counterfactual non-entailment soundness.
+#guard_msgs (drop info) in
+#tooth Obend.SemanticKG.semantic_whynot_cert_sound by mutation
+  Obend.SemanticKG.verifyWhyNotReceipt := fun _ _ _ _ _ => true
+
+-- Tooth 15 (SemanticCert): bypassing `checkSortedKTableBoolWF` breaks `SortedKTable.WF` reflection.
+#guard_msgs (drop info) in
+#tooth Obend.SemanticKG.checkSortedKTableBoolWF_iff by mutation
+  Obend.SemanticKG.checkSortedKTableBoolWF := fun _ => true
+
+-- Tooth 16 (Doc.SemanticKG): returning `none` unconditionally breaks anti-narrowing `skip_implies_contract_violation`.
+#guard_msgs (drop info) in
+#tooth Obend.Doc.SemanticKG.skip_implies_contract_violation by mutation
+  Obend.Doc.SemanticKG.stepKgTurn := fun _ _ => none
+
+-- Tooth 17 (Doc.SemanticKG): recording `revokedDocIds` without purging revoked chunks from `st.db` breaks multi-turn revocation soundness.
+#guard_msgs (drop info) in
+#tooth Obend.Doc.SemanticKG.semanticKg_multi_turn_update_sound by mutation
+  Obend.Doc.SemanticKG.stepKgTurn := fun st turn =>
+    match turn with
+    | .revokeDoc docId => some { st with revokedDocIds := st.revokedDocIds.push docId }
+    | _ => none
+
+-- Vector 4.1: Multi-step `PosLineageNode` DAG (`edbLeaf` -> `ruleFire` -> `sumCombine`) & masked Ajtai opening.
+private def posOne4 : ProvVec4 := Obend.SymbolicZk.Datalog.ProvenanceSemiringOps.one
+private def posTwo4 : ProvVec4 := Obend.SymbolicZk.Datalog.ProvenanceSemiringOps.add posOne4 posOne4
+
+private def dummyOpening : EdbSpanOpening where
+  chunkIdx := 0
+  chunk := ⟨1, 0, ByteArray.empty, 0⟩
+  merkleProof := ⟨0, []⟩
+  redactionPol := ⟨0, #[]⟩
+  disclosedSpan := (0, 0)
+  atom := ⟨10, #[1, 2], 1, 0, 1, 0⟩
+  baseWeight := posOne4
+
+private def groundTransRule : Obend.SymbolicZk.Datalog.GroundRule where
+  head := ⟨20, #[1, 2]⟩
+  body := #[⟨10, #[1, 2]⟩]
+
+example :
+    let dagValid : Array PosLineageNode := #[
+      .edbLeaf 0 ⟨10, #[1, 2]⟩ posOne4,
+      .ruleFire 0 #[0] ⟨20, #[1, 2]⟩ posOne4,
+      .sumCombine 1 1 ⟨20, #[1, 2]⟩ posTwo4
+    ]
+    let dagSelfCycle : Array PosLineageNode := #[
+      .ruleFire 0 #[0] ⟨20, #[1, 2]⟩ posOne4
+    ]
+    verifyPosLineageDag #[dummyOpening] #[groundTransRule] dagValid ⟨20, #[1, 2]⟩ posTwo4 = true ∧
+    verifyPosLineageDag #[dummyOpening] #[groundTransRule] dagSelfCycle ⟨20, #[1, 2]⟩ posOne4 = false ∧
+    verifyPosLineageDag #[dummyOpening] #[groundTransRule] dagValid ⟨20, #[1, 2]⟩
+      Obend.SymbolicZk.Datalog.ProvenanceSemiringOps.zero = false := by
+  decide +kernel
+
+example :
+    let pp := Obend.Crypto.inhabitedAjtaiParams 0
+    let w : List Int := [1, -1, 2, 0]
+    let r : List Int := [0, 1, -2, 1]
+    let hw : (Obend.Crypto.vecAdd w r).length = pp.cols := by decide
+    let comm := Obend.Crypto.ajtaiCommit pp (Obend.Crypto.vecAdd w r) hw
+    verifyMaskedAjtaiOpening pp 2 comm w r = true ∧
+    verifyMaskedAjtaiOpening pp 1 comm w r = false ∧
+    verifyMaskedAjtaiOpening pp 2 comm [1, -1, 2, 1] r = false := by
+  decide +kernel
+
+example (predSym : UInt32) (rights : UInt64) :
+    ∃ rcpt : PositiveSemanticReceipt,
+      verifyPositiveReceipt
+        (databankChunkMerkleRoot ⟨0, #[mkDocChunk 1 0 ("{\"p\":\"rel\",\"a\":\"x\"}".toByteArray)]⟩)
+        ⟨wellMatchedJsonVpa, ⟨#[("x".toByteArray, 7)]⟩,
+          #[⟨"rel".toByteArray, predSym, 1, Obend.Judge.SymbolicRegex.tt, .ff⟩]⟩
+        #[] (Obend.Crypto.inhabitedAjtaiParams 0) 0 ⟨⟨[]⟩, rights, .const true⟩
+        rights rights (fun _ => .unbound3) rcpt = true :=
+  let ⟨rcpt, _, _, _, _, hVer⟩ := verifyPositiveReceipt_inhabited predSym rights
+  ⟨rcpt, hVer⟩
+
+-- Vector 4.2: `WhyNotSemanticReceipt` (Modes A & B) plus `checkSortedKTableBoolWF` & gap tamper rejection.
+example (worldRoot : DatabankRoot256) :
+    let db : SemanticDatabank := ⟨worldRoot, #[]⟩
+    let g : GrammarSpec := ⟨wellMatchedJsonVpa, ⟨#[]⟩, #[]⟩
+    let r : Obend.SymbolicZk.SkolemChaseCore.TgdRule := ⟨1, [0], [], [⟨0, [.var 0]⟩], [⟨1, [.var 0]⟩]⟩
+    (∃ rcptA, verifyWhyNotReceipt (databankCommit256 db) g #[r] ⟨2, [.const 0]⟩ rcptA = true) ∧
+    (∃ rcptB, verifyWhyNotReceipt (databankCommit256 db) g #[r] ⟨2, [.const 0]⟩ rcptB = true) :=
+  verifyWhyNotReceipt_inhabited worldRoot
+
+example :
+    let mGood : Obend.SymbolicZk.Datalog.SortedKTable Bool := ⟨#[(⟨0, #[1]⟩, true), (⟨2, #[1]⟩, true)]⟩
+    let mUnsorted : Obend.SymbolicZk.Datalog.SortedKTable Bool := ⟨#[(⟨2, #[1]⟩, true), (⟨0, #[1]⟩, true)]⟩
+    let mZeroRow : Obend.SymbolicZk.Datalog.SortedKTable Bool := ⟨#[(⟨0, #[1]⟩, false)]⟩
+    checkSortedKTableBoolWF mGood = true ∧
+    checkSortedKTableBoolWF mUnsorted = false ∧
+    checkSortedKTableBoolWF mZeroRow = false ∧
+    Obend.SymbolicZk.Datalog.verifyGapCert mGood ⟨1, #[1]⟩ (.adjacentGap 0) = true ∧
+    Obend.SymbolicZk.Datalog.verifyGapCert mGood ⟨2, #[1]⟩ (.adjacentGap 0) = false := by
+  decide +kernel
+
+-- Vector 4.3: `"semantic-kg@1"` `semanticKgJudge` & `semanticKgFormat` (`.ok`, `.refused`, `.uncovered`).
+example (r : Nat) :
+    semanticKgFormat.name = "semantic-kg" ∧
+    semanticKgFormat.version = "1" ∧
+    semanticKgFormat.trust = .kernel ∧
+    semanticKgFormat.regime = .decidable ∧
+    semanticKgJudge.check r badSemanticKgObj badSemanticKgCert = .refused .nonBaseTargetAtom [] :=
+  ⟨rfl, rfl, rfl, rfl, badSemanticKg_refused r⟩
+
+-- Countermodel refutation, query-guard refusal, & grade-0 `.uncovered` on `semanticKgJudge` (zero Keccak eval).
+example :
+    let db : SemanticDatabank := ⟨0, #[]⟩
+    let oRefuted : SemanticKgObj := {
+      db := db
+      expectedDbRoot := databankCommit256 db
+      grammar := ⟨wellMatchedJsonVpa, ⟨#[]⟩, #[]⟩
+      tgdRules := #[]
+      targetAtom := ⟨1, [.const 5]⟩
+      queryPolicy := ⟨⟨[]⟩, 0x01, .const true⟩
+      rights := 0x03
+      mask := 0x01
+      env := fun _ => .unbound3
+    }
+    let oDenied : SemanticKgObj := { oRefuted with mask := 0x00 }
+    let cmCert : SemanticKgCert := .countermodel ⟨#[.const 5]⟩ ⟨#[]⟩ ⟨1, #[0]⟩ .emptyTable
+    -- Insufficient grade (r = 0 with chaseProof 1) returns `.uncovered`, NOT `.refused`!
+    semanticKgJudge.check 0 oRefuted (.chaseProof 1) = .uncovered ∧
+    -- Valid empty saturated countermodel refutes `targetAtom` with `.refused .saturatedCountermodel []`!
+    semanticKgJudge.check 0 oRefuted cmCert = .refused .saturatedCountermodel [] ∧
+    -- Attenuated mask `0x00` lacking `needRights = 0x01` is refused by `.queryGuardDenied`!
+    semanticKgJudge.check 0 oDenied (.chaseProof 0) = .refused .queryGuardDenied [] := by
+  intro db oRefuted oDenied cmCert
+  have hGuardOk : checkKgQueryGuard ⟨⟨[]⟩, 0x01, .const true⟩ 0x03 0x01 (fun _ => .unbound3) = true := by decide
+  have hGuardBad : checkKgQueryGuard ⟨⟨[]⟩, 0x01, .const true⟩ 0x03 0x00 (fun _ => .unbound3) = false := by decide
+  have hWfDb : WfDatabank db = true := by simp [WfDatabank, db]
+  have hRootSelf : (databankCommit256 db != databankCommit256 db) = false := bne_self_eq_false _
+  have hPreOk : checkSemanticKgObjPreconditions oRefuted = .ok [] := by
+    unfold checkSemanticKgObjPreconditions
+    have hBase : Obend.SymbolicZk.SkolemChaseCore.isBaseAtom oRefuted.targetAtom = true := by decide
+    have hWfR : Obend.SymbolicZk.SkolemChaseCore.WfRuleSet oRefuted.tgdRules.toList = true := by decide
+    rw [hBase, Bool.not_true, ite_eq_right (by decide)]
+    change (if !checkKgQueryGuard ⟨⟨[]⟩, 0x01, .const true⟩ 0x03 0x01 (fun _ => .unbound3) then _ else _) = _
+    rw [hGuardOk, Bool.not_true, ite_eq_right (by decide), hWfR, Bool.not_true, ite_eq_right (by decide)]
+    split
+    · rename_i idx hSome
+      rw [show oRefuted.tgdRules = #[] from rfl] at hSome
+      have hF : (Option.isSome (some idx)) = true := rfl
+      exact absurd ((congrArg Option.isSome hSome).trans hF) (by decide +kernel)
+    · rw [show oRefuted.db = db from rfl, show oRefuted.expectedDbRoot = databankCommit256 db from rfl,
+          hWfDb, Bool.not_true, ite_eq_right (by decide), hRootSelf, ite_eq_right (by decide)]
+      split
+      · rename_i idx hErr
+        rw [show oRefuted.grammar = ⟨wellMatchedJsonVpa, ⟨#[]⟩, #[]⟩ from rfl,
+            show db.chunks = #[] from rfl] at hErr
+        have hF : (Except.isOk (.error idx : Except Nat (List (Array SpanBoundAtom)))) = false := rfl
+        exact absurd ((congrArg Except.isOk hErr).trans hF) (by decide +kernel)
+      · rename_i atomLists hOk
+        rw [show oRefuted.grammar = ⟨wellMatchedJsonVpa, ⟨#[]⟩, #[]⟩ from rfl,
+            show db.chunks = #[] from rfl] at hOk
+        have hF : ((Except.ok atomLists : Except Nat (List (Array SpanBoundAtom))).toOption.map List.length) =
+            some atomLists.length := rfl
+        have hL : some atomLists.length = some 0 :=
+          hF.symm.trans ((congrArg (fun r => r.toOption.map List.length) hOk).symm.trans (by decide +kernel))
+        have hNil : atomLists = [] := List.eq_nil_of_length_eq_zero (Option.some.inj hL)
+        simp [hNil]
+  have hPreDenied : checkSemanticKgObjPreconditions oDenied = .error (.queryGuardDenied, []) := by
+    unfold checkSemanticKgObjPreconditions
+    have hBase : Obend.SymbolicZk.SkolemChaseCore.isBaseAtom oDenied.targetAtom = true := by decide
+    rw [hBase, Bool.not_true, ite_eq_right (by decide)]
+    change (if !checkKgQueryGuard ⟨⟨[]⟩, 0x01, .const true⟩ 0x03 0x00 (fun _ => .unbound3) then _ else _) = _
+    rw [hGuardBad, Bool.not_false, ite_eq_left (by decide)]
+  have hCmCheck :
+      ((⟨#[.const 5]⟩ : SymInternTable).WF &&
+       checkSortedKTableBoolWF ⟨#[]⟩ &&
+       tableSymsInBounds (K := Bool) ⟨#[.const 5]⟩ ⟨#[]⟩ &&
+       ([] : Obend.SymbolicZk.SkolemChaseCore.FactSet).all (checkAtomInTableFast (K := Bool) ⟨#[.const 5]⟩ ⟨#[]⟩) &&
+       checkGuardedSaturationFast (K := Bool) ⟨#[.const 5]⟩ ⟨#[]⟩ #[] &&
+       (internAtom ⟨#[.const 5]⟩ ⟨1, [.const 5]⟩ == some ⟨1, #[0]⟩) &&
+       Obend.SymbolicZk.Datalog.verifyGapCert (K := Bool) ⟨#[]⟩ ⟨1, #[0]⟩ .emptyTable) = true := by
+    decide +kernel
+  refine ⟨?_, ?_, ?_⟩
+  · change checkSemanticKg 0 oRefuted (.chaseProof 1) = .uncovered
+    unfold checkSemanticKg Judge.deepen checkSemanticKgStep
+    rw [hPreOk]
+    rfl
+  · change checkSemanticKg 0 oRefuted cmCert = .refused .saturatedCountermodel []
+    unfold checkSemanticKg Judge.deepen checkSemanticKgStep
+    rw [hPreOk]
+    dsimp only [cmCert]
+    rw [ite_eq_left (by decide : (#[] : Array (Obend.SymbolicZk.Datalog.GroundTuple × Bool)).size ≤ 0)]
+    change (match (if _ then some (Judge.Verdict.refused SemanticKgClause.saturatedCountermodel []) else none) with
+      | some v => v | none => .uncovered) = _
+    rw [ite_eq_left hCmCheck]
+  · change checkSemanticKg 0 oDenied (.chaseProof 0) = .refused .queryGuardDenied []
+    unfold checkSemanticKg Judge.deepen checkSemanticKgStep
+    rw [hPreDenied]
+
+-- Vector 4.4: Multi-turn `Obend.Doc.SemanticKG` trace & contract-violation refusals.
+example (worldRoot : DatabankRoot256) :
+    ∃ stₙ : Obend.Doc.SemanticKG.KgWorldState,
+      Obend.Doc.SemanticKG.runKgTrace
+        ⟨⟨worldRoot, #[]⟩, #[], [], 0xff, 10⟩
+        [.insertDoc (mkDocChunk 1 0 ("{\"k\":\"a\",\"s\":\"secret\"}".toByteArray)) ⟨22, #[(0, 22)]⟩,
+         .tightenRedaction 1 ⟨22, #[(0, 14), (20, 22)]⟩,
+         .attenuateCap 0x0f,
+         .consumeMandate 3,
+         .revokeDoc 1] = some stₙ ∧
+      stₙ.db.chunks = #[] ∧ stₙ.revokedDocIds = #[1] ∧ stₙ.capRights = 0x0f ∧ stₙ.mandateBudget = 7 :=
+  let ⟨_, stₙ, hRun, hC, hR, hCap, hBud⟩ := Obend.Doc.SemanticKG.runKgTrace_inhabited worldRoot
+  ⟨stₙ, hRun, hC, hR, hCap, hBud⟩
+
+example :
+    let doc := "{\"k\":\"a\",\"s\":\"secret\"}".toByteArray
+    let chunk := mkDocChunk 1 0 doc
+    let polTight : RedactionSlicePolicy := ⟨22, #[(0, 14), (20, 22)]⟩
+    let polLoose : RedactionSlicePolicy := ⟨22, #[(0, 22)]⟩
+    let stActive : Obend.Doc.SemanticKG.KgWorldState := ⟨⟨0, #[chunk]⟩, #[], [(1, polTight)], 0x0f, 7⟩
+    let stRevoked : Obend.Doc.SemanticKG.KgWorldState := ⟨⟨0, #[]⟩, #[1], [(1, polTight)], 0x0f, 7⟩
+    -- Loosening redaction is refused (`none`)
+    Obend.Doc.SemanticKG.checkRedactionTighter 22 polTight polLoose = false ∧
+    Obend.Doc.SemanticKG.stepKgTurn stActive (.tightenRedaction 1 polLoose) = none ∧
+    -- Re-inserting or re-revoking revoked `docId = 1` is refused (`none`)
+    Obend.Doc.SemanticKG.stepKgTurn stRevoked (.insertDoc chunk polLoose) = none ∧
+    Obend.Doc.SemanticKG.stepKgTurn stRevoked (.revokeDoc 1) = none ∧
+    -- Overspending or 0-cost mandate turn is refused (`none`)
+    Obend.Doc.SemanticKG.stepKgTurn stActive (.consumeMandate 8) = none ∧
+    Obend.Doc.SemanticKG.stepKgTurn stActive (.consumeMandate 0) = none := by
+  intro doc chunk polTight polLoose stActive stRevoked
+  have hTightF : Obend.Doc.SemanticKG.checkRedactionTighter 22 polTight polLoose = false := by decide +kernel
+  have hChunkId : chunk.docId = 1 := rfl
+  have hChunkSz : chunk.rawBytes.size = 22 := by change doc.size = 22; decide
+  refine ⟨hTightF, ?_, ?_, ?_, ?_, ?_⟩
+  · have hFind : stActive.db.chunks.toList.find? (fun c => c.docId == 1) = some chunk := by
+      simp [stActive, hChunkId]
+    have hLook : Obend.Doc.SemanticKG.lookupRedactionPolicy stActive.redactionPolicies 1 = some polTight := by
+      simp [Obend.Doc.SemanticKG.lookupRedactionPolicy, stActive]
+    simp [Obend.Doc.SemanticKG.stepKgTurn, hFind, hLook, hChunkSz, hTightF]
+  · apply (Obend.Doc.SemanticKG.skip_implies_contract_violation stRevoked (.insertDoc chunk polLoose)).mpr
+    intro hC
+    exact hC.2.2.1 (by simp [stRevoked, hChunkId])
+  · simp [Obend.Doc.SemanticKG.stepKgTurn, stRevoked]
+  · simp [Obend.Doc.SemanticKG.stepKgTurn, stActive]
+  · simp [Obend.Doc.SemanticKG.stepKgTurn, stActive]
+
+
+/-! ## §6. Whole-Tree Axiom Guard & Closed-Theorem Census -/
 
 open Lean Elab Command in
 run_cmd do
-  let rows ← liftTermElabM Obend.AssertAxioms.theoremCensus
-  for (dir, _, closed) in rows do
-    if dir == `Obend.SemanticKG then
-      let userClosed := closed.filter fun c => !c.components.any (· == `sizeOf_spec)
-      if !userClosed.isEmpty then
-        throwError m!"Obend.SemanticKG contains closed library theorems: {userClosed.toList}"
+  let env ← getEnv
+  let ownedMods : List Name := [
+    `Obend.SemanticKG.Databank,
+    `Obend.SemanticKG.SpanParse,
+    `Obend.SemanticKG.HypergraphChase,
+    `Obend.SemanticKG.SemanticCert,
+    `Obend.Doc.SemanticKG
+  ]
+  let mut closedOffenders : Array Name := #[]
+  for (constant, info) in env.constants.map₁.toList do
+    let .thmInfo _ := info | continue
+    if constant.isInternal || constant.isInternalDetail then continue
+    if constant.components.any (fun c => c == `_tooth || c == `_native || c == `sizeOf_spec) then continue
+    let some modName := Obend.AssertAxioms.packageModule? env constant | continue
+    if ownedMods.contains modName then
+      if ← liftTermElabM (Obend.AssertAxioms.closedStatement info.type) then
+        closedOffenders := closedOffenders.push constant
+  if !closedOffenders.isEmpty then
+    throwError m!"SemanticKG / Doc.SemanticKG contains closed library theorems: {closedOffenders.toList}"
 
 #guard_msgs (drop info) in
 #assert_axioms_tree

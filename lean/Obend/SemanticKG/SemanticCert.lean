@@ -258,7 +258,10 @@ theorem verifyPositiveReceipt_inhabited (predSym : UInt32) (rights : UInt64) :
       #[⟨"rel".toByteArray, predSym, 1, Obend.Judge.SymbolicRegex.tt, .ff⟩]⟩
     let pp := Obend.Crypto.inhabitedAjtaiParams 0
     let queryPol : KgQueryPolicy := ⟨⟨[]⟩, rights, .const true⟩
-    ∃ rcpt : PositiveSemanticReceipt,
+    ∃ (rcpt : PositiveSemanticReceipt) (op : EdbSpanOpening),
+      verifyEdbSpanOpening (databankChunkMerkleRoot db) g op = true ∧
+      verifyPosLineageDag #[op] #[] rcpt.lineageDag rcpt.targetTuple rcpt.claimedWeight = true ∧
+      verifyMaskedAjtaiOpening pp 0 rcpt.ajtaiComm rcpt.ajtaiWitness rcpt.ajtaiMask = true ∧
       verifyPositiveReceipt (databankChunkMerkleRoot db) g #[] pp 0 queryPol rights rights
         (fun _ => .unbound3) rcpt = true := by
   intro raw doc db g pp queryPol
@@ -285,8 +288,6 @@ theorem verifyPositiveReceipt_inhabited (predSym : UInt32) (rights : UInt64) :
   have hwLen : wZero.length = pp.cols := by decide
   let comm := Obend.Crypto.ajtaiCommit pp (Obend.Crypto.vecAdd wZero wZero)
     ((Obend.Crypto.vecAdd_length wZero wZero rfl).trans hwLen)
-  refine ⟨⟨#[op], #[.edbLeaf 0 target ProvenanceSemiringOps.one], target, ProvenanceSemiringOps.one,
-    comm, wZero, wZero⟩, ?_⟩
   have hSpMem : redPol.disclosedSpans.toList.contains (0, 19) = true := by decide
   have hEx' : extractSpanBoundAtoms g doc = .ok atoms := hEx
   have hOpOk : verifyEdbSpanOpening (databankChunkMerkleRoot db) g op = true := by
@@ -305,6 +306,8 @@ theorem verifyPositiveReceipt_inhabited (predSym : UInt32) (rights : UInt64) :
     simp [hNorm, comm]
   have hGuardOk : checkKgQueryGuard queryPol rights rights (fun _ => .unbound3) = true :=
     checkKgQueryGuard_inhabited ⟨[]⟩ rights
+  refine ⟨⟨#[op], #[.edbLeaf 0 target ProvenanceSemiringOps.one], target, ProvenanceSemiringOps.one,
+    comm, wZero, wZero⟩, op, hOpOk, hDagOk, hAjtaiOk, ?_⟩
   simp only [verifyPositiveReceipt, hGuardOk, hDagOk, hAjtaiOk, Bool.true_and, Bool.and_true,
     Array.all_eq_true_iff_forall_mem]
   intro x hx; exact (by simpa using hx : x = op) ▸ hOpOk
@@ -564,14 +567,13 @@ def SemanticKgMeaning (o : SemanticKgObj) (_c : SemanticKgCert) : Prop :=
     ∀ (N : FactSet) (cw : RuleId → List Term → VarId → Term),
       (∀ a ∈ I, a ∈ N) → WitnessSatisfiesRules Term.const o.tgdRules.toList N cw → o.targetAtom ∈ N
 
-/-- Inhabited terminating syntactic fragment for `semanticKgJudge` completeness. -/
+/-- Inhabited finite-chase-saturating fragment for `semanticKgJudge` completeness. -/
 def SemanticKgFragment (o : SemanticKgObj) : Prop :=
   WfDatabank o.db = true ∧ databankCommit256 o.db = o.expectedDbRoot ∧
   Obend.Polis.subMask o.queryPolicy.needRights (o.rights &&& o.mask) = true ∧
   Obend.Polis.KleenePred3.accepts (o.queryPolicy.caveat.eval o.env) = true ∧
   WfRuleSet o.tgdRules.toList = true ∧ (∀ r ∈ o.tgdRules.toList, IsGuardedRule r = true) ∧
   isBaseAtom o.targetAtom = true ∧
-  (∃ w : RmfaRankWitness, checkRmfaRankWitness w o.tgdRules.toList = true) ∧
   ∃ I : FactSet, ExtractedEdbFacts o.grammar o.db I ∧
     ∃ fuel : Nat, allRulesSatisfied o.tgdRules.toList (runBoundedChase o.tgdRules.toList fuel I) = true
 def chaseWitnessOf (rules : List TgdRule) (M : FactSet) : RuleId → List Term → VarId → Term :=
@@ -937,7 +939,7 @@ instance semanticKgJudge : Obend.Judge SemanticKgObj SemanticKgCert where
           · cases hi
   complete := by
     intro o hFrag ⟨c0, hMean⟩
-    obtain ⟨_, _, _, _, hWfR, _, _, _, ⟨I, hExI, ⟨fuel, hSat⟩⟩⟩ := hFrag
+    obtain ⟨_, _, _, _, hWfR, _, _, ⟨I, hExI, ⟨fuel, hSat⟩⟩⟩ := hFrag
     cases hPre : checkSemanticKgObjPreconditions o with
     | error _ => exact False.elim (checkObjPreconditions_err_refutes hPre c0 hMean)
     | ok edb =>
@@ -985,11 +987,10 @@ theorem semanticKgFragment_inhabited (worldRoot : DatabankRoot256) (rights : UIn
   have hWfR : WfRuleSet [r] = true := by decide
   have hG : IsGuardedRule r = true := by decide
   have hBase : isBaseAtom ⟨1, [.const 0]⟩ = true := by decide
-  have hRmfa : checkRmfaRankWitness ⟨[]⟩ [r] = true := by decide
   have hSat0 : allRulesSatisfied [r] (runBoundedChase [r] 0 []) = true := by
     simp [runBoundedChase, allRulesSatisfied, ruleSatisfiedSpec, matchPatAtoms, r]
   refine ⟨hWfDb, rfl, hGuard.1, hGuard.2, hWfR,
-    fun r' hr' => (List.mem_singleton.mp hr') ▸ hG, hBase, ⟨⟨[]⟩, hRmfa⟩,
+    fun r' hr' => (List.mem_singleton.mp hr') ▸ hG, hBase,
     ⟨[], ⟨[], rfl, fun i hi => False.elim (Nat.not_lt_zero i hi), rfl⟩, ⟨0, hSat0⟩⟩⟩
 
 /-! ### JSON Wire Codecs & `"semantic-kg@1"` `Obend.Judge.Format` Registration -/
