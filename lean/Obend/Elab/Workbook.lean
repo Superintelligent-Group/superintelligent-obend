@@ -546,11 +546,6 @@ def elaborateObendSource (src : String) (moduleName : String := "Main")
     if let some wd := chosenDef? then
       if let some comp := wd.composition? then
         if let .ok co := Obend.Logic.Program.claimObj rootTerm comp specKey claimName then
-          let steps? := proposeWorkbookDerivation co
-          let derivJust? := steps?.map Justification.byDerivation
-          let derivOk := match derivJust? with
-            | some j => Obend.Logic.obligationCheck 4096 co j == Obend.Judge.Verdict.ok
-            | none => false
           let claimDecl? : Option Obend.Spec.Syntax.Claim :=
             allDecodedMods.findSome? fun dm =>
               dm.decls.findSome? fun d =>
@@ -560,6 +555,15 @@ def elaborateObendSource (src : String) (moduleName : String := "Main")
                     s.claims.find? (·.name == claimName)
                   else none
                 | _ => none
+          let steps? : Option (List RStep) :=
+            -- With a declaration, AutoCert returns only the tags explicitly requested.
+            if claimDecl?.any (fun cd =>
+                !(Obend.Elab.AutoCert.inferClaimJudgeTags claimName (some cd)).isEmpty) then none
+            else proposeWorkbookDerivation co
+          let derivJust? := steps?.map Justification.byDerivation
+          let derivOk := match derivJust? with
+            | some j => Obend.Logic.obligationCheck 4096 co j == Obend.Judge.Verdict.ok
+            | none => false
           let (just?, ok) :=
             if derivOk then
               (derivJust?, true)
@@ -630,7 +634,7 @@ def resolveImportedObendPath (parentFile : System.FilePath) (rawImportPath : Str
   let r3 ← resolveObendPath (System.FilePath.mk stripped)
   if ← r3.pathExists then return r3
   let fileName := (System.FilePath.mk stripped).fileName.getD stripped
-  for sub in ["stdlib/core/", "stdlib/ledger/", "stdlib/usd/", "stdlib/physical/", "apps/obend-risc/", "apps/zk-ntt/", "apps/foc-hil/", "apps/sdr-ft8/", "apps/fidget-cam/", "apps/quantum-photonic-matter/", "apps/sovereign-drex/", "apps/silicon-kernel-verilator/"] do
+  for sub in ["stdlib/core/", "stdlib/ledger/", "stdlib/usd/", "stdlib/physical/", "apps/obend-risc/", "apps/zk-ntt/", "apps/foc-hil/", "apps/sdr-ft8/", "apps/fidget-cam/", "apps/sovereign-drex/", "apps/silicon-kernel-verilator/"] do
     let cand ← resolveObendPath (System.FilePath.mk (sub ++ fileName))
     if ← cand.pathExists then return cand
   return r1
@@ -1601,11 +1605,6 @@ private meta def metaElaborateObendSource (src : String) (moduleName : String :=
     if let some wd := chosenDef? then
       if let some comp := wd.composition? then
         if let .ok co := Obend.Logic.Program.claimObj rootTerm comp specKey claimName then
-          let steps? := metaProposeWorkbookDerivation co
-          let derivJust? := steps?.map Justification.byDerivation
-          let derivOk := match derivJust? with
-            | some j => Obend.Logic.obligationCheck 4096 co j == Obend.Judge.Verdict.ok
-            | none => false
           let claimDecl? : Option Obend.Spec.Syntax.Claim :=
             allDecodedMods.findSome? fun dm =>
               dm.decls.findSome? fun d =>
@@ -1615,6 +1614,15 @@ private meta def metaElaborateObendSource (src : String) (moduleName : String :=
                     s.claims.find? (·.name == claimName)
                   else none
                 | _ => none
+          let steps? : Option (List RStep) :=
+            -- With a declaration, AutoCert returns only the tags explicitly requested.
+            if claimDecl?.any (fun cd =>
+                !(Obend.Elab.AutoCert.inferClaimJudgeTags claimName (some cd)).isEmpty) then none
+            else metaProposeWorkbookDerivation co
+          let derivJust? := steps?.map Justification.byDerivation
+          let derivOk := match derivJust? with
+            | some j => Obend.Logic.obligationCheck 4096 co j == Obend.Judge.Verdict.ok
+            | none => false
           let (just?, ok) :=
             if derivOk then
               (derivJust?, true)
@@ -1679,7 +1687,7 @@ private meta def metaResolveImportedObendPath (parentFile : System.FilePath) (ra
   let r3 ← metaResolveObendPath (System.FilePath.mk stripped)
   if ← r3.pathExists then return r3
   let fileName := (System.FilePath.mk stripped).fileName.getD stripped
-  for sub in ["stdlib/core/", "stdlib/ledger/", "stdlib/usd/", "stdlib/physical/", "apps/obend-risc/", "apps/zk-ntt/", "apps/foc-hil/", "apps/sdr-ft8/", "apps/fidget-cam/", "apps/quantum-photonic-matter/", "apps/sovereign-drex/", "apps/silicon-kernel-verilator/"] do
+  for sub in ["stdlib/core/", "stdlib/ledger/", "stdlib/usd/", "stdlib/physical/", "apps/obend-risc/", "apps/zk-ntt/", "apps/foc-hil/", "apps/sdr-ft8/", "apps/fidget-cam/", "apps/sovereign-drex/", "apps/silicon-kernel-verilator/"] do
     let cand ← metaResolveObendPath (System.FilePath.mk (sub ++ fileName))
     if ← cand.pathExists then return cand
   return r1
