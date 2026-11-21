@@ -580,6 +580,18 @@ theorem curvedSpacetimeMaxwell_symmetrizer_symmetric
     (symIdentityMat 6) (getOr CurvedSpacetimeMaxwell.jacobians d [])
     (hAll d (List.mem_range.mpr hd)) env hDom i j hi hj
 
+-- Fixtures moved out of the library modules.
+example : checkExprPositive [.stateVar 0] (.invSafe (.var 0)) = true ∧
+    DomainValid [.stateVar 0] ⟨fun _ => 2, fun _ => 1⟩ :=
+  ⟨by decide +kernel, fun t ht => by simp at ht; subst ht; decide +kernel⟩
+example : checkFluxEqReflective [.stateVar 0]
+    (.mul (.var 0) (.invSafe (.var 0))) (.const 1) = true := by decide +kernel
+example : checkSymmetrizerReflective [] 1 [[.const 1]] [[.const 2]] = true := by decide +kernel
+example : checkPdeQ32Intervals
+    { name := "inv", coords := ["x"], vars := ["u"], params := [], domain := [.stateVar 0],
+      fluxes := [[.invSafe (.var 0)]], aMax := 1, cfl := 1/2, limiter := .minmod } = true := by
+  decide +kernel
+
 /-! ## 3. Tactical Automation (`flux_eq_by_canon`, `sym_jacobian_frechet`) & Edge Cases -/
 
 -- Tactic `flux_eq_by_canon` discharging rational conservation rearrangement with `invSafe`:
@@ -879,7 +891,7 @@ def brokenSystolicRtl (modName : String) (varNames : List String) (_ : FluxSsaDa
     outputs := [{ name := "dangling", expr := .wireRef 99, width := 64 }] }
 
 def bogusParsedSpec (_ : String) : Option ConservationLawSpec :=
-  some ⟨"bad", [], [], [], [], [], 0, 0, .firstOrder⟩
+  some ⟨"bad", [], [], [], [], [], 0, 0, .firstOrder, [], [], []⟩
 
 #tooth checkExprPositive_sound by mutation checkExprPositive := acceptPos
 #tooth checkExprDomainSafe_implies_denomNonzero by mutation checkExprDomainSafe := acceptPos
