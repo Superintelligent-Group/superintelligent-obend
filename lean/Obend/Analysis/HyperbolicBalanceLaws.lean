@@ -316,6 +316,15 @@ theorem jacAbsBound_sound (S : ConservationLawSpec) (d i j : Nat) (a : Rat)
     exact Interval.abs_le henc
   · cases h
 
+theorem jacAbsBound_inhabited (q : Rat) :
+    ∃ (S : ConservationLawSpec) (a : Rat), jacAbsBound S 0 0 0 = some a := by
+  let S : ConservationLawSpec :=
+    { name := "const1d", coords := ["x"], vars := ["u"], params := [], domain := [],
+      fluxes := [[.const q]], aMax := 1, cfl := 0, limiter := .firstOrder }
+  refine ⟨S, 0, ?_⟩
+  simp [S, jacAbsBound, fluxComp, getOr, symPartial, specializeFluxExpr, evalFluxInterval,
+    rmax, PdeSexprAndApprox.ratAbs]
+
 /-- Directional Jacobian `J_d(U)_{i,j} = ∂F_{d,i}/∂U_j` at state `U`. -/
 def jacMat (S : ConservationLawSpec) (d : Nat) (U : Vec) : Mat :=
   fun i j => evalFlux (symPartial j (fluxComp S d i)) ⟨U, S.paramEnv⟩
@@ -457,6 +466,23 @@ theorem verifyWavespeedGershgorin_sound (S : ConservationLawSpec)
       rw [hEig i hi, PdeSexprAndApprox.ratAbs_mul, hvi] at hr
       have hpos := Rat.mul_pos hMpos (weightOf_pos S i)
       exact NonlinearMultiDPde.ratAbs_bounds_iff.mp (rat_le_of_mul_le_mul hpos (by grind))
+
+theorem verifyWavespeedGershgorin_inhabited (c : Rat) (hc : 0 < c) :
+    ∃ S : ConservationLawSpec, S.aMax = c ∧ verifyWavespeedGershgorin S = true := by
+  let S : ConservationLawSpec :=
+    { name := "zero1d", coords := ["x"], vars := ["u"], params := [], domain := [],
+      fluxes := [[.const 0]], aMax := c, cfl := 0, limiter := .firstOrder }
+  refine ⟨S, rfl, ?_⟩
+  simp only [S, verifyWavespeedGershgorin, ConservationLawSpec.numDims, ConservationLawSpec.numVars,
+    List.length_cons, List.length_nil, Nat.zero_add, List.range_succ, List.range_zero,
+    List.nil_append, List.all_cons, List.all_nil, Bool.and_true, optSumTo, jacAbsBound,
+    fluxComp, getOr, symPartial, specializeFluxExpr, evalFluxInterval, rmax,
+    PdeSexprAndApprox.ratAbs, weightOf]
+  have h0 : ¬ (0 : Rat) < 0 := by decide
+  have h1 : (0 : Rat) < 1 := by decide
+  simp only [h0, h1, ↓reduceIte, decide_eq_true_eq]
+  have hle : 0 ≤ c := Rat.le_of_lt hc
+  grind
 
 /-! ## 4. Rung 2: rational MUSCL/Rusanov axis step, source step and scheme step -/
 
@@ -774,6 +800,33 @@ theorem dedner_glm_psi_energy_damped (psi dt damp : Rat) (h0 : 0 ≤ dt * damp)
   have h3 := Rat.mul_nonneg h1 (rat_mul_self_nonneg psi)
   grind
 
+/-- **Z4c constraint-damping contraction (`z4c_theta_constraint_damped`)**: explicit damping
+`Θ ← Θ + dt · (-(κ₁ α Θ))` does not increase `Θ²` when `0 ≤ dt · (κ₁ α) ≤ 2`. -/
+theorem z4c_theta_constraint_damped (theta dt kappa1 alpha : Rat)
+    (h0 : 0 ≤ dt * (kappa1 * alpha)) (h2 : dt * (kappa1 * alpha) ≤ 2) :
+    (theta + dt * (-(kappa1 * alpha * theta))) * (theta + dt * (-(kappa1 * alpha * theta))) ≤
+      theta * theta := by
+  have h := dedner_glm_psi_energy_damped theta dt (kappa1 * alpha) h0 h2
+  have heq : theta + dt * (-(kappa1 * alpha * theta)) = theta - dt * (kappa1 * alpha) * theta := by
+    grind
+  rw [heq]; exact h
+
+/-- **Strict Z4c constraint-damping contraction (`z4c_theta_constraint_strict_damped`)**: when
+`0 < dt · (κ₁ α) < 2` and `Θ ≠ 0`, `Θ²` strictly decreases. -/
+theorem z4c_theta_constraint_strict_damped (theta dt kappa1 alpha : Rat)
+    (h0 : 0 < dt * (kappa1 * alpha)) (h2 : dt * (kappa1 * alpha) < 2) (ht : theta ≠ 0) :
+    (theta + dt * (-(kappa1 * alpha * theta))) * (theta + dt * (-(kappa1 * alpha * theta))) <
+      theta * theta := by
+  have hth : 0 < theta * theta := by
+    by_cases hpos : 0 < theta
+    · exact Rat.mul_pos hpos hpos
+    · have hneg : 0 < -theta := by grind
+      have := Rat.mul_pos hneg hneg
+      grind
+  have h1 := Rat.mul_pos h0 (show 0 < 2 - dt * (kappa1 * alpha) by grind)
+  have h3 := Rat.mul_pos h1 hth
+  grind
+
 /-- Audusse–Bouchut reconstructed depth of cell `i` at its interface with cell `j`:
 `max 0 (h_i + b_i - max b_i b_j)`. -/
 def abDepth (h b : Nat → Rat) (i j : Nat) : Rat := rmax 0 (h i + b i - rmax (b i) (b j))
@@ -828,5 +881,285 @@ theorem audusseBouchut_lakeAtRest_wellBalanced (g a ν : Rat) (N : Nat) (b h q :
     have := hsym _ _ hpv hi
     exact ⟨by grind, by grind⟩
   · exact ring_telescope N ν h (fun k => (abFlux g a h q b k (nextCell N k)).1)
+
+/-! ## 6. Constructive interval + weighted Lipschitz evaluation of `FluxExpr` -/
+
+/-- Recursive interval enclosure and weighted `ℓ∞` Lipschitz bound of a `FluxExpr` over `box`
+with variable weights `w` (`0 Classical`). -/
+@[expose] def evalFluxLip (numVars : Nat) (box : Nat → Interval) (w : Nat → Rat)
+    (paramEnv : Nat → Rat) : FluxExpr → Option (Interval × Rat)
+  | .const q => some (⟨q, q⟩, 0)
+  | .var i => if i < numVars then some (box i, w i) else none
+  | .param p => some (⟨paramEnv p, paramEnv p⟩, 0)
+  | .neg a => match evalFluxLip numVars box w paramEnv a with
+    | some (x, La) => some (⟨-x.hi, -x.lo⟩, La)
+    | none => none
+  | .add a b =>
+    match evalFluxLip numVars box w paramEnv a, evalFluxLip numVars box w paramEnv b with
+    | some (x, La), some (y, Lb) => some (⟨x.lo + y.lo, x.hi + y.hi⟩, La + Lb)
+    | _, _ => none
+  | .sub a b =>
+    match evalFluxLip numVars box w paramEnv a, evalFluxLip numVars box w paramEnv b with
+    | some (x, La), some (y, Lb) => some (⟨x.lo - y.hi, x.hi - y.lo⟩, La + Lb)
+    | _, _ => none
+  | .mul a b =>
+    match evalFluxLip numVars box w paramEnv a, evalFluxLip numVars box w paramEnv b with
+    | some (x, La), some (y, Lb) =>
+      if a = b then
+        let ax := rmax (PdeSexprAndApprox.ratAbs x.lo) (PdeSexprAndApprox.ratAbs x.hi)
+        some (⟨rmax 0 (x.mul x).lo, (x.mul x).hi⟩, 2 * ax * La)
+      else
+        let ax := rmax (PdeSexprAndApprox.ratAbs x.lo) (PdeSexprAndApprox.ratAbs x.hi)
+        let ay := rmax (PdeSexprAndApprox.ratAbs y.lo) (PdeSexprAndApprox.ratAbs y.hi)
+        some (x.mul y, ax * Lb + La * ay)
+    | _, _ => none
+  | .invSafe d =>
+    match evalFluxLip numVars box w paramEnv d with
+    | some (x, Ld) =>
+      if 0 < x.lo ∨ x.hi < 0 then
+        let m := rmin (PdeSexprAndApprox.ratAbs x.lo) (PdeSexprAndApprox.ratAbs x.hi)
+        some (⟨1 / x.hi, 1 / x.lo⟩, Ld / (m * m))
+      else none
+    | none => none
+
+theorem evalFluxLip_inhabited (q : Rat) :
+    ∃ (iv : Interval) (L : Rat),
+      evalFluxLip 1 (fun _ => ⟨0, 0⟩) (fun _ => 1) (fun _ => 0) (.const q) = some (iv, L) :=
+  ⟨⟨q, q⟩, 0, rfl⟩
+
+theorem inBox_inhabited (n : Nat) (q : Rat) :
+    ∃ (box : Nat → Interval) (u : Vec), InBox n box u ∧ u 0 = q :=
+  ⟨fun _ => ⟨q, q⟩, fun _ => q, fun _ _ => ⟨Rat.le_refl, Rat.le_refl⟩, rfl⟩
+
+private theorem evalFluxLip_sound_both (numVars : Nat) (box : Nat → Interval) (w : Nat → Rat)
+    (paramEnv : Nat → Rat) (hw : ∀ j, j < numVars → 0 ≤ w j) (u v : Vec) (δ : Rat) (hδ : 0 ≤ δ)
+    (hu : InBox numVars box u) (hv : InBox numVars box v)
+    (huv : ∀ j, j < numVars → PdeSexprAndApprox.ratAbs (u j - v j) ≤ δ * w j)
+    (e : FluxExpr) (iv : Interval) (L : Rat)
+    (h : evalFluxLip numVars box w paramEnv e = some (iv, L)) :
+    iv.contains (evalFlux e ⟨u, paramEnv⟩) ∧ iv.contains (evalFlux e ⟨v, paramEnv⟩) ∧
+      0 ≤ L ∧ PdeSexprAndApprox.ratAbs (evalFlux e ⟨u, paramEnv⟩ - evalFlux e ⟨v, paramEnv⟩) ≤ L * δ := by
+  induction e generalizing iv L with
+  | const q =>
+    simp only [evalFluxLip] at h; cases Option.some.inj h
+    refine ⟨⟨Rat.le_refl, Rat.le_refl⟩, ⟨Rat.le_refl, Rat.le_refl⟩, Rat.le_refl, ?_⟩
+    simp only [evalFlux]; unfold PdeSexprAndApprox.ratAbs; split <;> grind
+  | var i =>
+    simp only [evalFluxLip] at h
+    split at h
+    · next hi =>
+      cases Option.some.inj h
+      refine ⟨hu i hi, hv i hi, hw i hi, ?_⟩
+      simp only [evalFlux]; have := huv i hi; grind
+    · cases h
+  | param p =>
+    simp only [evalFluxLip] at h; cases Option.some.inj h
+    refine ⟨⟨Rat.le_refl, Rat.le_refl⟩, ⟨Rat.le_refl, Rat.le_refl⟩, Rat.le_refl, ?_⟩
+    simp only [evalFlux]; unfold PdeSexprAndApprox.ratAbs; split <;> grind
+  | neg a iha =>
+    simp only [evalFluxLip] at h
+    split at h
+    · next x La ha =>
+      obtain ⟨⟨au1, au2⟩, ⟨av1, av2⟩, hLa, hda⟩ := iha x La ha
+      cases Option.some.inj h
+      refine ⟨⟨by simp only [evalFlux]; grind, by simp only [evalFlux]; grind⟩,
+        ⟨by simp only [evalFlux]; grind, by simp only [evalFlux]; grind⟩, hLa, ?_⟩
+      simp only [evalFlux]
+      rw [show -evalFlux a ⟨u, paramEnv⟩ - -evalFlux a ⟨v, paramEnv⟩ =
+          -(evalFlux a ⟨u, paramEnv⟩ - evalFlux a ⟨v, paramEnv⟩) by grind,
+        NonlinearMultiDPde.ratAbs_neg]
+      exact hda
+    · cases h
+  | add a b iha ihb =>
+    simp only [evalFluxLip] at h
+    split at h
+    · next x La y Lb ha hb =>
+      cases Option.some.inj h
+      obtain ⟨⟨au1, au2⟩, ⟨av1, av2⟩, hLa, hda⟩ := iha x La ha
+      obtain ⟨⟨bu1, bu2⟩, ⟨bv1, bv2⟩, hLb, hdb⟩ := ihb y Lb hb
+      refine ⟨⟨by simp only [evalFlux]; grind, by simp only [evalFlux]; grind⟩,
+        ⟨by simp only [evalFlux]; grind, by simp only [evalFlux]; grind⟩, by grind, ?_⟩
+      simp only [evalFlux]
+      have ht := NonlinearMultiDPde.ratAbs_add_le
+        (evalFlux a ⟨u, paramEnv⟩ - evalFlux a ⟨v, paramEnv⟩)
+        (evalFlux b ⟨u, paramEnv⟩ - evalFlux b ⟨v, paramEnv⟩)
+      rw [show evalFlux a ⟨u, paramEnv⟩ - evalFlux a ⟨v, paramEnv⟩ +
+          (evalFlux b ⟨u, paramEnv⟩ - evalFlux b ⟨v, paramEnv⟩) =
+          evalFlux a ⟨u, paramEnv⟩ + evalFlux b ⟨u, paramEnv⟩ -
+            (evalFlux a ⟨v, paramEnv⟩ + evalFlux b ⟨v, paramEnv⟩) by grind] at ht
+      grind
+    · cases h
+  | sub a b iha ihb =>
+    simp only [evalFluxLip] at h
+    split at h
+    · next x La y Lb ha hb =>
+      cases Option.some.inj h
+      obtain ⟨⟨au1, au2⟩, ⟨av1, av2⟩, hLa, hda⟩ := iha x La ha
+      obtain ⟨⟨bu1, bu2⟩, ⟨bv1, bv2⟩, hLb, hdb⟩ := ihb y Lb hb
+      refine ⟨⟨by simp only [evalFlux]; grind, by simp only [evalFlux]; grind⟩,
+        ⟨by simp only [evalFlux]; grind, by simp only [evalFlux]; grind⟩, by grind, ?_⟩
+      simp only [evalFlux]
+      have ht := NonlinearMultiDPde.ratAbs_add_le
+        (evalFlux a ⟨u, paramEnv⟩ - evalFlux a ⟨v, paramEnv⟩)
+        (-(evalFlux b ⟨u, paramEnv⟩ - evalFlux b ⟨v, paramEnv⟩))
+      rw [NonlinearMultiDPde.ratAbs_neg,
+        show evalFlux a ⟨u, paramEnv⟩ - evalFlux a ⟨v, paramEnv⟩ +
+          -(evalFlux b ⟨u, paramEnv⟩ - evalFlux b ⟨v, paramEnv⟩) =
+          evalFlux a ⟨u, paramEnv⟩ - evalFlux b ⟨u, paramEnv⟩ -
+            (evalFlux a ⟨v, paramEnv⟩ - evalFlux b ⟨v, paramEnv⟩) by grind] at ht
+      grind
+    · cases h
+  | mul a b iha ihb =>
+    simp only [evalFluxLip] at h
+    split at h
+    · next x La y Lb ha hb =>
+      split at h
+      · next hab =>
+        subst hab
+        cases Option.some.inj h
+        obtain ⟨hau, hav, hLa, hda⟩ := iha x La ha
+        have hmu := Interval.mul_contains hau hau
+        have hmv := Interval.mul_contains hav hav
+        have habsu : PdeSexprAndApprox.ratAbs (evalFlux a ⟨u, paramEnv⟩) ≤ x.absBound :=
+          Interval.abs_le hau
+        have habsv : PdeSexprAndApprox.ratAbs (evalFlux a ⟨v, paramEnv⟩) ≤ x.absBound :=
+          Interval.abs_le hav
+        have hax0 : 0 ≤ x.absBound := Rat.le_trans (PdeSexprAndApprox.ratAbs_nonneg _) habsu
+        refine ⟨⟨rmax_le (rat_mul_self_nonneg _) hmu.1, hmu.2⟩,
+          ⟨rmax_le (rat_mul_self_nonneg _) hmv.1, hmv.2⟩, ?_, ?_⟩
+        · exact Rat.mul_nonneg (Rat.mul_nonneg (by decide) hax0) hLa
+        · simp only [evalFlux]
+          have hsum : PdeSexprAndApprox.ratAbs
+              (evalFlux a ⟨u, paramEnv⟩ + evalFlux a ⟨v, paramEnv⟩) ≤ 2 * x.absBound := by
+            have := NonlinearMultiDPde.ratAbs_add_le (evalFlux a ⟨u, paramEnv⟩)
+              (evalFlux a ⟨v, paramEnv⟩)
+            grind
+          have heq : evalFlux a ⟨u, paramEnv⟩ * evalFlux a ⟨u, paramEnv⟩ -
+              evalFlux a ⟨v, paramEnv⟩ * evalFlux a ⟨v, paramEnv⟩ =
+              (evalFlux a ⟨u, paramEnv⟩ + evalFlux a ⟨v, paramEnv⟩) *
+                (evalFlux a ⟨u, paramEnv⟩ - evalFlux a ⟨v, paramEnv⟩) := by grind
+          rw [heq, PdeSexprAndApprox.ratAbs_mul]
+          have hm := rat_mul_le_mul (PdeSexprAndApprox.ratAbs_nonneg _) hsum
+            (PdeSexprAndApprox.ratAbs_nonneg _) hda
+          unfold Interval.absBound at hm
+          grind
+      · cases Option.some.inj h
+        obtain ⟨hau, hav, hLa, hda⟩ := iha x La ha
+        obtain ⟨hbu, hbv, hLb, hdb⟩ := ihb y Lb hb
+        have habsu : PdeSexprAndApprox.ratAbs (evalFlux a ⟨u, paramEnv⟩) ≤ x.absBound :=
+          Interval.abs_le hau
+        have habsv : PdeSexprAndApprox.ratAbs (evalFlux b ⟨v, paramEnv⟩) ≤ y.absBound :=
+          Interval.abs_le hbv
+        have hax0 : 0 ≤ x.absBound := Rat.le_trans (PdeSexprAndApprox.ratAbs_nonneg _) habsu
+        have hay0 : 0 ≤ y.absBound := Rat.le_trans (PdeSexprAndApprox.ratAbs_nonneg _) habsv
+        refine ⟨Interval.mul_contains hau hbu, Interval.mul_contains hav hbv, ?_, ?_⟩
+        · have := Rat.mul_nonneg hax0 hLb
+          have := Rat.mul_nonneg hLa hay0
+          unfold Interval.absBound at *; grind
+        · simp only [evalFlux]
+          have ht := NonlinearMultiDPde.ratAbs_add_le
+            (evalFlux a ⟨u, paramEnv⟩ * (evalFlux b ⟨u, paramEnv⟩ - evalFlux b ⟨v, paramEnv⟩))
+            ((evalFlux a ⟨u, paramEnv⟩ - evalFlux a ⟨v, paramEnv⟩) * evalFlux b ⟨v, paramEnv⟩)
+          rw [PdeSexprAndApprox.ratAbs_mul, PdeSexprAndApprox.ratAbs_mul,
+            show evalFlux a ⟨u, paramEnv⟩ * (evalFlux b ⟨u, paramEnv⟩ - evalFlux b ⟨v, paramEnv⟩) +
+              (evalFlux a ⟨u, paramEnv⟩ - evalFlux a ⟨v, paramEnv⟩) * evalFlux b ⟨v, paramEnv⟩ =
+              evalFlux a ⟨u, paramEnv⟩ * evalFlux b ⟨u, paramEnv⟩ -
+                evalFlux a ⟨v, paramEnv⟩ * evalFlux b ⟨v, paramEnv⟩ by grind] at ht
+          have p1 := rat_mul_le_mul (PdeSexprAndApprox.ratAbs_nonneg _) habsu
+            (PdeSexprAndApprox.ratAbs_nonneg _) hdb
+          have p2 := rat_mul_le_mul (PdeSexprAndApprox.ratAbs_nonneg _) hda
+            (PdeSexprAndApprox.ratAbs_nonneg _) habsv
+          unfold Interval.absBound at p1 p2
+          grind
+    · cases h
+  | invSafe d ihd =>
+    simp only [evalFluxLip] at h
+    split at h
+    · next x Ld hd =>
+      obtain ⟨⟨du1, du2⟩, ⟨dv1, dv2⟩, hLd, hdd⟩ := ihd x Ld hd
+      split at h
+      · next hs =>
+        cases Option.some.inj h
+        have hinv : ∀ z : Rat, x.lo ≤ z → z ≤ x.hi →
+            (1 : Rat) / x.hi ≤ 1 / z ∧ 1 / z ≤ 1 / x.lo := fun z hz1 hz2 => by
+          have hp1 : 0 < z * x.hi := by
+            rcases hs with hlo | hhi
+            · exact Rat.mul_pos (by grind) (by grind)
+            · have := Rat.mul_pos (show 0 < -z by grind) (show 0 < -x.hi by grind); grind
+          have hp2 : 0 < x.lo * z := by
+            rcases hs with hlo | hhi
+            · exact Rat.mul_pos hlo (by grind)
+            · have := Rat.mul_pos (show 0 < -x.lo by grind) (show 0 < -z by grind); grind
+          exact ⟨rat_inv_antitone hz2 hp1, rat_inv_antitone hz1 hp2⟩
+        let m := rmin (PdeSexprAndApprox.ratAbs x.lo) (PdeSexprAndApprox.ratAbs x.hi)
+        have hmBounds : 0 < m ∧ m ≤ PdeSexprAndApprox.ratAbs (evalFlux d ⟨u, paramEnv⟩) ∧
+            m ≤ PdeSexprAndApprox.ratAbs (evalFlux d ⟨v, paramEnv⟩) := by
+          dsimp only [m]
+          rcases hs with hlo | hhi
+          · unfold rmin PdeSexprAndApprox.ratAbs; (repeat' split) <;> grind
+          · unfold rmin PdeSexprAndApprox.ratAbs; (repeat' split) <;> grind
+        obtain ⟨hm, hmu, hmv⟩ := hmBounds
+        have hm2 : 0 < m * m := Rat.mul_pos hm hm
+        have hdu0 : evalFlux d ⟨u, paramEnv⟩ ≠ 0 := fun h0 => by
+          rw [h0] at hmu; unfold PdeSexprAndApprox.ratAbs at hmu; grind
+        have hdv0 : evalFlux d ⟨v, paramEnv⟩ ≠ 0 := fun h0 => by
+          rw [h0] at hmv; unfold PdeSexprAndApprox.ratAbs at hmv; grind
+        have hdiv : Ld / (m * m) * (m * m) = Ld := Rat.div_mul_cancel (a := Ld) (by grind)
+        refine ⟨hinv _ du1 du2, hinv _ dv1 dv2,
+          rat_le_of_mul_le_mul hm2 (by grind), ?_⟩
+        simp only [evalFlux]
+        apply rat_le_of_mul_le_mul hm2
+        have hprod := rat_mul_le_mul (Rat.le_of_lt hm) hmu (Rat.le_of_lt hm) hmv
+        have hstep := rat_mul_mono
+          (PdeSexprAndApprox.ratAbs_nonneg (1 / evalFlux d ⟨u, paramEnv⟩ - 1 / evalFlux d ⟨v, paramEnv⟩))
+          hprod
+        have hcu := Rat.div_mul_cancel (a := 1) hdu0
+        have hcv := Rat.div_mul_cancel (a := 1) hdv0
+        have hid : PdeSexprAndApprox.ratAbs (1 / evalFlux d ⟨u, paramEnv⟩ - 1 / evalFlux d ⟨v, paramEnv⟩) *
+            (PdeSexprAndApprox.ratAbs (evalFlux d ⟨u, paramEnv⟩) *
+              PdeSexprAndApprox.ratAbs (evalFlux d ⟨v, paramEnv⟩)) =
+            PdeSexprAndApprox.ratAbs (evalFlux d ⟨u, paramEnv⟩ - evalFlux d ⟨v, paramEnv⟩) := by
+          rw [← PdeSexprAndApprox.ratAbs_mul, ← PdeSexprAndApprox.ratAbs_mul]
+          have heq : (1 / evalFlux d ⟨u, paramEnv⟩ - 1 / evalFlux d ⟨v, paramEnv⟩) *
+              (evalFlux d ⟨u, paramEnv⟩ * evalFlux d ⟨v, paramEnv⟩) =
+              -(evalFlux d ⟨u, paramEnv⟩ - evalFlux d ⟨v, paramEnv⟩) := by
+            have e1 : (1 / evalFlux d ⟨u, paramEnv⟩) *
+                (evalFlux d ⟨u, paramEnv⟩ * evalFlux d ⟨v, paramEnv⟩) =
+                evalFlux d ⟨v, paramEnv⟩ := by
+              rw [← Rat.mul_assoc, hcu, Rat.one_mul]
+            have e2 : (1 / evalFlux d ⟨v, paramEnv⟩) *
+                (evalFlux d ⟨u, paramEnv⟩ * evalFlux d ⟨v, paramEnv⟩) =
+                evalFlux d ⟨u, paramEnv⟩ := by
+              rw [Rat.mul_comm (evalFlux d ⟨u, paramEnv⟩), ← Rat.mul_assoc, hcv, Rat.one_mul]
+            grind
+          rw [heq, NonlinearMultiDPde.ratAbs_neg]
+        rw [hid] at hstep
+        have hgoal : (Ld / (m * m) * δ) * (m * m) = Ld * δ := by grind
+        grind
+      · cases h
+    · cases h
+
+/-- **Constructive interval + weighted Lipschitz soundness (`evalFluxLip_sound`)**: for nonnegative
+weights `w` and `0 ≤ δ`, if `evalFluxLip` succeeds with `(iv, L)`, then `iv` encloses `e(u)`,
+`0 ≤ L`, and `|e(u) - e(v)| ≤ L · δ` for all `u, v` in `box` within `δ · w`. -/
+theorem evalFluxLip_sound (numVars : Nat) (box : Nat → Interval) (w : Nat → Rat)
+    (paramEnv : Nat → Rat) (hw : ∀ j, j < numVars → 0 ≤ w j) (u v : Vec) (δ : Rat) (hδ : 0 ≤ δ)
+    (hu : InBox numVars box u) (hv : InBox numVars box v)
+    (huv : ∀ j, j < numVars → PdeSexprAndApprox.ratAbs (u j - v j) ≤ δ * w j)
+    (e : FluxExpr) (iv : Interval) (L : Rat)
+    (h : evalFluxLip numVars box w paramEnv e = some (iv, L)) :
+    iv.contains (evalFlux e ⟨u, paramEnv⟩) ∧ 0 ≤ L ∧
+      PdeSexprAndApprox.ratAbs (evalFlux e ⟨u, paramEnv⟩ - evalFlux e ⟨v, paramEnv⟩) ≤ L * δ := by
+  obtain ⟨hau, _, hL, hd⟩ := evalFluxLip_sound_both numVars box w paramEnv hw u v δ hδ hu hv huv e iv L h
+  exact ⟨hau, hL, hd⟩
+
+/-- Constructive weighted `ℓ∞` Lipschitz verifier over `effectiveStateBox S` for every directional
+flux component (`L ≤ aMax · w_c`). -/
+@[expose] def verifyFluxLipschitz (S : ConservationLawSpec) : Bool :=
+  (List.range S.numDims).all fun d => (List.range S.numVars).all fun c =>
+    match evalFluxLip S.numVars (effectiveStateBox S) (weightOf S) S.paramEnv
+        (specializeFluxExpr (some S.paramEnv) (fluxComp S d c)) with
+    | some (_, L) => decide (L ≤ S.aMax * weightOf S c)
+    | none => false
 
 end Obend.Analysis.HyperbolicBalanceLaws

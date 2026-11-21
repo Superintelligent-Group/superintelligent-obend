@@ -5,7 +5,10 @@ public import Lean.Data.Json
 import all Obend.Analysis.HyperbolicPdeCert
 import all Obend.Analysis.PdeSexprAndApprox
 import all Obend.Analysis.NonlinearMultiDPde
+import all Obend.Hardware.Gpu.StencilTile
 import Obend.Elab.PdeSolverElab
+import Obend.Hardware.PdeSolvers
+import Obend.Hardware.HDL
 import Obend.Hardware.YosysLec
 import Obend.Receipt.Merkle
 import Obend.Core.Digest
@@ -24,8 +27,9 @@ import Obend.Core.Digest
   `PdeBoundaryPolicy`: toroidal, zero-gradient, or mirrored with sign-flipped components.
   `rolloutRat_periodic_conserves_integral` is conservation of the executed periodic rollout for
   either limiter; `reflectiveWallFace_zero_flux` is the vanishing of the executed wall-face flux of
-  a component whose flux is odd under the mirror. Conservation of a whole reflective or
-  transmissive rollout is not stated here.
+  a component whose flux is odd under the mirror, and `rolloutRat_reflective_conserves_component`
+  proves multi-step conservation of odd-flux un-negated components on reflective boxes with
+  `∀ N ∈ dims, 2 ≤ N` (outflow transmissive boundaries need not conserve total mass).
 * **Receipt.** `pdeTrajectoryBytes` frames every field of a `PdeTrajectoryStatement` with
   `Receipt.Merkle.encodeFields`; it is injective with no width hypothesis, so
   `pdeTrajectoryDigest_binding` ends in the statement's equality or a collision among the two
@@ -183,14 +187,45 @@ def sweepRat (spec : ConservationLawSpec) (pol : PdeBoundaryPolicy) (dims : List
     (G : RatGrid) (step : Nat × Rat) : RatGrid :=
   tabulate (gridCellCount dims) spec.numVars (sweepFn spec pol dims step.1 step.2 (gridFn G))
 
+def sourceStepRat (spec : ConservationLawSpec) (dims : List Nat) (dt : Rat) (G : RatGrid) :
+    RatGrid :=
+  if spec.sources.isEmpty then G
+  else tabulate (gridCellCount dims) spec.numVars fun idx c =>
+    gridFn G idx c + dt * evalFlux (getOr spec.sources c (.const 0)) ⟨gridFn G idx, spec.paramEnv⟩
+
 def turnRat (spec : ConservationLawSpec) (pol : PdeBoundaryPolicy) (dims : List Nat)
     (useStrang : Bool) (G : RatGrid) : RatGrid :=
-  (sweepSchedule dims spec.cfl useStrang).foldl (sweepRat spec pol dims) G
+  if spec.sources.isEmpty then
+    (sweepSchedule dims spec.cfl useStrang).foldl (sweepRat spec pol dims) G
+  else if useStrang then
+    let g1 := sourceStepRat spec dims (spec.cfl / 2) G
+    let g2 := (sweepSchedule dims spec.cfl true).foldl (sweepRat spec pol dims) g1
+    sourceStepRat spec dims (spec.cfl / 2) g2
+  else
+    let g1 := (sweepSchedule dims spec.cfl false).foldl (sweepRat spec pol dims) G
+    sourceStepRat spec dims spec.cfl g1
 
 def rolloutRat (spec : ConservationLawSpec) (pol : PdeBoundaryPolicy) (dims : List Nat)
     (useStrang : Bool) : Nat → RatGrid → RatGrid
   | 0, G => G
   | k + 1, G => rolloutRat spec pol dims useStrang k (turnRat spec pol dims useStrang G)
+
+private theorem sourceStepRat_conserves_sourceless (spec : ConservationLawSpec) (dims : List Nat)
+    (dt : Rat) (c : Nat) (hc : c < spec.numVars)
+    (hSrc : spec.sources.isEmpty = true ∨ getOr spec.sources c (.const 0) = .const 0)
+    (G : RatGrid) :
+    totalGridIntegral dims (gridFn (sourceStepRat spec dims dt G)) c =
+      totalGridIntegral dims (gridFn G) c := by
+  unfold sourceStepRat
+  split
+  · rfl
+  · next hne =>
+    rcases hSrc with he | hz
+    · exact absurd he hne
+    · unfold totalGridIntegral
+      refine sumTo_congr fun idx hi => ?_
+      rw [gridFn_tabulate _ _ _ idx c hi hc, hz]
+      simp only [evalFlux]; grind
 
 private theorem sweepRat_periodic_conserves (spec : ConservationLawSpec) (dims : List Nat)
     (hPos : ∀ N ∈ dims, 0 < N) (c : Nat) (hc : c < spec.numVars) (G : RatGrid) (step : Nat × Rat) :
@@ -210,18 +245,38 @@ private theorem turnRat_periodic_conserves (spec : ConservationLawSpec) (dims : 
   | cons s rest ih =>
     rw [List.foldl_cons, ih, sweepRat_periodic_conserves spec dims hPos c hc]
 
-/-- **The executed periodic rollout conserves every component's integral**, for either limiter,
-Lie or Strang turns, any dimension count and any number of steps. -/
+private theorem fullTurnRat_periodic_conserves (spec : ConservationLawSpec) (dims : List Nat)
+    (hPos : ∀ N ∈ dims, 0 < N) (useStrang : Bool) (c : Nat) (hc : c < spec.numVars)
+    (hSrc : spec.sources.isEmpty = true ∨ getOr spec.sources c (.const 0) = .const 0)
+    (G : RatGrid) :
+    totalGridIntegral dims (gridFn (turnRat spec .periodic dims useStrang G)) c =
+      totalGridIntegral dims (gridFn G) c := by
+  unfold turnRat
+  split
+  · exact turnRat_periodic_conserves spec dims hPos c hc _ G
+  · split
+    · dsimp only []
+      rw [sourceStepRat_conserves_sourceless spec dims _ c hc hSrc,
+          turnRat_periodic_conserves spec dims hPos c hc,
+          sourceStepRat_conserves_sourceless spec dims _ c hc hSrc]
+    · dsimp only []
+      rw [sourceStepRat_conserves_sourceless spec dims _ c hc hSrc,
+          turnRat_periodic_conserves spec dims hPos c hc]
+
+/-- **The executed periodic rollout conserves every sourceless component's integral**, for either
+limiter, Lie or Strang turns, any dimension count and any number of steps. -/
 theorem rolloutRat_periodic_conserves_integral (spec : ConservationLawSpec) (dims : List Nat)
     (hPos : ∀ N ∈ dims, 0 < N) (useStrang : Bool) (steps : Nat) (G : RatGrid) (c : Nat)
-    (hc : c < spec.numVars) :
+    (hc : c < spec.numVars)
+    (hSrc : spec.sources.isEmpty = true ∨ getOr spec.sources c (.const 0) = .const 0 :=
+      by left; decide) :
     totalGridIntegral dims (gridFn (rolloutRat spec .periodic dims useStrang steps G)) c =
       totalGridIntegral dims (gridFn G) c := by
   induction steps generalizing G with
   | zero => rfl
   | succ k ih =>
     rw [rolloutRat, ih]
-    exact turnRat_periodic_conserves spec dims hPos c hc _ G
+    exact fullTurnRat_periodic_conserves spec dims hPos useStrang c hc hSrc G
 
 /-! ## 4. Reflective walls -/
 
@@ -280,6 +335,273 @@ theorem reflectiveWallFace_zero_flux (spec : ConservationLawSpec) (axis : Nat)
   rw [hLow, hHigh]
   exact ⟨(reflectiveWall_zero_normal_flux _ _ _ negVars _ c hc (hOdd _)).1,
     (reflectiveWall_zero_normal_flux _ _ _ negVars _ c hc (hOdd _)).2⟩
+
+private def mirrorIndex1D (N : Nat) (i : Int) : Nat × Bool :=
+  if i < 0 then (resolveStencilIdx .clamp N (-i - 1), true)
+  else if (N : Int) ≤ i then (resolveStencilIdx .clamp N (2 * (N : Int) - 1 - i), true)
+  else (i.toNat, false)
+
+private def mirrorSample1D (negVars : List Nat) (N : Nat) (u : Nat → Vec) (i : Int) : Vec :=
+  let g := mirrorIndex1D N i
+  if g.2 then negateVars negVars (u g.1) else u g.1
+
+private theorem ghostIndex_reflective_fiber (negVars : List Nat) (dims : List Nat) (axis : Nat)
+    (hPos : ∀ N ∈ dims, 0 < N)
+    (o k r : Nat) (hk : k < (axisFiberDims dims axis).axisLen)
+    (hr : r < (axisFiberDims dims axis).inner) (off : Int) :
+    let f := axisFiberDims dims axis
+    let cellAt := fun m => o * (f.axisLen * f.inner) + (m * f.inner + r)
+    let g := mirrorIndex1D f.axisLen ((k : Int) + off)
+    ghostIndex (.reflective negVars) dims axis (cellAt k) off = (cellAt g.1, g.2) := by
+  intro f cellAt g
+  have hk' : k < f.axisLen := hk
+  have hr' : r < f.inner := hr
+  have hInnerPos : 0 < f.inner :=
+    gridCellCount_pos _ fun M hM => hPos M (List.mem_of_mem_drop hM)
+  have hrem_lt : k * f.inner + r < f.axisLen * f.inner := by
+    have h2 := Nat.mul_le_mul_right f.inner (show k + 1 ≤ f.axisLen by omega)
+    rw [Nat.add_mul, Nat.one_mul] at h2; omega
+  have hmod1 : (o * (f.axisLen * f.inner) + (k * f.inner + r)) % (f.axisLen * f.inner) =
+      k * f.inner + r := by
+    rw [Nat.add_comm, Nat.add_mul_mod_self_right, Nat.mod_eq_of_lt hrem_lt]
+  have hdiv2 : (k * f.inner + r) / f.inner = k := by
+    rw [Nat.add_comm, Nat.add_mul_div_right _ _ hInnerPos, Nat.div_eq_of_lt hr', Nat.zero_add]
+  have hCoord : cellAt k % (f.axisLen * f.inner) / f.inner = k := by
+    dsimp only [cellAt]; rw [hmod1, hdiv2]
+  have hNeq : (PdeBoundaryPolicy.reflective negVars = .transmissive) = False := by simp
+  unfold ghostIndex
+  dsimp only []
+  simp only [hNeq, ↓reduceIte]
+  change (cellAt k - (cellAt k % (f.axisLen * f.inner) / f.inner) * f.inner +
+      (mirrorIndex1D f.axisLen (Int.ofNat (cellAt k % (f.axisLen * f.inner) / f.inner) + off)).1 * f.inner,
+    (mirrorIndex1D f.axisLen (Int.ofNat (cellAt k % (f.axisLen * f.inner) / f.inner) + off)).2) =
+    (cellAt g.1, g.2)
+  rw [hCoord]
+  refine Prod.ext ?_ rfl
+  dsimp only [cellAt, g]
+  simp only [Int.ofNat_eq_natCast]
+  omega
+
+private theorem sampleRat_reflective_fiber (negVars : List Nat) (dims : List Nat) (axis : Nat)
+    (hPos : ∀ N ∈ dims, 0 < N) (U : MultiDGrid)
+    (o k r : Nat) (hk : k < (axisFiberDims dims axis).axisLen)
+    (hr : r < (axisFiberDims dims axis).inner) (off : Int) :
+    let f := axisFiberDims dims axis
+    let cellAt := fun m => o * (f.axisLen * f.inner) + (m * f.inner + r)
+    sampleRat (.reflective negVars) U (ghostIndex (.reflective negVars) dims axis (cellAt k) off) =
+      mirrorSample1D negVars f.axisLen (fun m => U (cellAt m)) ((k : Int) + off) := by
+  intro f cellAt
+  rw [ghostIndex_reflective_fiber negVars dims axis hPos o k r hk hr off]
+  rfl
+
+private theorem resolveStencilIdx_clamp_of_lt (N : Nat) (i : Int) (h0 : 0 ≤ i) (hi : i < (N : Int)) :
+    resolveStencilIdx .clamp N i = i.toNat := by
+  simp only [resolveStencilIdx]
+  split <;> (try split) <;> omega
+
+private theorem mirrorSample1D_inBounds (negVars : List Nat) (N : Nat) (u : Nat → Vec)
+    (k : Nat) (hk : k < N) :
+    mirrorSample1D negVars N u (k : Int) = u k := by
+  have h1 : ¬ ((k : Int) < 0) := by omega
+  have h2 : ¬ ((N : Int) ≤ (k : Int)) := by omega
+  simp [mirrorSample1D, mirrorIndex1D, h1, h2]
+
+private theorem mirrorSample1D_low_m2 (negVars : List Nat) (N : Nat) (hN : 2 ≤ N) (u : Nat → Vec) :
+    mirrorSample1D negVars N u (-2) = negateVars negVars (u 1) := by
+  have hcl : resolveStencilIdx .clamp N 1 = 1 := by
+    rw [resolveStencilIdx_clamp_of_lt N 1 (by omega) (by omega)]; rfl
+  simp [mirrorSample1D, mirrorIndex1D, hcl]
+
+private theorem mirrorSample1D_low_m1 (negVars : List Nat) (N : Nat) (hN : 2 ≤ N) (u : Nat → Vec) :
+    mirrorSample1D negVars N u (-1) = negateVars negVars (u 0) := by
+  have hcl : resolveStencilIdx .clamp N 0 = 0 := by
+    rw [resolveStencilIdx_clamp_of_lt N 0 (by omega) (by omega)]; rfl
+  simp [mirrorSample1D, mirrorIndex1D, hcl]
+
+private theorem mirrorSample1D_high_0 (negVars : List Nat) (N : Nat) (hN : 2 ≤ N) (u : Nat → Vec) :
+    mirrorSample1D negVars N u (N : Int) = negateVars negVars (u (N - 1)) := by
+  have h1 : ¬ ((N : Int) < 0) := by omega
+  have hcl : resolveStencilIdx .clamp N (2 * (N : Int) - 1 - (N : Int)) = N - 1 := by
+    rw [resolveStencilIdx_clamp_of_lt N (2 * (N : Int) - 1 - (N : Int)) (by omega) (by omega)]; omega
+  simp [mirrorSample1D, mirrorIndex1D, h1, hcl]
+
+private theorem mirrorSample1D_high_1 (negVars : List Nat) (N : Nat) (hN : 2 ≤ N) (u : Nat → Vec) :
+    mirrorSample1D negVars N u ((N : Int) + 1) = negateVars negVars (u (N - 2)) := by
+  have h1 : ¬ ((N : Int) + 1 < 0) := by omega
+  have h2 : (N : Int) ≤ (N : Int) + 1 := by omega
+  have hcl : resolveStencilIdx .clamp N (2 * (N : Int) - 1 - ((N : Int) + 1)) = N - 2 := by
+    rw [resolveStencilIdx_clamp_of_lt N (2 * (N : Int) - 1 - ((N : Int) + 1)) (by omega) (by omega)]; omega
+  simp [mirrorSample1D, mirrorIndex1D, h1, h2, hcl]
+
+private theorem sumTo_telescope (N : Nat) (g : Nat → Rat) :
+    sumTo N (fun k => g (k + 1) - g k) = g N - g 0 := by
+  induction N with
+  | zero => simp [sumTo]; grind
+  | succ n ih => simp only [sumTo, ih]; grind
+
+/-- **One reflective directional sweep conserves every odd-flux un-negated component** on any box
+with at least two cells along every axis, under either limiter. -/
+theorem reflectiveSweep_conserves_component (spec : ConservationLawSpec)
+    (negVars : List Nat) (dims : List Nat) (hDims2 : ∀ N ∈ dims, 2 ≤ N)
+    (axis : Nat) (ν : Rat) (U : MultiDGrid) (c : Nat)
+    (hcNotNeg : c ∉ negVars)
+    (hOdd : ∀ u : Vec,
+      evalFlux (getOr (getOr spec.fluxes axis []) c (.const 0)) ⟨negateVars negVars u, spec.paramEnv⟩ =
+        -evalFlux (getOr (getOr spec.fluxes axis []) c (.const 0)) ⟨u, spec.paramEnv⟩) :
+    totalGridIntegral dims (sweepFn spec (.reflective negVars) dims axis ν U) c =
+      totalGridIntegral dims U c := by
+  unfold sweepFn
+  by_cases hAxis : axis < dims.length
+  · simp only [hAxis, ↓reduceIte]
+    unfold totalGridIntegral
+    let f := axisFiberDims dims axis
+    have hPos : ∀ N ∈ dims, 0 < N := fun N hN => by have := hDims2 N hN; omega
+    have hAxisGe2 : 2 ≤ f.axisLen := hDims2 _ (getOr_mem_of_lt dims axis 1 hAxis)
+    rw [axisFiberDims_prod dims axis hAxis,
+        sumTo_mul_split f.outer (f.axisLen * f.inner),
+        sumTo_mul_split f.outer (f.axisLen * f.inner)]
+    refine sumTo_congr fun o _ => ?_
+    rw [sumTo_mul_split f.axisLen f.inner, sumTo_mul_split f.axisLen f.inner,
+        sumTo_comm f.axisLen f.inner, sumTo_comm f.axisLen f.inner]
+    refine sumTo_congr fun r hr => ?_
+    let cellAt : Nat → Nat := fun m => o * (f.axisLen * f.inner) + (m * f.inner + r)
+    let u : Nat → Vec := fun m => U (cellAt m)
+    let s1D : Int → Vec := mirrorSample1D negVars f.axisLen u
+    let F_face : Nat → Rat := fun j =>
+      faceFlux spec axis (s1D ((j : Int) - 2)) (s1D ((j : Int) - 1)) (s1D (j : Int)) (s1D ((j : Int) + 1)) c
+    have hCell : ∀ k, k < f.axisLen →
+        cellUpdate spec (.reflective negVars) dims axis ν U (cellAt k) c =
+          u k c + (-ν) * (F_face (k + 1) - F_face k) := by
+      intro k hk
+      unfold cellUpdate
+      have hs : ∀ off : Int,
+          sampleRat (.reflective negVars) U (ghostIndex (.reflective negVars) dims axis (cellAt k) off) =
+            s1D ((k : Int) + off) := fun off =>
+        sampleRat_reflective_fiber negVars dims axis hPos U o k r hk hr off
+      simp only [hs]
+      have h0 : (k : Int) + 0 = (k : Int) := by omega
+      have h0u : s1D ((k : Int) + 0) = u k := by rw [h0]; exact mirrorSample1D_inBounds negVars f.axisLen u k hk
+      have hR : faceFlux spec axis (s1D ((k : Int) + (-1))) (s1D ((k : Int) + 0))
+          (s1D ((k : Int) + 1)) (s1D ((k : Int) + 2)) c = F_face (k + 1) := by
+        dsimp only [F_face]
+        rw [show (k : Int) + (-1) = ((k + 1 : Nat) : Int) - 2 by omega,
+            show (k : Int) + 0 = ((k + 1 : Nat) : Int) - 1 by omega,
+            show (k : Int) + 1 = ((k + 1 : Nat) : Int) by omega,
+            show (k : Int) + 2 = ((k + 1 : Nat) : Int) + 1 by omega]
+      have hL : faceFlux spec axis (s1D ((k : Int) + (-2))) (s1D ((k : Int) + (-1)))
+          (s1D ((k : Int) + 0)) (s1D ((k : Int) + 1)) c = F_face k := by
+        dsimp only [F_face]
+        rw [show (k : Int) + (-2) = (k : Int) - 2 by omega,
+            show (k : Int) + (-1) = (k : Int) - 1 by omega,
+            h0]
+      rw [hR, hL, h0u]; grind
+    have hF0 : F_face 0 = 0 := by
+      dsimp only [F_face, s1D]
+      rw [show ((0 : Nat) : Int) - 2 = -2 by omega,
+          show ((0 : Nat) : Int) - 1 = -1 by omega,
+          show ((0 : Nat) : Int) + 1 = ((1 : Nat) : Int) by omega,
+          mirrorSample1D_low_m2 negVars f.axisLen hAxisGe2 u,
+          mirrorSample1D_low_m1 negVars f.axisLen hAxisGe2 u,
+          mirrorSample1D_inBounds negVars f.axisLen u 0 (by omega),
+          mirrorSample1D_inBounds negVars f.axisLen u 1 (by omega)]
+      exact (reflectiveWallFace_zero_flux spec axis negVars (u 0) (u 1) c hcNotNeg hOdd).1
+    have hFN : F_face f.axisLen = 0 := by
+      dsimp only [F_face, s1D]
+      rw [show (f.axisLen : Int) - 2 = ((f.axisLen - 2 : Nat) : Int) by omega,
+          show (f.axisLen : Int) - 1 = ((f.axisLen - 1 : Nat) : Int) by omega,
+          mirrorSample1D_inBounds negVars f.axisLen u (f.axisLen - 2) (by omega),
+          mirrorSample1D_inBounds negVars f.axisLen u (f.axisLen - 1) (by omega),
+          mirrorSample1D_high_0 negVars f.axisLen hAxisGe2 u,
+          mirrorSample1D_high_1 negVars f.axisLen hAxisGe2 u]
+      exact (reflectiveWallFace_zero_flux spec axis negVars (u (f.axisLen - 1)) (u (f.axisLen - 2))
+        c hcNotNeg hOdd).2
+    rw [sumTo_congr hCell, sumTo_add, sumTo_mul_left, sumTo_telescope, hFN, hF0]
+    grind
+  · simp [hAxis]
+
+private theorem sweepSchedule_axes_lt (dims : List Nat) (ν : Rat) (useStrang : Bool) :
+    ∀ s ∈ sweepSchedule dims ν useStrang, s.1 < dims.length := by
+  unfold sweepSchedule
+  split <;> intro s hs
+  · rcases List.mem_append.mp hs with h1 | h2
+    · obtain ⟨a, ha, rfl⟩ := List.mem_map.mp h1; exact List.mem_range.mp ha
+    · obtain ⟨a, ha, rfl⟩ := List.mem_map.mp (List.mem_reverse.mp h2); exact List.mem_range.mp ha
+  · obtain ⟨a, ha, rfl⟩ := List.mem_map.mp hs; exact List.mem_range.mp ha
+
+private theorem sweepRat_reflective_conserves (spec : ConservationLawSpec)
+    (negVars : List Nat) (dims : List Nat) (hDims2 : ∀ N ∈ dims, 2 ≤ N)
+    (c : Nat) (hcVar : c < spec.numVars) (hcNotNeg : c ∉ negVars) (G : RatGrid) (step : Nat × Rat)
+    (hOdd : ∀ u : Vec,
+      evalFlux (getOr (getOr spec.fluxes step.1 []) c (.const 0)) ⟨negateVars negVars u, spec.paramEnv⟩ =
+        -evalFlux (getOr (getOr spec.fluxes step.1 []) c (.const 0)) ⟨u, spec.paramEnv⟩) :
+    totalGridIntegral dims (gridFn (sweepRat spec (.reflective negVars) dims G step)) c =
+      totalGridIntegral dims (gridFn G) c := by
+  rw [← reflectiveSweep_conserves_component spec negVars dims hDims2 step.1 step.2 (gridFn G) c
+    hcNotNeg hOdd]
+  unfold totalGridIntegral sweepRat
+  exact sumTo_congr fun idx hi => gridFn_tabulate _ _ _ idx c hi hcVar
+
+private theorem turnRat_reflective_conserves (spec : ConservationLawSpec)
+    (negVars : List Nat) (dims : List Nat) (hDims2 : ∀ N ∈ dims, 2 ≤ N)
+    (c : Nat) (hcVar : c < spec.numVars) (hcNotNeg : c ∉ negVars)
+    (hOdd : ∀ axis, axis < dims.length → ∀ u : Vec,
+      evalFlux (getOr (getOr spec.fluxes axis []) c (.const 0)) ⟨negateVars negVars u, spec.paramEnv⟩ =
+        -evalFlux (getOr (getOr spec.fluxes axis []) c (.const 0)) ⟨u, spec.paramEnv⟩)
+    (sched : List (Nat × Rat)) (hSched : ∀ s ∈ sched, s.1 < dims.length) (G : RatGrid) :
+    totalGridIntegral dims (gridFn (sched.foldl (sweepRat spec (.reflective negVars) dims) G)) c =
+      totalGridIntegral dims (gridFn G) c := by
+  induction sched generalizing G with
+  | nil => rfl
+  | cons s rest ih =>
+    rw [List.foldl_cons, ih (fun x hx => hSched x (List.mem_cons_of_mem _ hx)),
+        sweepRat_reflective_conserves spec negVars dims hDims2 c hcVar hcNotNeg G s
+          (hOdd s.1 (hSched s List.mem_cons_self))]
+
+private theorem fullTurnRat_reflective_conserves (spec : ConservationLawSpec)
+    (negVars : List Nat) (dims : List Nat) (hDims2 : ∀ N ∈ dims, 2 ≤ N) (useStrang : Bool)
+    (c : Nat) (hcVar : c < spec.numVars) (hcNotNeg : c ∉ negVars)
+    (hOdd : ∀ axis, axis < dims.length → ∀ u : Vec,
+      evalFlux (getOr (getOr spec.fluxes axis []) c (.const 0)) ⟨negateVars negVars u, spec.paramEnv⟩ =
+        -evalFlux (getOr (getOr spec.fluxes axis []) c (.const 0)) ⟨u, spec.paramEnv⟩)
+    (hSrc : spec.sources.isEmpty = true ∨ getOr spec.sources c (.const 0) = .const 0)
+    (G : RatGrid) :
+    totalGridIntegral dims (gridFn (turnRat spec (.reflective negVars) dims useStrang G)) c =
+      totalGridIntegral dims (gridFn G) c := by
+  unfold turnRat
+  split
+  · exact turnRat_reflective_conserves spec negVars dims hDims2 c hcVar hcNotNeg hOdd _
+      (sweepSchedule_axes_lt dims spec.cfl useStrang) G
+  · split
+    · dsimp only []
+      rw [sourceStepRat_conserves_sourceless spec dims _ c hcVar hSrc,
+          turnRat_reflective_conserves spec negVars dims hDims2 c hcVar hcNotNeg hOdd _
+            (sweepSchedule_axes_lt dims spec.cfl true),
+          sourceStepRat_conserves_sourceless spec dims _ c hcVar hSrc]
+    · dsimp only []
+      rw [sourceStepRat_conserves_sourceless spec dims _ c hcVar hSrc,
+          turnRat_reflective_conserves spec negVars dims hDims2 c hcVar hcNotNeg hOdd _
+            (sweepSchedule_axes_lt dims spec.cfl false)]
+
+/-- **The executed reflective rollout conserves every sourceless odd-flux un-negated component** on
+boxes with `∀ N ∈ dims, 2 ≤ N`, for either limiter, Lie or Strang turns, any dimension count, and
+any number of steps. -/
+theorem rolloutRat_reflective_conserves_component (spec : ConservationLawSpec)
+    (negVars : List Nat) (dims : List Nat) (hDims2 : ∀ N ∈ dims, 2 ≤ N)
+    (useStrang : Bool) (steps : Nat) (G : RatGrid) (c : Nat)
+    (hcVar : c < spec.numVars) (hcNotNeg : c ∉ negVars)
+    (hOdd : ∀ axis, axis < dims.length → ∀ u : Vec,
+      evalFlux (getOr (getOr spec.fluxes axis []) c (.const 0)) ⟨negateVars negVars u, spec.paramEnv⟩ =
+        -evalFlux (getOr (getOr spec.fluxes axis []) c (.const 0)) ⟨u, spec.paramEnv⟩)
+    (hSrc : spec.sources.isEmpty = true ∨ getOr spec.sources c (.const 0) = .const 0 :=
+      by left; decide) :
+    totalGridIntegral dims (gridFn (rolloutRat spec (.reflective negVars) dims useStrang steps G)) c =
+      totalGridIntegral dims (gridFn G) c := by
+  induction steps generalizing G with
+  | zero => rfl
+  | succ k ih =>
+    rw [rolloutRat, ih]
+    exact fullTurnRat_reflective_conserves spec negVars dims hDims2 useStrang c hcVar hcNotNeg
+      hOdd hSrc G
 
 /-! ## 5. The trajectory statement and its 256-bit commitment -/
 
@@ -420,9 +742,29 @@ def sweepQ32 (spec : ConservationLawSpec) (pol : PdeBoundaryPolicy) (dims : List
         if g.2 && negs.contains c then -w else w).toArray
   else G
 
+def sourceStepQ32 (spec : ConservationLawSpec) (dims : List Nat) (dt : Rat) (G : Q32Grid) :
+    Q32Grid :=
+  if spec.sources.isEmpty then G
+  else
+    let dag := compileFluxSsaDag (some spec.paramEnv) spec.sources
+    let dtW := (ratToQ32Checked dt).getD 0#64
+    Array.ofFn (n := gridCellCount dims) fun idx =>
+      let uIn : Nat → BitVec 64 := fun c => ((G[idx.val]?).getD #[])[c]?.getD 0#64
+      let sOut := evalFluxSsaDagQ32 uIn spec.paramEnv dag
+      Array.ofFn (n := spec.numVars) fun c =>
+        uIn c.val + Obend.Hardware.HDL.evalAluOp .qmul32 dtW (sOut.getD c.val 0#64)
+
 def turnQ32 (spec : ConservationLawSpec) (pol : PdeBoundaryPolicy) (dims : List Nat)
     (useStrang : Bool) (G : Q32Grid) : Q32Grid :=
-  (sweepSchedule dims spec.cfl useStrang).foldl (sweepQ32 spec pol dims) G
+  if spec.sources.isEmpty then
+    (sweepSchedule dims spec.cfl useStrang).foldl (sweepQ32 spec pol dims) G
+  else if useStrang then
+    let g1 := sourceStepQ32 spec dims (spec.cfl / 2) G
+    let g2 := (sweepSchedule dims spec.cfl true).foldl (sweepQ32 spec pol dims) g1
+    sourceStepQ32 spec dims (spec.cfl / 2) g2
+  else
+    let g1 := (sweepSchedule dims spec.cfl false).foldl (sweepQ32 spec pol dims) G
+    sourceStepQ32 spec dims spec.cfl g1
 
 private def iter {α : Type} (f : α → α) : Nat → α → α
   | 0, a => a
@@ -522,10 +864,18 @@ private def surrogateTube (p : PdeProblem) (L : Rat) : Rat → List (List (List 
   | t, _ => t
 
 def pdeProblem (j : Json) : Except PdeFail PdeProblem := do
-  let law ← dec (j.getObjValAs? String "sexpr")
-  let spec ← match Obend.Elab.PdeSolverElab.validatePdeSolverSexpr law with
-    | .ok (spec, _) => pure spec
-    | .error msg => refuse 1 "validate-pde-sexpr" msg
+  let (spec, law) ← match ← dec (optional j "solver" Json.getStr?),
+      ← dec (optional j "sexpr" Json.getStr?) with
+    | some name, none =>
+      match Obend.Hardware.PdeSolvers.lookupCanonicalPdeSolver name with
+      | some spec => pure (spec, s!"catalog:{name}")
+      | none => refuse 1 "lookup-pde-solver" s!"unknown canonical PDE solver `{name}`"
+    | none, some law =>
+      match Obend.Elab.PdeSolverElab.validatePdeSolverSexpr law with
+      | .ok (spec, _) => pure (spec, law)
+      | .error msg => refuse 1 "validate-pde-sexpr" msg
+    | some _, some _ => throw (.decode "provide either `solver` or `sexpr`, not both")
+    | none, none => throw (.decode "expected `solver` or `sexpr`")
   let dims ← dec (j.getObjValAs? (List Nat) "dims")
   let steps ← dec (j.getObjValAs? Nat "steps")
   let backend := (← dec (optional j "backend" Json.getStr?)).getD "rat"

@@ -465,6 +465,22 @@ theorem checkBalanceQ32Intervals_sound (S : ConservationLawSpec)
   obtain ⟨ivs, hivs⟩ := Option.isSome_iff_exists.mp (h d (List.mem_range.mpr hd))
   exact (inferSsaDagQ32Intervals_encloses_eval _ _ _ _ ivs hivs inputs hin).2
 
+theorem checkBalanceQ32Intervals_inhabited (name : String) :
+    ∃ S : ConservationLawSpec, S.name = name ∧ S.sources.isEmpty = false ∧ checkBalanceQ32Intervals S = true := by
+  let S : ConservationLawSpec :=
+    { name := name, coords := ["x"], vars := ["u"], params := [], domain := [],
+      fluxes := [[.var 0]], sources := [.const 0], aMax := 1, cfl := 1 / 2,
+      limiter := .firstOrder }
+  exact ⟨S, rfl, rfl, rfl⟩
+
+theorem checkBalanceQ32Intervals_witness (name : String) :
+    ∃ S : ConservationLawSpec, S.name = name ∧ 0 < S.sources.length ∧ checkBalanceQ32Intervals S = true := by
+  let S : ConservationLawSpec :=
+    { name := name, coords := ["x"], vars := ["u"], params := [], domain := [],
+      fluxes := [[.var 0]], sources := [.const 0], aMax := 1, cfl := 1 / 2,
+      limiter := .firstOrder }
+  exact ⟨S, rfl, Nat.zero_lt_one, rfl⟩
+
 /-- No width-changing operator occurs in the expression. `YosysLec.smtFaithful` holds on every
 such expression, so `YosysLec.moduleFaithful` holds on every module built from them. -/
 def rtlResizeFree : RtlExpr → Bool
