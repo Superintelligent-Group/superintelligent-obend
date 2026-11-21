@@ -153,6 +153,10 @@ theorem nodeErr_sound (numVars : Nat) (box : Nat → Q32Interval) (params : Nat 
       · cases he
     · cases he
 
+theorem nodeErr_inhabited (q eIn : Rat) :
+    ∃ e : Rat, nodeErr (fun _ => 0) eIn #[] #[] (.const q) = some e :=
+  ⟨PdeSexprAndApprox.ratAbs (decodeInt (ratToQ32Scaled q) - q), rfl⟩
+
 theorem errNodes_sound (numVars : Nat) (box : Nat → Q32Interval) (params : Nat → Rat)
     (inputs : Nat → Word) (x : Vec) (eIn : Rat)
     (hin : ∀ i, i < numVars → (box i).lo ≤ (inputs i).toInt ∧ (inputs i).toInt ≤ (box i).hi)
@@ -202,6 +206,16 @@ theorem errNodes_sound (numVars : Nat) (box : Nat → Q32Interval) (params : Nat
             getOr_append_left _ _ _ _ (by omega)]
           exact herr j e' hj
     · cases h
+
+theorem errNodes_inhabited (q eIn : Rat) (h : (ratToQ32Checked q).isSome = true) :
+    ∃ r, errNodes 1 (fun _ => ⟨0, 0, Int.le_refl 0⟩) (fun _ => 0) eIn [.const q] #[] #[] = some r := by
+  obtain ⟨w, hw⟩ := Option.isSome_iff_exists.mp h
+  obtain ⟨_, hlo, hhi⟩ := ratToQ32Checked_sound q w hw
+  have hchk : checkedQ32Interval w.toInt w.toInt = some ⟨w.toInt, w.toInt, Int.le_refl _⟩ := by
+    unfold checkedQ32Interval
+    exact dite_eq_left ⟨Int.le_refl _, hlo, hhi⟩
+  refine ⟨(#[⟨w.toInt, w.toInt, Int.le_refl _⟩], #[PdeSexprAndApprox.ratAbs (decodeInt (ratToQ32Scaled q) - q)]), ?_⟩
+  simp [errNodes, propagateSsaInterval, nodeErr, hw, hchk]
 theorem mag_of_encl {lo hi z : Int} (l : lo ≤ z) (u : z ≤ hi) :
     -(max hi (-lo)) ≤ z ∧ z ≤ max hi (-lo) := by omega
 /-- Magnitude and error of output `c` of a compiled DAG. -/
@@ -743,5 +757,688 @@ theorem q32_trajectory_error_tube (S : ConservationLawSpec) (b : StencilBoundary
   have h2 := rat_mul_mono hε0 (show 1 ≤ maxTo S.numVars (fun c => 1 / weightOf S c) *
     weightOf S c by grind)
   exact Rat.le_trans d (by grind)
+
+/-! ## 4. Derived `FluxLipOn`, Lie/Strang scheme Lipschitz, and full multi-D Q32 error tube -/
+
+theorem verifyFluxLipschitz_inhabited (c : Rat) (hc : 0 ≤ c) :
+    ∃ S : ConservationLawSpec, S.aMax = c ∧ verifyFluxLipschitz S = true := by
+  let S : ConservationLawSpec :=
+    { name := "zero1d", coords := ["x"], vars := ["u"], params := [], domain := [],
+      fluxes := [[.const 0]], aMax := c, cfl := 0, limiter := .firstOrder }
+  refine ⟨S, rfl, ?_⟩
+  simp only [S, verifyFluxLipschitz, ConservationLawSpec.numDims, ConservationLawSpec.numVars,
+    List.length_cons, List.length_nil, Nat.zero_add, List.range_succ, List.range_zero,
+    List.nil_append, List.all_cons, List.all_nil, Bool.and_true, fluxComp, getOr,
+    specializeFluxExpr, evalFluxLip, weightOf]
+  have h1 : (0 : Rat) < 1 := by decide
+  simp only [h1, ↓reduceIte, decide_eq_true_eq]
+  rw [Rat.mul_one]; exact hc
+
+/-- **Derived weighted Lipschitz property (`verifyFluxLipschitz_sound`)**: a spec accepted by
+`verifyFluxLipschitz` satisfies `FluxLipOn S axis (effectiveStateBox S)` constructively
+(`0 Classical`, no external hypothesis). -/
+theorem verifyFluxLipschitz_sound (S : ConservationLawSpec) (h : verifyFluxLipschitz S = true)
+    (axis : Nat) (hAxis : axis < S.numDims) : FluxLipOn S axis (effectiveStateBox S) := by
+  intro u v δ hu hv huv c hc
+  have hδ : 0 ≤ δ := by
+    have h0 := huv c hc
+    have habs := PdeSexprAndApprox.ratAbs_nonneg (u c - v c)
+    exact rat_le_of_mul_le_mul (weightOf_pos S c) (by grind)
+  simp only [verifyFluxLipschitz, List.all_eq_true, List.mem_range] at h
+  have hcheck := h axis hAxis c hc
+  split at hcheck
+  · next iv L hlip =>
+    have hL : L ≤ S.aMax * weightOf S c := of_decide_eq_true hcheck
+    have hsound := evalFluxLip_sound S.numVars (effectiveStateBox S) (weightOf S) S.paramEnv
+      (fun j _ => Rat.le_of_lt (weightOf_pos S j)) u v δ hδ hu hv huv _ iv L hlip
+    rw [specializeFluxExpr_sound (some S.paramEnv) _ ⟨u, S.paramEnv⟩ (fun _ => rfl),
+      specializeFluxExpr_sound (some S.paramEnv) _ ⟨v, S.paramEnv⟩ (fun _ => rfl)] at hsound
+    have hmul := rat_mul_mono hδ hL
+    unfold fluxComp at hsound
+    grind
+  · cases hcheck
+
+/-- **Derived Q32 trajectory error tube (`q32_trajectory_error_tube_derived`)**: exact counterpart
+of `q32_trajectory_error_tube` on `effectiveStateBox S`, replacing the external `FluxLipOn`
+assumption with the decidable verifier `verifyFluxLipschitz S = true`. -/
+theorem q32_trajectory_error_tube_derived (S : ConservationLawSpec) (b : StencilBoundary)
+    (dims : List Nat) (axis : Nat) (haxis : axis < S.numDims) (hdim : axis < dims.length)
+    (ε : Rat) (hε : computeStepQ32ErrorBound S = some ε)
+    (hFluxLip : verifyFluxLipschitz S = true) (ha : 0 ≤ S.aMax) (hν : 0 ≤ S.cfl)
+    (hcfl : S.cfl * S.aMax ≤ 1) (W0 : Nat → Nat → Word) (U0 : MultiDGrid) (initErr : Rat)
+    (hW : ∀ k idx j, j < S.numVars → InBoxW S (q32Trajectory S b dims axis W0 k idx j) j)
+    (hP : ∀ k, (∀ idx, InBox S.numVars (effectiveStateBox S)
+        (decodeGrid (q32Trajectory S b dims axis W0 k) idx)) ∧
+      ∀ idx, InBox S.numVars (effectiveStateBox S)
+        (exactTrajectory (evalAxisStepRat S b dims axis S.cfl) U0 k idx))
+    (h0 : GridClose S.numVars (weightOf S) initErr (decodeGrid W0) U0) (K : Nat) :
+    GridClose S.numVars (weightOf S)
+      (nonlinearDefectTube (axisLip S S.cfl) initErr
+        (fun _ => ε * maxTo S.numVars (fun c => 1 / weightOf S c)) K)
+      (decodeGrid (q32Trajectory S b dims axis W0 K))
+      (exactTrajectory (evalAxisStepRat S b dims axis S.cfl) U0 K) :=
+  q32_trajectory_error_tube S b dims axis haxis hdim ε hε (effectiveStateBox S)
+    (verifyFluxLipschitz_sound S hFluxLip axis haxis) ha hν hcfl W0 U0 initErr hW hP h0 K
+
+/-- Weighted `ℓ∞` Lipschitz bound of the source vector over `effectiveStateBox S`
+(`0` when `S.sources` is empty). -/
+@[expose] def computeSourceLip (S : ConservationLawSpec) : Option Rat :=
+  if S.sources.isEmpty then some 0
+  else optMaxTo S.numVars fun c =>
+    match evalFluxLip S.numVars (effectiveStateBox S) (weightOf S) S.paramEnv
+        (specializeFluxExpr (some S.paramEnv) (getOr S.sources c (.const 0))) with
+    | some (_, L) => some (L / weightOf S c)
+    | none => none
+
+theorem optMaxTo_nonneg (n : Nat) (f : Nat → Option Rat) (m : Rat) (h : optMaxTo n f = some m) :
+    0 ≤ m := by
+  induction n generalizing m with
+  | zero => simp only [optMaxTo] at h; cases Option.some.inj h; exact Rat.le_refl
+  | succ n ih =>
+    simp only [optMaxTo] at h
+    split at h
+    · next s x hs _ =>
+      cases Option.some.inj h
+      exact Rat.le_trans (ih s hs) (le_rmax_left s x)
+    · cases h
+
+theorem optMaxTo_some_eq_maxTo (n : Nat) (f : Nat → Rat) :
+    optMaxTo n (fun c => some (f c)) = some (maxTo n f) := by
+  induction n with
+  | zero => rfl
+  | succ n ih => simp only [optMaxTo, maxTo, ih]
+
+theorem computeSourceLip_nonneg (S : ConservationLawSpec) (Lsrc : Rat)
+    (h : computeSourceLip S = some Lsrc) : 0 ≤ Lsrc := by
+  unfold computeSourceLip at h
+  split at h
+  · cases Option.some.inj h; exact Rat.le_refl
+  · exact optMaxTo_nonneg _ _ _ h
+
+/-- Weighted `ℓ∞` Lipschitz bound of the forward-Euler source step `evalSourceStepRat`. -/
+theorem evalSourceStepRat_lipschitz (S : ConservationLawSpec) (dt δ Lsrc : Rat)
+    (hSrcLip : computeSourceLip S = some Lsrc) (hdt : 0 ≤ dt)
+    (U V : MultiDGrid) (hU : ∀ idx, InBox S.numVars (effectiveStateBox S) (U idx))
+    (hV : ∀ idx, InBox S.numVars (effectiveStateBox S) (V idx))
+    (h : GridClose S.numVars (weightOf S) δ U V) :
+    GridClose S.numVars (weightOf S) ((1 + dt * Lsrc) * δ)
+      (evalSourceStepRat S dt U) (evalSourceStepRat S dt V) := by
+  intro idx c hc
+  have hδ : 0 ≤ δ := rat_le_of_mul_le_mul (weightOf_pos S c)
+    (by have := h idx c hc; have := PdeSexprAndApprox.ratAbs_nonneg (U idx c - V idx c); grind)
+  unfold evalSourceStepRat
+  unfold computeSourceLip at hSrcLip
+  split
+  · next hemp =>
+    simp only [hemp, ↓reduceIte] at hSrcLip
+    cases Option.some.inj hSrcLip
+    have h0 := h idx c hc
+    grind
+  · next hne =>
+    have hne' : S.sources.isEmpty = false := by cases he : S.sources.isEmpty <;> simp_all
+    simp only [hne', Bool.false_eq_true, ↓reduceIte] at hSrcLip
+    obtain ⟨v, hv, hvle⟩ := optMaxTo_some _ _ Lsrc hSrcLip c hc
+    split at hv
+    · next iv L hlip =>
+      cases Option.some.inj hv
+      have hsound := evalFluxLip_sound S.numVars (effectiveStateBox S) (weightOf S) S.paramEnv
+        (fun j _ => Rat.le_of_lt (weightOf_pos S j)) (U idx) (V idx) δ hδ (hU idx) (hV idx)
+        (fun j hj => h idx j hj) _ iv L hlip
+      rw [specializeFluxExpr_sound (some S.paramEnv) _ ⟨U idx, S.paramEnv⟩ (fun _ => rfl),
+        specializeFluxExpr_sound (some S.paramEnv) _ ⟨V idx, S.paramEnv⟩ (fun _ => rfl)] at hsound
+      have hL : L ≤ Lsrc * weightOf S c := rat_le_mul_of_div_le (weightOf_pos S c) hvle
+      have hsrc : PdeSexprAndApprox.ratAbs
+          (evalFlux (getOr S.sources c (.const 0)) ⟨U idx, S.paramEnv⟩ -
+            evalFlux (getOr S.sources c (.const 0)) ⟨V idx, S.paramEnv⟩) ≤
+          Lsrc * weightOf S c * δ := by
+        have := rat_mul_mono hδ hL
+        have := hsound.2.2
+        grind
+      have hdt_src := rat_mul_mono hdt hsrc
+      have ht := NonlinearMultiDPde.ratAbs_add_le (U idx c - V idx c)
+        (dt * (evalFlux (getOr S.sources c (.const 0)) ⟨U idx, S.paramEnv⟩ -
+          evalFlux (getOr S.sources c (.const 0)) ⟨V idx, S.paramEnv⟩))
+      rw [PdeSexprAndApprox.ratAbs_mul, NonlinearMultiDPde.ratAbs_of_nonneg hdt,
+        show U idx c - V idx c +
+          dt * (evalFlux (getOr S.sources c (.const 0)) ⟨U idx, S.paramEnv⟩ -
+            evalFlux (getOr S.sources c (.const 0)) ⟨V idx, S.paramEnv⟩) =
+          (U idx c + dt * evalFlux (getOr S.sources c (.const 0)) ⟨U idx, S.paramEnv⟩) -
+          (V idx c + dt * evalFlux (getOr S.sources c (.const 0)) ⟨V idx, S.paramEnv⟩) by grind] at ht
+      have hu0 := h idx c hc
+      grind
+    · cases hv
+
+/-- Canonical Lie/Strang axis schedule matching `evalSchemeStepRat`. -/
+abbrev schemeAxisSchedule (dims : List Nat) (dt : Rat) (useStrang : Bool) : List (Nat × Rat) :=
+  if useStrang then
+    ((List.range dims.length).map fun d => (d, dt / 2)) ++
+      ((List.range dims.length).map fun d => (d, dt / 2)).reverse
+  else
+    (List.range dims.length).map fun d => (d, dt)
+
+/-- Weighted `ℓ∞` Lipschitz constant of an axis-sweep schedule. -/
+def scheduleLip (S : ConservationLawSpec) : List (Nat × Rat) → Rat
+  | [] => 1
+  | (_, ν) :: rest => scheduleLip S rest * axisLip S ν
+
+/-- Weighted `ℓ∞` Lipschitz constant of one Lie or Strang `evalSchemeStepRat` step. -/
+def schemeLip (S : ConservationLawSpec) (dims : List Nat) (dt : Rat) (useStrang : Bool)
+    (Lsrc : Rat) : Rat :=
+  if useStrang then
+    (1 + (dt / 2) * Lsrc) * (scheduleLip S (schemeAxisSchedule dims dt true) * (1 + (dt / 2) * Lsrc))
+  else
+    (1 + dt * Lsrc) * scheduleLip S (schemeAxisSchedule dims dt false)
+
+/-- Every intermediate grid along an axis schedule stays inside `effectiveStateBox S`. -/
+def ScheduleInBox (S : ConservationLawSpec) (b : StencilBoundary) (dims : List Nat) :
+    List (Nat × Rat) → MultiDGrid → Prop
+  | [], U => ∀ idx, InBox S.numVars (effectiveStateBox S) (U idx)
+  | (axis, ν) :: rest, U =>
+      (∀ idx, InBox S.numVars (effectiveStateBox S) (U idx)) ∧
+      ScheduleInBox S b dims rest (evalAxisStepRat S b dims axis ν U)
+
+/-- `U` and every intermediate sub-step grid of one Lie/Strang scheme step stay inside
+`effectiveStateBox S`. -/
+def SchemeStepInBox (S : ConservationLawSpec) (b : StencilBoundary) (dims : List Nat) (dt : Rat)
+    (useStrang : Bool) (U : MultiDGrid) : Prop :=
+  if useStrang then
+    (∀ idx, InBox S.numVars (effectiveStateBox S) (U idx)) ∧
+    ScheduleInBox S b dims (schemeAxisSchedule dims dt true) (evalSourceStepRat S (dt / 2) U)
+  else
+    ScheduleInBox S b dims (schemeAxisSchedule dims dt false) U
+
+theorem scheduleInBox_end (S : ConservationLawSpec) (b : StencilBoundary) (dims : List Nat)
+    (sched : List (Nat × Rat)) (U : MultiDGrid) (h : ScheduleInBox S b dims sched U) :
+    ∀ idx, InBox S.numVars (effectiveStateBox S) (evalAxisSchedule S b dims sched U idx) := by
+  induction sched generalizing U with
+  | nil => exact h
+  | cons step rest ih =>
+    rcases step with ⟨axis, ν⟩
+    exact ih (evalAxisStepRat S b dims axis ν U) h.2
+
+theorem evalAxisSchedule_lipschitz (S : ConservationLawSpec) (b : StencilBoundary)
+    (dims : List Nat) (sched : List (Nat × Rat)) (δ : Rat)
+    (hFluxLip : verifyFluxLipschitz S = true) (ha : 0 ≤ S.aMax)
+    (hSched : ∀ p ∈ sched, p.1 < S.numDims ∧ 0 ≤ p.2 ∧ p.2 * S.aMax ≤ 1)
+    (U V : MultiDGrid) (hU : ScheduleInBox S b dims sched U)
+    (hV : ScheduleInBox S b dims sched V) (h : GridClose S.numVars (weightOf S) δ U V) :
+    GridClose S.numVars (weightOf S) (scheduleLip S sched * δ)
+      (evalAxisSchedule S b dims sched U) (evalAxisSchedule S b dims sched V) := by
+  induction sched generalizing U V δ with
+  | nil =>
+    intro idx c hc
+    simp only [scheduleLip, evalAxisSchedule, Rat.one_mul]
+    exact h idx c hc
+  | cons step rest ih =>
+    rcases step with ⟨axis, ν⟩
+    obtain ⟨hAxis, hν, hcfl⟩ := hSched (axis, ν) (by simp)
+    have hstep := evalAxisStepRat_lipschitz S b dims axis ν δ (effectiveStateBox S)
+      (verifyFluxLipschitz_sound S hFluxLip axis hAxis) ha hν hcfl U V hU.1 hV.1 h
+    have hrest := ih (axisLip S ν * δ) (fun p hp => hSched p (by simp [hp]))
+      _ _ hU.2 hV.2 hstep
+    intro idx c hc
+    have hr := hrest idx c hc
+    simp only [scheduleLip, evalAxisSchedule]
+    grind
+
+private theorem schemeAxisSchedule_valid (S : ConservationLawSpec) (dims : List Nat) (dt : Rat)
+    (useStrang : Bool) (hDims : dims.length ≤ S.numDims) (ha : 0 ≤ S.aMax) (hdt : 0 ≤ dt)
+    (hcfl : dt * S.aMax ≤ 1) :
+    ∀ p ∈ schemeAxisSchedule dims dt useStrang, p.1 < S.numDims ∧ 0 ≤ p.2 ∧ p.2 * S.aMax ≤ 1 := by
+  intro p hp
+  unfold schemeAxisSchedule at hp
+  cases useStrang
+  · simp only [Bool.false_eq_true, ↓reduceIte, List.mem_map, List.mem_range] at hp
+    obtain ⟨d, hd, rfl⟩ := hp
+    exact ⟨by omega, hdt, hcfl⟩
+  · simp only [↓reduceIte, List.mem_append, List.mem_reverse, List.mem_map, List.mem_range] at hp
+    rcases hp with ⟨d, hd, rfl⟩ | ⟨d, hd, rfl⟩
+    · have hda := Rat.mul_nonneg hdt ha
+      exact ⟨by omega, by grind, by grind⟩
+    · have hda := Rat.mul_nonneg hdt ha
+      exact ⟨by omega, by grind, by grind⟩
+
+/-- **Weighted `ℓ∞` Lipschitz bound of the full Lie/Strang scheme step
+(`evalSchemeStepRat_lipschitz`)**: requires only the constructive verifiers
+`verifyFluxLipschitz S = true` and `computeSourceLip S = some Lsrc` (no external `FluxLipOn`). -/
+theorem evalSchemeStepRat_lipschitz (S : ConservationLawSpec) (b : StencilBoundary)
+    (dims : List Nat) (dt : Rat) (useStrang : Bool) (Lsrc δ : Rat)
+    (hFluxLip : verifyFluxLipschitz S = true) (hSrcLip : computeSourceLip S = some Lsrc)
+    (hDims : dims.length ≤ S.numDims) (ha : 0 ≤ S.aMax) (hdt : 0 ≤ dt) (hcfl : dt * S.aMax ≤ 1)
+    (U V : MultiDGrid) (hU : SchemeStepInBox S b dims dt useStrang U)
+    (hV : SchemeStepInBox S b dims dt useStrang V) (h : GridClose S.numVars (weightOf S) δ U V) :
+    GridClose S.numVars (weightOf S) (schemeLip S dims dt useStrang Lsrc * δ)
+      (evalSchemeStepRat S b dims dt useStrang U) (evalSchemeStepRat S b dims dt useStrang V) := by
+  cases useStrang
+  · simp only [SchemeStepInBox, Bool.false_eq_true, ↓reduceIte] at hU hV
+    have hsched := evalAxisSchedule_lipschitz S b dims (schemeAxisSchedule dims dt false) δ
+      hFluxLip ha (schemeAxisSchedule_valid S dims dt false hDims ha hdt hcfl) U V hU hV h
+    have hsrc := evalSourceStepRat_lipschitz S dt _ Lsrc hSrcLip hdt _ _
+      (scheduleInBox_end S b dims _ U hU) (scheduleInBox_end S b dims _ V hV) hsched
+    intro idx c hc
+    have hr := hsrc idx c hc
+    simp only [schemeLip, evalSchemeStepRat, Bool.false_eq_true, ↓reduceIte]
+    grind
+  · simp only [SchemeStepInBox, ↓reduceIte] at hU hV
+    have hsrc1 := evalSourceStepRat_lipschitz S (dt / 2) δ Lsrc hSrcLip (by grind) U V
+      hU.1 hV.1 h
+    have hsched := evalAxisSchedule_lipschitz S b dims (schemeAxisSchedule dims dt true) _
+      hFluxLip ha (schemeAxisSchedule_valid S dims dt true hDims ha hdt hcfl) _ _ hU.2 hV.2 hsrc1
+    have hsrc2 := evalSourceStepRat_lipschitz S (dt / 2) _ Lsrc hSrcLip (by grind) _ _
+      (scheduleInBox_end S b dims _ _ hU.2) (scheduleInBox_end S b dims _ _ hV.2) hsched
+    intro idx c hc
+    have hr := hsrc2 idx c hc
+    simp only [schemeLip, evalSchemeStepRat, ↓reduceIte]
+    grind
+
+/-- Word-level axis sweep at an explicit Courant ratio `ν`, matching `evalAxisStepRat`. -/
+def stepQ32AxisAt (S : ConservationLawSpec) (b : StencilBoundary) (dims : List Nat) (axis : Nat)
+    (ν : Rat) (W : Nat → Nat → Word) : Nat → Nat → Word :=
+  if axis < dims.length then stepQ32Axis { S with cfl := ν } b dims axis W else W
+
+/-- Compiled CSE SSA DAG of the source vector `S.sources`. -/
+abbrev sourceDag (S : ConservationLawSpec) : FluxSsaDag :=
+  compileFluxSsaDag (some S.paramEnv) S.sources
+
+/-- Word-level forward-Euler source step `W + qmul32 dt S(W)`, matching `evalSourceStepRat`. -/
+def stepQ32SourceAt (S : ConservationLawSpec) (dt : Rat) (W : Nat → Nat → Word) :
+    Nat → Nat → Word :=
+  if S.sources.isEmpty then W
+  else fun idx c =>
+    W idx c + evalAluOp .qmul32 ((ratToQ32Checked dt).getD 0#64)
+      ((evalFluxSsaDagQ32 (W idx) S.paramEnv (sourceDag S)).getD c 0#64)
+
+/-- Word-level axis-sweep schedule, matching `evalAxisSchedule`. -/
+def stepQ32Schedule (S : ConservationLawSpec) (b : StencilBoundary) (dims : List Nat) :
+    List (Nat × Rat) → (Nat → Nat → Word) → Nat → Nat → Word
+  | [], W => W
+  | (axis, ν) :: rest, W =>
+      stepQ32Schedule S b dims rest (stepQ32AxisAt S b dims axis ν W)
+
+/-- Word-level Lie or Strang scheme step, matching `evalSchemeStepRat`. -/
+def stepQ32Scheme (S : ConservationLawSpec) (b : StencilBoundary) (dims : List Nat) (dt : Rat)
+    (useStrang : Bool) (W : Nat → Nat → Word) : Nat → Nat → Word :=
+  if useStrang then
+    stepQ32SourceAt S (dt / 2)
+      (stepQ32Schedule S b dims (schemeAxisSchedule dims dt true)
+        (stepQ32SourceAt S (dt / 2) W))
+  else
+    stepQ32SourceAt S dt
+      (stepQ32Schedule S b dims (schemeAxisSchedule dims dt false) W)
+
+/-- Multi-step Q32 rollout of `stepQ32Scheme`. -/
+def q32SchemeTrajectory (S : ConservationLawSpec) (b : StencilBoundary) (dims : List Nat)
+    (dt : Rat) (useStrang : Bool) (W0 : Nat → Nat → Word) : Nat → Nat → Nat → Word
+  | 0 => W0
+  | k + 1 => stepQ32Scheme S b dims dt useStrang (q32SchemeTrajectory S b dims dt useStrang W0 k)
+
+/-- Concrete rational upper bound on the one-step Q32 rounding defect of `stepQ32SourceAt S dt`
+across all components (`0` when `S.sources` is empty). -/
+@[expose] def computeSourceQ32ErrorBound (S : ConservationLawSpec) (dt : Rat) : Option Rat :=
+  if S.sources.isEmpty then some 0
+  else if (ratToQ32Checked dt).isSome then
+    match dagErrorBound S.numVars (pdeQ32StateBox S) S.paramEnv 0 (sourceDag S) with
+    | some r => optMaxTo S.numVars fun c =>
+        match rootBound (sourceDag S) r c with
+        | some bdS => match (constBd dt).qmul bdS with
+          | some qd =>
+            match (⟨max (pdeQ32StateBox S c).hi (-(pdeQ32StateBox S c).lo), 0⟩ : Q32Bound).addSub qd with
+            | some bd => some bd.err
+            | none => none
+          | none => none
+        | none => none
+    | none => none
+  else none
+
+/-- Propagates a weighted `ℓ∞` defect accumulator across a Lie/Strang axis schedule. -/
+@[expose] def scheduleDefectAux (S : ConservationLawSpec) (dimsLen : Nat) (wInvMax : Rat) :
+    List (Nat × Rat) → Rat → Option Rat
+  | [], acc => some acc
+  | (axis, ν) :: rest, acc =>
+    if axis < dimsLen then
+      let lip := if S.limiter = .firstOrder then 1 + 2 * ν * S.aMax else 1 + 6 * ν * S.aMax
+      match computeStepQ32ErrorBound { S with cfl := ν } with
+      | some ε => scheduleDefectAux S dimsLen wInvMax rest (lip * acc + ε * wInvMax)
+      | none => none
+    else
+      scheduleDefectAux S dimsLen wInvMax rest acc
+
+/-- Concrete weighted `ℓ∞` one-step Q32 rounding defect bound for
+`stepQ32Scheme S b dims dt useStrang` against `evalSchemeStepRat S b dims dt useStrang`. -/
+@[expose] def computeSchemeQ32ErrorBound (S : ConservationLawSpec) (dims : List Nat) (dt : Rat)
+    (useStrang : Bool) : Option Rat :=
+  match computeSourceLip S, optMaxTo S.numVars (fun c => some (1 / weightOf S c)) with
+  | some Lsrc, some wInvMax =>
+    if useStrang then
+      match computeSourceQ32ErrorBound S (dt / 2) with
+      | some εs =>
+        match scheduleDefectAux S dims.length wInvMax (schemeAxisSchedule dims dt true) (εs * wInvMax) with
+        | some dSched => some ((1 + (dt / 2) * Lsrc) * dSched + εs * wInvMax)
+        | none => none
+      | none => none
+    else
+      match computeSourceQ32ErrorBound S dt with
+      | some εs =>
+        match scheduleDefectAux S dims.length wInvMax (schemeAxisSchedule dims dt false) 0 with
+        | some dSched => some ((1 + dt * Lsrc) * dSched + εs * wInvMax)
+        | none => none
+      | none => none
+  | _, _ => none
+
+private theorem gridClose_refl (S : ConservationLawSpec) (U : MultiDGrid) :
+    GridClose S.numVars (weightOf S) 0 U U := by
+  intro idx c _
+  rw [show U idx c - U idx c = 0 by grind]
+  unfold PdeSexprAndApprox.ratAbs; split <;> grind
+
+private theorem gridClose_trans (S : ConservationLawSpec) {d1 d2 : Rat} {U V Z : MultiDGrid}
+    (h1 : GridClose S.numVars (weightOf S) d1 U V)
+    (h2 : GridClose S.numVars (weightOf S) d2 V Z) :
+    GridClose S.numVars (weightOf S) (d1 + d2) U Z := by
+  intro idx c hc
+  have a := h1 idx c hc
+  have b := h2 idx c hc
+  have t := NonlinearMultiDPde.ratAbs_add_le (U idx c - V idx c) (V idx c - Z idx c)
+  rw [show U idx c - V idx c + (V idx c - Z idx c) = U idx c - Z idx c by grind] at t
+  grind
+
+private theorem gridClose_of_unweighted (S : ConservationLawSpec) {ε : Rat} {U V : MultiDGrid}
+    (h : ∀ idx c, c < S.numVars → PdeSexprAndApprox.ratAbs (U idx c - V idx c) ≤ ε) :
+    GridClose S.numVars (weightOf S) (ε * maxTo S.numVars (fun c => 1 / weightOf S c)) U V := by
+  intro idx c hc
+  have d := h idx c hc
+  have hε0 : 0 ≤ ε := Rat.le_trans (PdeSexprAndApprox.ratAbs_nonneg _) d
+  have hw := weightOf_pos S c
+  have h1 := rat_mul_mono (Rat.le_of_lt hw)
+    (le_maxTo S.numVars (fun c => 1 / weightOf S c) c hc)
+  have hc1 := Rat.div_mul_cancel (a := 1) (b := weightOf S c) (by grind)
+  have h2 := rat_mul_mono hε0
+    (show 1 ≤ maxTo S.numVars (fun c => 1 / weightOf S c) * weightOf S c by grind)
+  exact Rat.le_trans d (by grind)
+
+/-- One-step Q32 rounding defect of `stepQ32SourceAt S dt` on every cell and component. -/
+theorem stepQ32SourceAt_grid_defect (S : ConservationLawSpec) (dt ε : Rat)
+    (hε : computeSourceQ32ErrorBound S dt = some ε) (W : Nat → Nat → Word)
+    (hW : ∀ idx j, j < S.numVars → InBoxW S (W idx j) j) (idx c : Nat) (hc : c < S.numVars) :
+    PdeSexprAndApprox.ratAbs (decodeGrid (stepQ32SourceAt S dt W) idx c -
+      evalSourceStepRat S dt (decodeGrid W) idx c) ≤ ε := by
+  unfold stepQ32SourceAt evalSourceStepRat
+  unfold computeSourceQ32ErrorBound at hε
+  split
+  · next hemp =>
+    simp only [hemp, ↓reduceIte] at hε
+    cases Option.some.inj hε
+    rw [show decodeGrid W idx c - decodeGrid W idx c = 0 by grind]
+    unfold PdeSexprAndApprox.ratAbs; split <;> grind
+  · next hne =>
+    have hne' : S.sources.isEmpty = false := by cases he : S.sources.isEmpty <;> simp_all
+    simp only [hne', Bool.false_eq_true, ↓reduceIte] at hε
+    split at hε
+    · next hdt =>
+      split at hε
+      · next r hr =>
+        obtain ⟨v, hv, hvle⟩ := optMaxTo_some _ _ ε hε c hc
+        split at hv
+        · next bdS hroot =>
+          split at hv
+          · next qd hqd =>
+            split at hv
+            · next bd hbd =>
+              cases Option.some.inj hv
+              have hzero : ∀ i, i < S.numVars →
+                  PdeSexprAndApprox.ratAbs (decodeQ32 (W idx i) - decV (W idx) i) ≤ 0 := fun i _ => by
+                unfold decV
+                rw [show decodeQ32 (W idx i) - decodeQ32 (W idx i) = 0 by grind]
+                unfold PdeSexprAndApprox.ratAbs; split <;> grind
+              have tSrc := dag_root_tracks S.numVars (pdeQ32StateBox S) S.paramEnv (W idx)
+                (decV (W idx)) 0 (fun i hi => hW idx i hi) hzero S.sources r hr c bdS hroot
+              have tMul := Tracks.qmul (constBd_tracks dt hdt) tSrc hqd
+              have tAdd := Tracks.add (box_tracks S (W idx c) c (decV (W idx) c) 0
+                (hW idx c hc) (hzero c hc)) tMul hbd
+              exact Rat.le_trans tAdd.1 hvle
+            · cases hv
+          · cases hv
+        · cases hv
+      · cases hε
+    · cases hε
+
+/-- Word-box and rational-box invariants along a Q32 schedule paired with its exact rational
+counterpart starting from `U`. -/
+def ScheduleTurnInBoxW (S : ConservationLawSpec) (b : StencilBoundary) (dims : List Nat) :
+    List (Nat × Rat) → (Nat → Nat → Word) → MultiDGrid → Prop
+  | [], W, U =>
+      (∀ idx j, j < S.numVars → InBoxW S (W idx j) j) ∧
+      (∀ idx, InBox S.numVars (effectiveStateBox S) (decodeGrid W idx)) ∧
+      (∀ idx, InBox S.numVars (effectiveStateBox S) (U idx))
+  | (axis, ν) :: rest, W, U =>
+      (∀ idx j, j < S.numVars → InBoxW S (W idx j) j) ∧
+      (∀ idx, InBox S.numVars (effectiveStateBox S) (decodeGrid W idx)) ∧
+      (∀ idx, InBox S.numVars (effectiveStateBox S) (U idx)) ∧
+      ScheduleTurnInBoxW S b dims rest
+        (stepQ32AxisAt S b dims axis ν W) (evalAxisStepRat S b dims axis ν U)
+
+/-- Word-box and rational-box invariants for one Lie or Strang Q32 scheme step starting from word
+grid `W`: every Q32 sub-step word grid stays in `InBoxW S`, and both its decoded grid and the
+corresponding exact rational sub-step grid starting from `decodeGrid W` stay in
+`effectiveStateBox S`. -/
+def SchemeTurnInBoxW (S : ConservationLawSpec) (b : StencilBoundary) (dims : List Nat) (dt : Rat)
+    (useStrang : Bool) (W : Nat → Nat → Word) : Prop :=
+  if useStrang then
+    (∀ idx j, j < S.numVars → InBoxW S (W idx j) j) ∧
+    (∀ idx, InBox S.numVars (effectiveStateBox S) (decodeGrid W idx)) ∧
+    ScheduleTurnInBoxW S b dims (schemeAxisSchedule dims dt true)
+      (stepQ32SourceAt S (dt / 2) W)
+      (evalSourceStepRat S (dt / 2) (decodeGrid W))
+  else
+    ScheduleTurnInBoxW S b dims (schemeAxisSchedule dims dt false) W (decodeGrid W)
+
+theorem scheduleTurnInBoxW_end (S : ConservationLawSpec) (b : StencilBoundary) (dims : List Nat)
+    (sched : List (Nat × Rat)) (W : Nat → Nat → Word) (U : MultiDGrid)
+    (h : ScheduleTurnInBoxW S b dims sched W U) :
+    (∀ idx j, j < S.numVars → InBoxW S (stepQ32Schedule S b dims sched W idx j) j) ∧
+    (∀ idx, InBox S.numVars (effectiveStateBox S)
+      (decodeGrid (stepQ32Schedule S b dims sched W) idx)) ∧
+    (∀ idx, InBox S.numVars (effectiveStateBox S) (evalAxisSchedule S b dims sched U idx)) := by
+  induction sched generalizing W U with
+  | nil => exact h
+  | cons step rest ih =>
+    rcases step with ⟨axis, ν⟩
+    exact ih _ _ h.2.2.2
+
+theorem scheduleTurnInBoxW_implies_scheduleInBox (S : ConservationLawSpec) (b : StencilBoundary)
+    (dims : List Nat) (sched : List (Nat × Rat)) (W : Nat → Nat → Word) (U : MultiDGrid)
+    (h : ScheduleTurnInBoxW S b dims sched W U) : ScheduleInBox S b dims sched U := by
+  induction sched generalizing W U with
+  | nil => exact h.2.2
+  | cons step rest ih =>
+    rcases step with ⟨axis, ν⟩
+    exact ⟨h.2.2.1, ih _ _ h.2.2.2⟩
+
+theorem schemeTurnInBoxW_implies_schemeStepInBox (S : ConservationLawSpec) (b : StencilBoundary)
+    (dims : List Nat) (dt : Rat) (useStrang : Bool) (W : Nat → Nat → Word)
+    (h : SchemeTurnInBoxW S b dims dt useStrang W) :
+    SchemeStepInBox S b dims dt useStrang (decodeGrid W) := by
+  cases useStrang
+  · exact scheduleTurnInBoxW_implies_scheduleInBox S b dims _ W (decodeGrid W) h
+  · exact ⟨h.2.1, scheduleTurnInBoxW_implies_scheduleInBox S b dims _ _ _ h.2.2⟩
+
+private theorem stepQ32Schedule_rat_defect_bound (S : ConservationLawSpec) (b : StencilBoundary)
+    (dims : List Nat) (sched : List (Nat × Rat)) (acc dOut : Rat)
+    (hFluxLip : verifyFluxLipschitz S = true) (ha : 0 ≤ S.aMax)
+    (hSched : ∀ p ∈ sched, p.1 < S.numDims ∧ 0 ≤ p.2 ∧ p.2 * S.aMax ≤ 1)
+    (hd : scheduleDefectAux S dims.length (maxTo S.numVars (fun c => 1 / weightOf S c))
+      sched acc = some dOut)
+    (W : Nat → Nat → Word) (U : MultiDGrid)
+    (hTurn : ScheduleTurnInBoxW S b dims sched W U)
+    (hInit : GridClose S.numVars (weightOf S) acc (decodeGrid W) U) :
+    GridClose S.numVars (weightOf S) dOut
+      (decodeGrid (stepQ32Schedule S b dims sched W))
+      (evalAxisSchedule S b dims sched U) := by
+  induction sched generalizing W U acc with
+  | nil =>
+    simp only [scheduleDefectAux] at hd
+    cases Option.some.inj hd
+    exact hInit
+  | cons step rest ih =>
+    rcases step with ⟨axis, ν⟩
+    obtain ⟨hAxis, hν, hcfl⟩ := hSched (axis, ν) (by simp)
+    simp only [scheduleDefectAux] at hd
+    by_cases hdim : axis < dims.length
+    · rw [ite_eq_left hdim] at hd
+      split at hd
+      · next ε hε =>
+        have hdef : GridClose S.numVars (weightOf S)
+            (ε * maxTo S.numVars (fun c => 1 / weightOf S c))
+            (decodeGrid (stepQ32AxisAt S b dims axis ν W))
+            (evalAxisStepRat S b dims axis ν (decodeGrid W)) := by
+          apply gridClose_of_unweighted S
+          intro idx c hc
+          unfold stepQ32AxisAt
+          rw [ite_eq_left hdim]
+          exact stepQ32Axis_grid_defect { S with cfl := ν } b dims axis hAxis hdim ε hε W
+            hTurn.1 idx c hc
+        have hlip := evalAxisStepRat_lipschitz S b dims axis ν acc (effectiveStateBox S)
+          (verifyFluxLipschitz_sound S hFluxLip axis hAxis) ha hν hcfl
+          (decodeGrid W) U hTurn.2.1 hTurn.2.2.1 hInit
+        have hcomb : GridClose S.numVars (weightOf S)
+            ((if S.limiter = .firstOrder then 1 + 2 * ν * S.aMax else 1 + 6 * ν * S.aMax) * acc +
+              ε * maxTo S.numVars (fun c => 1 / weightOf S c))
+            (decodeGrid (stepQ32AxisAt S b dims axis ν W))
+            (evalAxisStepRat S b dims axis ν U) := by
+          have ht := gridClose_trans S hdef hlip
+          intro idx c hc
+          have hti := ht idx c hc
+          unfold axisLip at hti
+          grind
+        exact ih _ (fun p hp => hSched p (by simp [hp])) hd _ _ hTurn.2.2.2 hcomb
+      · cases hd
+    · rw [ite_eq_right hdim] at hd
+      have hsameW : stepQ32AxisAt S b dims axis ν W = W := by
+        unfold stepQ32AxisAt; rw [ite_eq_right hdim]
+      have hsameU : evalAxisStepRat S b dims axis ν U = U := by
+        unfold evalAxisStepRat; rw [ite_eq_right hdim]
+      have hcomb : GridClose S.numVars (weightOf S) acc
+          (decodeGrid (stepQ32AxisAt S b dims axis ν W))
+          (evalAxisStepRat S b dims axis ν U) := by
+        rw [hsameW, hsameU]; exact hInit
+      exact ih acc (fun p hp => hSched p (by simp [hp])) hd _ _ hTurn.2.2.2 hcomb
+
+/-- **One-step Lie/Strang Q32 scheme defect bound (`stepQ32Scheme_rat_defect_bound`)**: for any
+word grid `W` whose sub-step states stay inside `SchemeTurnInBoxW`, one Q32 Lie/Strang step decodes
+within `computeSchemeQ32ErrorBound S dims dt useStrang` (weighted `ℓ∞`) of the exact rational
+`evalSchemeStepRat` step on `decodeGrid W`. -/
+theorem stepQ32Scheme_rat_defect_bound (S : ConservationLawSpec) (b : StencilBoundary)
+    (dims : List Nat) (dt : Rat) (useStrang : Bool)
+    (hDims : dims.length ≤ S.numDims) (hFluxLip : verifyFluxLipschitz S = true)
+    (ha : 0 ≤ S.aMax) (hdt : 0 ≤ dt) (hcfl : dt * S.aMax ≤ 1)
+    (ε : Rat) (hε : computeSchemeQ32ErrorBound S dims dt useStrang = some ε)
+    (W : Nat → Nat → Word) (hW : SchemeTurnInBoxW S b dims dt useStrang W) :
+    GridClose S.numVars (weightOf S) ε
+      (decodeGrid (stepQ32Scheme S b dims dt useStrang W))
+      (evalSchemeStepRat S b dims dt useStrang (decodeGrid W)) := by
+  unfold computeSchemeQ32ErrorBound at hε
+  rw [optMaxTo_some_eq_maxTo] at hε
+  split at hε
+  · next Lsrc wInvMax hSrcLip hwInv =>
+    cases Option.some.inj hwInv
+    cases useStrang
+    · simp only [Bool.false_eq_true, ↓reduceIte] at hε hW
+      split at hε
+      · next εs hεs =>
+        split at hε
+        · next dSched hdSched =>
+          cases Option.some.inj hε
+          have hsched := stepQ32Schedule_rat_defect_bound S b dims
+            (schemeAxisSchedule dims dt false) 0 dSched hFluxLip ha
+            (schemeAxisSchedule_valid S dims dt false hDims ha hdt hcfl) hdSched
+            W (decodeGrid W) hW (gridClose_refl S (decodeGrid W))
+          obtain ⟨hEndW, hEndDec, hEndU⟩ := scheduleTurnInBoxW_end S b dims _ W (decodeGrid W) hW
+          have hSrcDef : GridClose S.numVars (weightOf S)
+              (εs * maxTo S.numVars (fun c => 1 / weightOf S c))
+              (decodeGrid (stepQ32SourceAt S dt (stepQ32Schedule S b dims
+                (schemeAxisSchedule dims dt false) W)))
+              (evalSourceStepRat S dt (decodeGrid (stepQ32Schedule S b dims
+                (schemeAxisSchedule dims dt false) W))) :=
+            gridClose_of_unweighted S fun idx c hc =>
+              stepQ32SourceAt_grid_defect S dt εs hεs _ hEndW idx c hc
+          have hSrcLipStep := evalSourceStepRat_lipschitz S dt dSched Lsrc hSrcLip hdt
+            _ _ hEndDec hEndU hsched
+          have htot := gridClose_trans S hSrcDef hSrcLipStep
+          intro idx c hc
+          have hti := htot idx c hc
+          simp only [stepQ32Scheme, evalSchemeStepRat, Bool.false_eq_true, ↓reduceIte]
+          grind
+        · cases hε
+      · cases hε
+    · simp only [↓reduceIte] at hε hW
+      split at hε
+      · next εs hεs =>
+        split at hε
+        · next dSched hdSched =>
+          cases Option.some.inj hε
+          have hSrcDef1 : GridClose S.numVars (weightOf S)
+              (εs * maxTo S.numVars (fun c => 1 / weightOf S c))
+              (decodeGrid (stepQ32SourceAt S (dt / 2) W))
+              (evalSourceStepRat S (dt / 2) (decodeGrid W)) :=
+            gridClose_of_unweighted S fun idx c hc =>
+              stepQ32SourceAt_grid_defect S (dt / 2) εs hεs W hW.1 idx c hc
+          have hsched := stepQ32Schedule_rat_defect_bound S b dims
+            (schemeAxisSchedule dims dt true) _ dSched hFluxLip ha
+            (schemeAxisSchedule_valid S dims dt true hDims ha hdt hcfl) hdSched
+            _ _ hW.2.2 hSrcDef1
+          obtain ⟨hEndW, hEndDec, hEndU⟩ := scheduleTurnInBoxW_end S b dims _ _ _ hW.2.2
+          have hSrcDef2 : GridClose S.numVars (weightOf S)
+              (εs * maxTo S.numVars (fun c => 1 / weightOf S c))
+              (decodeGrid (stepQ32SourceAt S (dt / 2) (stepQ32Schedule S b dims
+                (schemeAxisSchedule dims dt true) (stepQ32SourceAt S (dt / 2) W))))
+              (evalSourceStepRat S (dt / 2) (decodeGrid (stepQ32Schedule S b dims
+                (schemeAxisSchedule dims dt true) (stepQ32SourceAt S (dt / 2) W)))) :=
+            gridClose_of_unweighted S fun idx c hc =>
+              stepQ32SourceAt_grid_defect S (dt / 2) εs hεs _ hEndW idx c hc
+          have hSrcLipStep := evalSourceStepRat_lipschitz S (dt / 2) dSched Lsrc hSrcLip (by grind)
+            _ _ hEndDec hEndU hsched
+          have htot := gridClose_trans S hSrcDef2 hSrcLipStep
+          intro idx c hc
+          have hti := htot idx c hc
+          simp only [stepQ32Scheme, evalSchemeStepRat, ↓reduceIte]
+          grind
+        · cases hε
+      · cases hε
+  · cases hε
+
+/-- **Multi-step Lie/Strang & source Q32 error tube (`q32_scheme_trajectory_error_tube`)**:
+certifies multi-dimensional, inhomogeneous balance-law Q32 rollouts (`q32SchemeTrajectory`) against
+the exact rational Lie/Strang trajectory `exactTrajectory (evalSchemeStepRat S b dims dt useStrang) U0 K`
+with ZERO external `FluxLipOn` hypothesis. -/
+theorem q32_scheme_trajectory_error_tube (S : ConservationLawSpec) (b : StencilBoundary)
+    (dims : List Nat) (dt : Rat) (useStrang : Bool)
+    (hDims : dims.length ≤ S.numDims) (hFluxLip : verifyFluxLipschitz S = true)
+    (Lsrc : Rat) (hSrcLip : computeSourceLip S = some Lsrc)
+    (ε : Rat) (hε : computeSchemeQ32ErrorBound S dims dt useStrang = some ε)
+    (ha : 0 ≤ S.aMax) (hdt : 0 ≤ dt) (hcfl : dt * S.aMax ≤ 1)
+    (W0 : Nat → Nat → Word) (U0 : MultiDGrid) (initErr : Rat)
+    (hW : ∀ k, SchemeTurnInBoxW S b dims dt useStrang
+      (q32SchemeTrajectory S b dims dt useStrang W0 k))
+    (hExact : ∀ k, SchemeStepInBox S b dims dt useStrang
+      (exactTrajectory (evalSchemeStepRat S b dims dt useStrang) U0 k))
+    (h0 : GridClose S.numVars (weightOf S) initErr (decodeGrid W0) U0) (K : Nat) :
+    GridClose S.numVars (weightOf S)
+      (nonlinearDefectTube (schemeLip S dims dt useStrang Lsrc) initErr (fun _ => ε) K)
+      (decodeGrid (q32SchemeTrajectory S b dims dt useStrang W0 K))
+      (exactTrajectory (evalSchemeStepRat S b dims dt useStrang) U0 K) :=
+  nonlinear_aposteriori_error_tube S.numVars (weightOf S)
+    (evalSchemeStepRat S b dims dt useStrang)
+    (SchemeStepInBox S b dims dt useStrang)
+    (schemeLip S dims dt useStrang Lsrc)
+    (fun δ U V hU hV h =>
+      evalSchemeStepRat_lipschitz S b dims dt useStrang Lsrc δ hFluxLip hSrcLip hDims ha hdt hcfl
+        U V hU hV h)
+    (fun k => decodeGrid (q32SchemeTrajectory S b dims dt useStrang W0 k))
+    U0 initErr (fun _ => ε)
+    (fun k => ⟨schemeTurnInBoxW_implies_schemeStepInBox S b dims dt useStrang _ (hW k), hExact k⟩)
+    h0
+    (fun k => stepQ32Scheme_rat_defect_bound S b dims dt useStrang hDims hFluxLip ha hdt hcfl ε hε
+      _ (hW k))
+    K
 
 end Obend.Analysis.NonlinearErrorTube
