@@ -1,0 +1,92 @@
+edition ObjectiveBend 1
+# Real-World Numerical Relativity App (`apps/relativity-z4c/BonaMassoSlicing.obend`):
+# Layer 1 — Harmonic slicing overridden by Bona-Masso 1+log shifted gauge (`fBM = 2`, `beta = 1/5`)
+# and certified state-box milli-bounds (`alpha in [0.5, 2.0]`, `gxx in [1.0, 4.0]`, gradients in `[-0.5, 0.5]`).
+
+record SlicingGauge:
+  fBM() -> Nat
+  betaNum() -> Nat
+  betaDen() -> Nat
+  alphaMinMilli() -> Nat
+  alphaMaxMilli() -> Nat
+  gxxMinMilli() -> Nat
+  gxxMaxMilli() -> Nat
+  gradBoundMilli() -> Nat
+  slicingSpeedNum(alphaMilli: Nat) -> Nat
+  gaugeShiftFluxNum(alphaMilli: Nat) -> Nat
+
+spec BaseHarmonicSlicingSpec for SlicingGauge:
+  requires fBM() -> Nat
+  requires betaNum() -> Nat
+  def fBM() -> Nat:
+    1n
+  def betaNum() -> Nat:
+    0n
+  def betaDen() -> Nat:
+    5n
+  def alphaMinMilli() -> Nat:
+    500n
+  def alphaMaxMilli() -> Nat:
+    2000n
+  def gxxMinMilli() -> Nat:
+    1000n
+  def gxxMaxMilli() -> Nat:
+    4000n
+  def gradBoundMilli() -> Nat:
+    500n
+  def slicingSpeedNum(alphaMilli: Nat) -> Nat:
+    self.fBM * alphaMilli
+  def gaugeShiftFluxNum(alphaMilli: Nat) -> Nat:
+    self.betaNum * alphaMilli
+  claim lapse_box_ceiling(alphaMilli: Nat) given 500n <= alphaMilli && alphaMilli <= 2000n by judge("interval@1"): alphaMilli * 2n <= 4000n
+  claim metric_box_ceiling(gxxMilli: Nat) given 1000n <= gxxMilli && gxxMilli <= 4000n by judge("interval@1"): gxxMilli <= 4000n
+
+spec OnePlusLogShiftedOverride for SlicingGauge:
+  requires fBM() -> Nat
+  requires betaNum() -> Nat
+  def fBM() -> Nat:
+    2n
+  def betaNum() -> Nat:
+    1n
+  claim one_plus_log_doubles_slicing_speed() by weave: self.slicingSpeedNum(1000n) == 2000n
+  claim shifted_gauge_activates_shift() by weave: self.gaugeShiftFluxNum(1000n) == 1000n
+
+def seedSlicingGauge() -> SlicingGauge:
+  {fBM: 0n, betaNum: 0n, betaDen: 1n, alphaMinMilli: 0n, alphaMaxMilli: 0n, gxxMinMilli: 0n, gxxMaxMilli: 0n, gradBoundMilli: 0n, slicingSpeedNum: fn(a: Nat) -> Nat: a, gaugeShiftFluxNum: fn(a: Nat) -> Nat: a}
+
+def baseHarmonicSlicing() -> SlicingGauge:
+  fix(BaseHarmonicSlicingSpec, seedSlicingGauge())
+
+def bonaMassoShiftedSlicing() -> SlicingGauge:
+  fix(compose(BaseHarmonicSlicingSpec, OnePlusLogShiftedOverride), seedSlicingGauge())
+
+def fBM() -> Nat:
+  bonaMassoShiftedSlicing().fBM
+
+def betaNum() -> Nat:
+  bonaMassoShiftedSlicing().betaNum
+
+def betaDen() -> Nat:
+  bonaMassoShiftedSlicing().betaDen
+
+def alphaMinMilli() -> Nat:
+  bonaMassoShiftedSlicing().alphaMinMilli
+
+def alphaMaxMilli() -> Nat:
+  bonaMassoShiftedSlicing().alphaMaxMilli
+
+def gxxMinMilli() -> Nat:
+  bonaMassoShiftedSlicing().gxxMinMilli
+
+def gxxMaxMilli() -> Nat:
+  bonaMassoShiftedSlicing().gxxMaxMilli
+
+def gradBoundMilli() -> Nat:
+  bonaMassoShiftedSlicing().gradBoundMilli
+
+def slicingSpeedAtUnitLapse() -> Nat:
+  bonaMassoShiftedSlicing().slicingSpeedNum(1000n)
+
+def slicingConfigValid() -> Bool:
+  let s = bonaMassoShiftedSlicing()
+  (1n <= s.fBM) && (s.betaNum < s.betaDen) && (s.alphaMinMilli < s.alphaMaxMilli) && (s.gxxMinMilli < s.gxxMaxMilli)

@@ -1,0 +1,93 @@
+edition ObjectiveBend 1
+# Real-World Numerical Relativity App (`apps/relativity-z4c/RelativityZ4cTop.obend`):
+# Layer 3 — Apples-with-Apples 1+1 Gauge-Wave + Planted-Theta Z4c Benchmark composition.
+
+import ./BonaMassoSlicing.obend as Slicing
+import ./Z4cConstraintDamping.obend as Damping
+
+law monotone_z4c_step: monotone(z4cStep)
+law bounded_lapse_milli: new.alphaMilli <= 2000
+law bounded_metric_milli: new.gxxMilli <= 4000
+law bounded_theta_milli: new.thetaMilli <= 250
+law write_once_z4c_receipt: writeOnce(receiptEpoch)
+
+record RelativityZ4cBenchmark:
+  maxWavespeed() -> Nat
+  cflNum() -> Nat
+  cflDen() -> Nat
+  gridCells() -> Nat
+  benchmarkSteps() -> Nat
+  cflProduct() -> Nat
+  totalCellUpdates(extraSubsteps: Nat) -> Nat
+
+spec BaseGaugeWaveBenchmarkSpec for RelativityZ4cBenchmark:
+  requires maxWavespeed() -> Nat
+  requires cflNum() -> Nat
+  requires gridCells() -> Nat
+  requires benchmarkSteps() -> Nat
+  def maxWavespeed() -> Nat:
+    9n
+  def cflNum() -> Nat:
+    1n
+  def cflDen() -> Nat:
+    10n
+  def gridCells() -> Nat:
+    8n
+  def benchmarkSteps() -> Nat:
+    4n
+  def cflProduct() -> Nat:
+    self.cflNum * self.maxWavespeed
+  def totalCellUpdates(extraSubsteps: Nat) -> Nat:
+    self.gridCells * self.benchmarkSteps + extraSubsteps
+  claim cfl_admissible_wavespeed(cflN: Nat, speed: Nat) given cflN <= 1n && speed <= 9n by judge("interval@1"): cflN * speed <= 10n
+
+spec ApplesWithApplesZ4cOverride for RelativityZ4cBenchmark:
+  requires maxWavespeed() -> Nat
+  requires cflNum() -> Nat
+  requires cflDen() -> Nat
+  requires gridCells() -> Nat
+  requires benchmarkSteps() -> Nat
+  def gridCells() -> Nat:
+    16n
+  def benchmarkSteps() -> Nat:
+    8n
+  claim awa_cfl_admissible() by weave: self.cflProduct() == 9n
+  claim awa_cfl_admissible_bound(cflN: Nat, speed: Nat) given cflN <= 1n && speed <= 9n by judge("interval@1"): cflN * speed <= 10n
+  claim awa_total_updates() by weave: self.totalCellUpdates(0n) == 128n
+
+def seedRelativityZ4cBenchmark() -> RelativityZ4cBenchmark:
+  {maxWavespeed: 0n, cflNum: 0n, cflDen: 1n, gridCells: 0n, benchmarkSteps: 0n, cflProduct: 0n, totalCellUpdates: fn(e: Nat) -> Nat: e}
+
+def baseGaugeWaveBenchmark() -> RelativityZ4cBenchmark:
+  fix(BaseGaugeWaveBenchmarkSpec, seedRelativityZ4cBenchmark())
+
+def applesWithApplesZ4cBenchmark() -> RelativityZ4cBenchmark:
+  fix(compose(BaseGaugeWaveBenchmarkSpec, ApplesWithApplesZ4cOverride), seedRelativityZ4cBenchmark())
+
+def maxWavespeed() -> Nat:
+  applesWithApplesZ4cBenchmark().maxWavespeed
+
+def cflNum() -> Nat:
+  applesWithApplesZ4cBenchmark().cflNum
+
+def cflDen() -> Nat:
+  applesWithApplesZ4cBenchmark().cflDen
+
+def gridCells() -> Nat:
+  applesWithApplesZ4cBenchmark().gridCells
+
+def benchmarkSteps() -> Nat:
+  applesWithApplesZ4cBenchmark().benchmarkSteps
+
+def totalBenchmarkUpdates() -> Nat:
+  applesWithApplesZ4cBenchmark().totalCellUpdates(0n)
+
+def verifyRelativityZ4cGate(cflN: Nat, speed: Nat, cflD: Nat, vars: Nat, cells: Nat, steps: Nat) -> Bool:
+  (cflN * speed <= cflD) && (vars == 6n) && (16n <= cells) && (8n <= steps)
+
+def relativityZ4cEndToEndValid() -> Bool:
+  let b = applesWithApplesZ4cBenchmark()
+  Slicing.slicingConfigValid() && Damping.z4cDampingValid() && verifyRelativityZ4cGate(b.cflNum, b.maxWavespeed, b.cflDen, Damping.numVars(), b.gridCells, b.benchmarkSteps)
+
+def relativityZ4cSummary() -> Nat:
+  Slicing.fBM() + Slicing.betaNum() + Slicing.betaDen() + Damping.kappa1Num() + Damping.kappa1Den() + Damping.numVars() + maxWavespeed() + cflNum() + cflDen() + gridCells() + benchmarkSteps() + totalBenchmarkUpdates()

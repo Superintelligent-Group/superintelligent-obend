@@ -1,9 +1,10 @@
 use obend_gui::{
-    discover_apps, extract_wikilink_owners, parse_ngc_text, parse_obend_layer_source,
-    parse_smt2_text, parse_stl_bytes, parse_sv_summary, parse_vcd_reader, validate_app_slug,
-    vcd_bits_to_hex, FeecSimplicialFemCard, FrustumRedactedViewCard, NotebookCell, NotebookRunner,
-    PcbMultiphysicsDfmCard, PdeConservationCard, ProjectionCard, Vehicle6DofTrajectoryCard,
-    VerifiedProofBadge, ZkCustodyReceiptCard,
+    discover_apps, extract_wikilink_owners, find_workspace_root, inspect_app_in_root,
+    parse_ngc_text, parse_obend_layer_source, parse_smt2_text, parse_stl_bytes, parse_sv_summary,
+    parse_vcd_reader, validate_app_slug, vcd_bits_to_hex, FeecSimplicialFemCard,
+    FrustumRedactedViewCard, NotebookCell, NotebookRunner, PcbMultiphysicsDfmCard,
+    PdeConservationCard, ProjectionCard, Vehicle6DofTrajectoryCard, VerifiedProofBadge,
+    ZkCustodyReceiptCard,
 };
 use std::collections::BTreeMap;
 use std::io::Cursor;
@@ -487,4 +488,45 @@ fn kernel_workbook_ffi_and_multi_projection_cards_end_to_end() {
             .is_err(),
         "kernel Putnam/Foster lens must refuse read-only proof badge scrub"
     );
+}
+
+#[test]
+fn discover_workspace_apps_finds_relativity_z4c_with_lec_and_vcd() {
+    let report = discover_apps();
+    let rel = report
+        .apps
+        .iter()
+        .find(|a| a.slug == "relativity-z4c")
+        .expect("apps/relativity-z4c discovered");
+
+    assert_eq!(rel.obend_layer_count, 3);
+    assert!(rel.smt2_lec_present);
+    assert!(rel.smt2_files.contains(&"BonaMassoZ4c1D_lec.smt2".to_string()));
+    assert!(rel.sv_files.contains(&"BonaMassoZ4c1D_axis0.sv".to_string()));
+    assert!(rel.vcd_present);
+    assert_eq!(rel.vcd_build_status, "built");
+    assert!(rel.vcd_signal_count > 0);
+    assert!(rel.vcd_total_transitions > 0);
+
+    let detail = inspect_app_in_root(&find_workspace_root(), "relativity-z4c", true)
+        .expect("inspect apps/relativity-z4c");
+    assert_eq!(
+        detail.top_obend_file.as_deref(),
+        Some("apps/relativity-z4c/RelativityZ4cTop.obend")
+    );
+    assert_eq!(detail.obend_layers.len(), 3);
+    assert!(detail.lec_specs[0].assert_count > 0);
+    assert!(detail.lec_specs[0].check_sat_count >= 1);
+    assert_eq!(
+        detail.rtl_modules[0].module_names,
+        vec!["BonaMassoZ4c1D_flux_axis0".to_string()]
+    );
+    assert!(detail.vcd_digest.present);
+    assert_eq!(detail.vcd_digest.build_status, "built");
+    assert!(detail.vcd_digest.total_transitions > 0);
+    let svg = detail
+        .vcd_digest
+        .waveform_svg
+        .expect("rendered VCD SVG for relativity-z4c");
+    assert!(svg.starts_with("<svg ") && svg.contains("flux_out_"));
 }
