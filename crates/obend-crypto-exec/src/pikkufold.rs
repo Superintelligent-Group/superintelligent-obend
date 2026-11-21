@@ -3776,6 +3776,20 @@ mod tests {
     use super::*;
     use crate::canopy::{DomainKind, ProximityRegime};
 
+    #[test]
+    fn canopy_bind_wire_vector() {
+        // Independent cSHAKE256 vector. Both unmasked LE64 words have bit 63 set.
+        let salt = core::array::from_fn(|i| i as u8);
+        let limbs = derive_canopy_bind_limbs(
+            0x0102_0304_0506_0708, OrderSide::Ask, 57, 0x1122_3344_5566,
+            0x0010_2030_4050_6071, &salt,
+        );
+        assert_eq!(
+            limbs.map(Goldilocks::to_canonical_u64),
+            [0x74f6_cce0_979b_9926, 0x288a_6046_073c_6599],
+        );
+    }
+
     fn is_prime_u64(n: u64) -> bool {
         if n < 2 || n.is_multiple_of(2) {
             return n == 2;

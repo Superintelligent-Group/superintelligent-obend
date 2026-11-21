@@ -618,8 +618,7 @@ impl SerializedPolicySpec {
     }
 }
 
-/// Governance/policy amendment commitment payload. Every field is length-framed into
-/// `commitment_digest()` (`frame_bytes` / fixed-width BE) so Stage-B binding has zero unframed slack.
+/// Governance proposal committed by the amendment receipt.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AmendmentProposal {
     pub policy_digest: [u8; 32],
@@ -632,7 +631,7 @@ pub struct AmendmentProposal {
 }
 
 impl AmendmentProposal {
-    /// Domain-separated 256-bit `cSHAKE256` commitment over all 6 length-framed fields.
+    /// Commit three framed digests, three raw big-endian u64s, and the framed UTF-8 target.
     pub fn commitment_digest(&self) -> [u8; 32] {
         let mut buf = Vec::with_capacity(128 + self.target_organ.len());
         frame_bytes(&mut buf, &self.policy_digest);
@@ -1650,6 +1649,26 @@ pub fn target_organ_digest(target_organ: &str) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn proposal_commitment_wire_vector() {
+        // The UTF-8 target crosses the single-byte LEB128 length boundary.
+        let proposal = AmendmentProposal {
+            policy_digest: [1; 32],
+            amendment_digest: [2; 32],
+            prior_digest: [3; 32],
+            epoch: 0x0102_0304_0506_0708,
+            nonce: 17,
+            required_rights: 256,
+            target_organ: "é".repeat(64),
+        };
+        assert_eq!(proposal.commitment_digest(), [
+            0x81, 0x3f, 0x9e, 0x02, 0x67, 0x02, 0xad, 0xfa,
+            0x81, 0x9a, 0x86, 0xc0, 0xf4, 0x12, 0xb1, 0x7a,
+            0x62, 0x7e, 0x83, 0xf1, 0xba, 0x50, 0x03, 0x62,
+            0x75, 0x0f, 0x74, 0x7c, 0x64, 0x6e, 0xec, 0x44,
+        ]);
+    }
 
     fn sample_fixture() -> (
         FastReceiptProfile,
