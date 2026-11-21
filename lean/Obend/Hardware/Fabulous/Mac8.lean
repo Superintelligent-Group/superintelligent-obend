@@ -8,7 +8,8 @@ for `iceStickMac8` on the fabric of `hardware/fabulous/fabric.csv`. The two bit-
 `fabric_realizes_module` turns them into agreement on every trace.
 -/
 public import Obend.Hardware.Fabulous.Mac8Net
-@[expose] public section
+import all Obend.Hardware.Fabulous.Mac8Net
+public section
 
 namespace Obend.Hardware.Fabulous
 

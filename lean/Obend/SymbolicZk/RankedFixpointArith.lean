@@ -346,7 +346,7 @@ structure ArithProgram where
   rules : Array ArithRule
   deriving Repr, Inhabited
 
-@[expose] def WFProgram (p : ArithProgram) : Bool :=
+def WFProgram (p : ArithProgram) : Bool :=
   p.rules.all fun r => r.head < p.numAtoms &&
     r.pos.all (· < p.numAtoms) && r.neg.all (· < p.numAtoms)
 
@@ -364,13 +364,13 @@ structure ArrayCert where
 @[expose] def bit (m : Array Bool) (a : Nat) : Bool := m[a]?.getD false
 @[expose] def rankAt (r : Array Nat) (a : Nat) : Nat := r[a]?.getD 0
 
-@[expose] def firesFast (r : ArithRule) (j m : Array Bool) : Bool :=
+def firesFast (r : ArithRule) (j m : Array Bool) : Bool :=
   r.pos.all (bit m) && r.neg.all (fun d => !bit j d)
 
-@[expose] def checkClosure (p : ArithProgram) (j m : Array Bool) : Bool :=
+def checkClosure (p : ArithProgram) (j m : Array Bool) : Bool :=
   p.rules.all fun r => !firesFast r j m || bit m r.head
 
-@[expose] def checkSupport (p : ArithProgram) (j m : Array Bool)
+def checkSupport (p : ArithProgram) (j m : Array Bool)
     (rank support : Array Nat) (a : Nat) : Bool :=
   match p.rules[rankAt support a]? with
   | none => false
@@ -385,7 +385,7 @@ def checkRankedGamma (p : ArithProgram) (j m : Array Bool) (rank support : Array
 def checkRankedGLStable (p : ArithProgram) (m : Array Bool) (rank support : Array Nat) : Bool :=
   checkRankedGamma p m m rank support
 
-@[expose] def checkTrueSupport (p : ArithProgram) (t u : Array Bool) (c : ArrayCert) (a : Nat) : Bool :=
+def checkTrueSupport (p : ArithProgram) (t u : Array Bool) (c : ArrayCert) (a : Nat) : Bool :=
   match p.rules[rankAt c.supportT a]? with
   | none => false
   | some r => r.head == a &&
@@ -393,7 +393,7 @@ def checkRankedGLStable (p : ArithProgram) (m : Array Bool) (rank support : Arra
       (rankAt c.stage a) (rankAt c.rankT a))) &&
     r.neg.all (fun d => !bit u d && decide (earlier (rankAt c.stage d) (rankAt c.stage a)))
 
-@[expose] def checkBlocker (r : ArithRule) (t u : Array Bool) (s : Array Nat) (b : Bool × Nat) : Bool :=
+def checkBlocker (r : ArithRule) (t u : Array Bool) (s : Array Nat) (b : Bool × Nat) : Bool :=
   if b.1 then
     match r.neg[b.2]? with
     | none => false
@@ -426,7 +426,7 @@ def checkRankedWFS (p : ArithProgram) (t u : Array Bool) (c : ArrayCert) : Bool 
 theorem atomName_injective {a b : Nat} (h : atomName a = atomName b) : a = b := by
   simpa using congrArg String.length h
 
-@[expose] def toReasonsRule (r : ArithRule) : Rule :=
+def toReasonsRule (r : ArithRule) : Rule :=
   ⟨"", atomName r.head, r.pos.toList.map atomName, r.neg.toList.map atomName⟩
 
 @[expose] def toReasonsProgram (p : ArithProgram) : Program :=
@@ -851,7 +851,7 @@ theorem checkRankedWFS_canonical_complete (p : ArithProgram) (hw : WFProgram p =
   · exact decode_encode _ _ (fun s hs => atoms_named hw (rounds_universe _ _ s hs))
   · exact decode_encode _ _ (fun s hs => atoms_named hw (gamma_universe _ _ s hs))
 
-@[expose] def evenCycleArith : ArithProgram := ⟨2, #[⟨0, #[], #[1]⟩, ⟨1, #[], #[0]⟩]⟩
+def evenCycleArith : ArithProgram := ⟨2, #[⟨0, #[], #[1]⟩, ⟨1, #[], #[0]⟩]⟩
 
 theorem evenCycle_exec_rejected (c : ArrayCert) :
     checkRankedWFS evenCycleArith #[true,false] #[true,false] c = false := by
@@ -860,13 +860,13 @@ theorem evenCycle_exec_rejected (c : ArrayCert) :
   · have hs := (checkRankedWFS_sound hh).1 (atomName 0)
     have hin : atomName 0 ∈ decodeBits #[true,false] := (mem_decodeBits _ _).mpr (by simp [bit])
     have hout : atomName 0 ∉ (wf (toReasonsProgram evenCycleArith)).1 := by
-      simp [wf, rounds, gamma, stage, bound, atomsOf, toReasonsProgram, toReasonsRule,
+      simp [wf, rounds, gamma, stage, atomsOf, toReasonsProgram, toReasonsRule,
         evenCycleArith, T, fires, atomName]
     exact False.elim (hout (hs.mp hin))
 
 open Obend.Crypto in
 /-- Three quadratic equations; `z` is a separate wire, never inlined to make a cubic. -/
-@[expose] def quadraticFiresGate (delta head w z : Goldilocks) : Bool :=
+def quadraticFiresGate (delta head w z : Goldilocks) : Bool :=
   decide (z = CommRingOps.sub CommRingOps.one (CommRingOps.mul delta w) ∧
     CommRingOps.mul delta z = CommRingOps.zero ∧
     CommRingOps.mul z (CommRingOps.sub CommRingOps.one head) = CommRingOps.zero)
@@ -937,7 +937,7 @@ def internReasonsProgram (p : Program) : Array String × ArithProgram := Id.run 
   return (names, ⟨names.size, facts ++ rules⟩)
 
 /-- The semantic even-cycle refutation is universal in all ranks, not a bounded search. -/
-@[expose] def evenCycleReasons : Program :=
+def evenCycleReasons : Program :=
   ⟨[], [⟨"ab", "a", [], ["b"]⟩, ⟨"ba", "b", [], ["a"]⟩]⟩
 
 theorem evenCycle_cheating_fixpoint_rejected (c : SemanticRanks) :

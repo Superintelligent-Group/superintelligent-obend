@@ -152,7 +152,7 @@ theorem totalFold_fst {A : Type u} {B : A → Type v} {C : Type w}
   I.totalFold_fst P cases x ▸ (I.totalFold P cases x).2
 
 /-- Subtype `P`-algebra on `{ x : C // P x }` for `Prop`-valued dependent motives. -/
-@[expose] def subtypeAlg {A : Type u} {B : A → Type v} {C : Type w}
+def subtypeAlg {A : Type u} {B : A → Type v} {C : Type w}
     (I : InitPAlg A B C) (P : C → Prop)
     (cases : (a : A) → (k : B a → C) → ((b : B a) → P (k b)) → P (I.alg.op ⟨a, k⟩)) :
     PAlg A B { x : C // P x } where
@@ -298,7 +298,7 @@ private theorem elim_eq_of_sigma_eq {C D : Type w} (φ : C → D) (P : D → Typ
   rfl
 
 /-- Transport `D`-side induction cases along `cfg.forward` and `cfg.constr_ok` (Plante et al. `φ* casesD`). -/
-@[expose] def pullbackCases {A : Type u} {B : A → Type v} {C D : Type w}
+def pullbackCases {A : Type u} {B : A → Type v} {C D : Type w}
     (cfg : AlgConfig A B C D) (P : D → Type w)
     (casesD : (a : A) → (k : B a → D) → ((b : B a) → P (k b)) → P (cfg.algD.op ⟨a, k⟩)) :
     (a : A) → (k : B a → C) → ((b : B a) → P (cfg.forward (k b))) →
@@ -360,7 +360,7 @@ abbrev PeanoPos : Bool → Type
   | true => PUnit
 
 /-- Build a Peano `PAlg Bool PeanoPos X` from `zeroVal : X` and `succFn : X → X`. -/
-@[expose] def mkPeanoAlg {X : Type} (zeroVal : X) (succFn : X → X) : PAlg Bool PeanoPos X where
+def mkPeanoAlg {X : Type} (zeroVal : X) (succFn : X → X) : PAlg Bool PeanoPos X where
   op := fun
     | ⟨false, _⟩ => zeroVal
     | ⟨true, k⟩ => succFn (k PUnit.unit)
@@ -373,11 +373,11 @@ inductive UnaryNat : Type where
 
 namespace UnaryNat
 
-@[expose] def fold {Y : Type} (γ : PAlg Bool PeanoPos Y) : UnaryNat → Y
+def fold {Y : Type} (γ : PAlg Bool PeanoPos Y) : UnaryNat → Y
   | .zero => γ.op ⟨false, PEmpty.elim⟩
   | .succ n => γ.op ⟨true, fun _ => fold γ n⟩
 
-@[expose] def initPAlg : InitPAlg Bool PeanoPos UnaryNat where
+def initPAlg : InitPAlg Bool PeanoPos UnaryNat where
   alg := mkPeanoAlg .zero .succ
   fold := fold
   fold_beta γ t := by
@@ -429,13 +429,13 @@ inductive BinNat : Type where
 
 namespace BinPos
 
-@[expose] def succ : BinPos → BinPos
+def succ : BinPos → BinPos
   | .one => .bit0 .one
   | .bit0 p => .bit1 p
   | .bit1 p => .bit0 p.succ
 
 /-- Apply `s : Y → Y` exactly `p` times to `acc : Y` by structural recursion on `BinPos`. -/
-@[expose] def iter {Y : Type} (s : Y → Y) : BinPos → Y → Y
+def iter {Y : Type} (s : Y → Y) : BinPos → Y → Y
   | .one, acc => s acc
   | .bit0 p, acc => iter s p (iter s p acc)
   | .bit1 p, acc => s (iter s p (iter s p acc))
@@ -464,11 +464,11 @@ end BinPos
 
 namespace BinNat
 
-@[expose] def succ : BinNat → BinNat
+def succ : BinNat → BinNat
   | .zero => .pos .one
   | .pos p => .pos p.succ
 
-@[expose] def double : BinNat → BinNat
+def double : BinNat → BinNat
   | .zero => .zero
   | .pos p => .pos (.bit0 p)
 
@@ -505,7 +505,7 @@ theorem iter_succ_zero (p : BinPos) :
     rw [hd, ih]
     rfl
 
-@[expose] def fold {Y : Type} (γ : PAlg Bool PeanoPos Y) : BinNat → Y
+def fold {Y : Type} (γ : PAlg Bool PeanoPos Y) : BinNat → Y
   | .zero => γ.op ⟨false, PEmpty.elim⟩
   | .pos p =>
       BinPos.iter (fun y => γ.op ⟨true, fun _ => y⟩) p (γ.op ⟨false, PEmpty.elim⟩)
@@ -530,7 +530,7 @@ private theorem iter_preserves_eq {Y : Type} (s : Y → Y) (h : BinNat → Y)
     rw [hs, ih (BinPos.iter BinNat.succ q b), ih b]
 
 /-- Homotopy-initial Peano `P`-algebra on `BinNat`, proved with zero reference to `UnaryNat` or `Nat`. -/
-@[expose] def initPAlg : InitPAlg Bool PeanoPos BinNat where
+def initPAlg : InitPAlg Bool PeanoPos BinNat where
   alg := mkPeanoAlg .zero .succ
   fold := fold
   fold_beta γ t := by
@@ -572,11 +572,11 @@ end BinNat
   (UnaryNat.initPAlg, BinNat.initPAlg)
 
 /-- Carrier-free `isZero` defining algebra. -/
-@[expose] def peanoIsZeroAlg : PAlg Bool PeanoPos Bool :=
+def peanoIsZeroAlg : PAlg Bool PeanoPos Bool :=
   mkPeanoAlg true (fun _ => false)
 
 /-- Carrier-free Peano addition defined solely against an abstract `InitPAlg Bool PeanoPos X`. -/
-@[expose] def peanoAdd {X : Type} (I : InitPAlg Bool PeanoPos X) (x y : X) : X :=
+def peanoAdd {X : Type} (I : InitPAlg Bool PeanoPos X) (x y : X) : X :=
   I.fold (mkPeanoAlg y (fun acc => I.alg.op ⟨true, fun _ => acc⟩)) x
 
 /-- Carrier-free proof of right zero identity `x + 0 = x` over any `InitPAlg Bool PeanoPos X`. -/
@@ -601,16 +601,16 @@ theorem peano_add_zero {X : Type} (I : InitPAlg Bool PeanoPos X) (x : X) :
     rw [ihUnit]
 
 /-- Source `UnaryNat` operations and theorem. -/
-@[expose] def unaryIsZero : UnaryNat → Bool := UnaryNat.initPAlg.fold peanoIsZeroAlg
-@[expose] def unaryAdd : UnaryNat → UnaryNat → UnaryNat := peanoAdd UnaryNat.initPAlg
+def unaryIsZero : UnaryNat → Bool := UnaryNat.initPAlg.fold peanoIsZeroAlg
+def unaryAdd : UnaryNat → UnaryNat → UnaryNat := peanoAdd UnaryNat.initPAlg
 
 theorem unary_add_zero (n : UnaryNat) : unaryAdd n .zero = n :=
   peano_add_zero UnaryNat.initPAlg n
 
 /-- Scar-free repaired `BinNat` operations and theorem: instantiated directly at `BinNat.initPAlg`
     with zero dependency on `UnaryNat`. -/
-@[expose] def binIsZero : BinNat → Bool := BinNat.initPAlg.fold peanoIsZeroAlg
-@[expose] def binAdd : BinNat → BinNat → BinNat := peanoAdd BinNat.initPAlg
+def binIsZero : BinNat → Bool := BinNat.initPAlg.fold peanoIsZeroAlg
+def binAdd : BinNat → BinNat → BinNat := peanoAdd BinNat.initPAlg
 
 theorem bin_add_zero (b : BinNat) : binAdd b .zero = b :=
   peano_add_zero BinNat.initPAlg b

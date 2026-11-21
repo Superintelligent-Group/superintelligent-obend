@@ -10,7 +10,7 @@ terms have the same interaction traces, with the same responses, equivalent plan
 same final observation. It implies `≈b` (`IEquiv.bequiv`: the trace with no turns), and
 `mix` is associative for it (`mix_assoc_interaction`). -/
 public import Obend.Equiv.Behaviour
-@[expose] public section
+public section
 namespace Obend.Equiv
 open Obend.Core.Term
 set_option autoImplicit false
@@ -332,11 +332,11 @@ theorem interaction_behind_of_ahead {t' : Term} {turns' : List (Term × Term)} {
 /-! ## `≈b` with turns -/
 
 /-- An interaction that completes with a ground observation. -/
-def IHalts (t : Term) (turns : List (Term × Term)) (o : Observation) : Prop :=
+@[expose] def IHalts (t : Term) (turns : List (Term × Term)) (o : Observation) : Prop :=
   ∃ v, Interaction t turns v ∧ Observes v o
 
 /-- An interaction that completes with some value. -/
-def IConverges (t : Term) (turns : List (Term × Term)) : Prop := ∃ v, Interaction t turns v
+@[expose] def IConverges (t : Term) (turns : List (Term × Term)) : Prop := ∃ v, Interaction t turns v
 
 /-- Turn lists with the same responses and `≈b`-equivalent plans. -/
 abbrev TurnsEquiv (turns turns' : List (Term × Term)) : Prop :=
@@ -420,7 +420,7 @@ theorem SameInteractions.trans {a b c : Term} (h : SameInteractions a b) (h' : S
 
 /-- `t ≈b t'` with the turns counted: for every substitution and context, the plugged terms have the
 same interaction traces (same responses, `≈b` plans, same final observation). -/
-def IEquiv (t t' : Term) : Prop :=
+@[expose] def IEquiv (t t' : Term) : Prop :=
   ∀ (ρ : Nat → Term) (C : Term),
     SameInteractions (instantiate C (t.substitute ρ)) (instantiate C (t'.substitute ρ))
 

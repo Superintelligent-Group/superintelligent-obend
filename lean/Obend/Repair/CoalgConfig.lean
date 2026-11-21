@@ -22,6 +22,7 @@ Hur-et-al. parameterized coinduction (`paco` / `gpaco`):
   `stream_eta_via` with zero dependency on `SeqStream`.
 -/
 public import Obend.Repair.AlgConfig
+import all Obend.Repair.AlgConfig
 public section
 namespace Obend.Repair
 set_option autoImplicit false
@@ -70,11 +71,11 @@ theorem ext {A : Type u} {B : A → Type v} {X : Type w₁} {Y : Type w₂}
   subst hfun
   rfl
 
-@[expose] def id {A : Type u} {B : A → Type v} {X : Type w} (γ : PCoalg A B X) : PCoalgHom γ γ where
+def id {A : Type u} {B : A → Type v} {X : Type w} (γ : PCoalg A B X) : PCoalgHom γ γ where
   toFun x := x
   hom_comm x := PolyF.map_id (γ.out x)
 
-@[expose] def comp {A : Type u} {B : A → Type v} {X : Type w} {Y : Type w₁} {Z : Type w₂}
+def comp {A : Type u} {B : A → Type v} {X : Type w} {Y : Type w₁} {Z : Type w₂}
     {γ : PCoalg A B X} {δ : PCoalg A B Y} {ε : PCoalg A B Z}
     (g : PCoalgHom δ ε) (f : PCoalgHom γ δ) : PCoalgHom γ ε where
   toFun x := g.toFun (f.toFun x)
@@ -127,7 +128,7 @@ structure MonoRel (X : Type w) where
   mono : ∀ {R S : X → X → Prop}, RelLe R S → RelLe (fn R) (fn S)
 
 /-- Canonical `MonoRel` for `BisimStep γ`. -/
-@[expose] def BisimStep.toMonoRel {A : Type u} {B : A → Type v} {X : Type w}
+def BisimStep.toMonoRel {A : Type u} {B : A → Type v} {X : Type w}
     (γ : PCoalg A B X) : MonoRel X where
   fn := BisimStep γ
   mono hRS _ _ h := BisimStep.mono γ hRS h
@@ -288,7 +289,7 @@ theorem corec_pos {A : Type u} {B : A → Type v} {C E : Type w}
   polyF_snd_of_eq (F.corec δ) (F.corec_out δ e) b
 
 /-- Canonical `PCoalgHom` into a final coalgebra. -/
-@[expose] def corecHom {A : Type u} {B : A → Type v} {C E : Type w}
+def corecHom {A : Type u} {B : A → Type v} {C E : Type w}
     (F : FinalPCoalg A B C) (δ : PCoalg A B E) : PCoalgHom δ F.coalg where
   toFun := F.corec δ
   hom_comm e := (F.corec_out δ e).symm
@@ -441,7 +442,7 @@ theorem forward_backward {A : Type u} {B : A → Type v} {C D : Type w}
     cfg.forward (cfg.backward d) = d :=
   (cfg.corec_ok cfg.2.coalg d).trans (cfg.2.corec_self d)
 
-@[expose] def toCoalgEquiv {A : Type u} {B : A → Type v} {C D : Type w}
+def toCoalgEquiv {A : Type u} {B : A → Type v} {C D : Type w}
     (cfg : CoalgConfig A B C D) : CoalgEquiv A B C D where
   coalgC := cfg.coalgC
   coalgD := cfg.coalgD
@@ -451,7 +452,7 @@ theorem forward_backward {A : Type u} {B : A → Type v} {C D : Type w}
   forward_backward := cfg.forward_backward
 
 /-- Pushforward relation `φ_* R` on `D` induced by a relation `R` on `C`. -/
-@[expose] def pushRel {C D : Type w} (φ : C → D) (R : C → C → Prop) (d₁ d₂ : D) : Prop :=
+def pushRel {C D : Type w} (φ : C → D) (R : C → C → Prop) (d₁ d₂ : D) : Prop :=
   ∃ c₁ c₂ : C, φ c₁ = d₁ ∧ φ c₂ = d₂ ∧ R c₁ c₂
 
 theorem pushRel_step {C D : Type w} (φ : C → D) (R : C → C → Prop) {x y : C} (r : R x y) :
@@ -515,24 +516,24 @@ structure SeqStream (α : Type u) where
 
 namespace SeqStream
 
-@[expose] def hd {α : Type u} (s : SeqStream α) : α := s.atStep 0
-@[expose] def tl {α : Type u} (s : SeqStream α) : SeqStream α := ⟨fun n => s.atStep (n + 1)⟩
+def hd {α : Type u} (s : SeqStream α) : α := s.atStep 0
+def tl {α : Type u} (s : SeqStream α) : SeqStream α := ⟨fun n => s.atStep (n + 1)⟩
 
-@[expose] def coalg (α : Type u) : PCoalg α StreamPos (SeqStream α) where
+def coalg (α : Type u) : PCoalg α StreamPos (SeqStream α) where
   out s := ⟨s.hd, fun _ => s.tl⟩
 
-@[expose] def iterStep {α : Type u} {E : Type u} (δ : PCoalg α StreamPos E) : Nat → E → E
+def iterStep {α : Type u} {E : Type u} (δ : PCoalg α StreamPos E) : Nat → E → E
   | 0, e => e
   | n + 1, e => iterStep δ n (δ.pos e PUnit.unit)
 
-@[expose] def corec {α : Type u} {E : Type u} (δ : PCoalg α StreamPos E) (e : E) : SeqStream α where
+def corec {α : Type u} {E : Type u} (δ : PCoalg α StreamPos E) (e : E) : SeqStream α where
   atStep n := δ.shape (iterStep δ n e)
 
 private theorem iterStep_succ_right {α : Type u} {E : Type u}
     (δ : PCoalg α StreamPos E) (n : Nat) (e : E) :
     iterStep δ (n + 1) e = iterStep δ n (δ.pos e PUnit.unit) := rfl
 
-@[expose] def finalPCoalg (α : Type u) : FinalPCoalg α StreamPos (SeqStream α) where
+def finalPCoalg (α : Type u) : FinalPCoalg α StreamPos (SeqStream α) where
   coalg := coalg α
   corec := corec
   corec_out δ e := by
@@ -571,24 +572,24 @@ structure Simd2Stream (α : Type u) where
 
 namespace Simd2Stream
 
-@[expose] def hd {α : Type u} (w : Simd2Stream α) : α :=
+def hd {α : Type u} (w : Simd2Stream α) : α :=
   (w.wordAt 0).1
 
-@[expose] def tl {α : Type u} (w : Simd2Stream α) : Simd2Stream α where
+def tl {α : Type u} (w : Simd2Stream α) : Simd2Stream α where
   wordAt k := ((w.wordAt k).2, (w.wordAt (k + 1)).1)
 
-@[expose] def coalg (α : Type u) : PCoalg α StreamPos (Simd2Stream α) where
+def coalg (α : Type u) : PCoalg α StreamPos (Simd2Stream α) where
   out w := ⟨w.hd, fun _ => w.tl⟩
 
-@[expose] def stepN {α : Type u} {E : Type u} (δ : PCoalg α StreamPos E) : Nat → E → E
+def stepN {α : Type u} {E : Type u} (δ : PCoalg α StreamPos E) : Nat → E → E
   | 0, e => e
   | n + 1, e => stepN δ n (δ.pos e PUnit.unit)
 
-@[expose] def corec {α : Type u} {E : Type u} (δ : PCoalg α StreamPos E) (e : E) : Simd2Stream α where
+def corec {α : Type u} {E : Type u} (δ : PCoalg α StreamPos E) (e : E) : Simd2Stream α where
   wordAt k :=
     (δ.shape (stepN δ (2 * k) e), δ.shape (stepN δ (2 * k + 1) e))
 
-@[expose] def finalPCoalg (α : Type u) : FinalPCoalg α StreamPos (Simd2Stream α) where
+def finalPCoalg (α : Type u) : FinalPCoalg α StreamPos (Simd2Stream α) where
   coalg := coalg α
   corec := corec
   corec_out _ _ := rfl
@@ -665,18 +666,18 @@ namespace Simd2Stream
 end Simd2Stream
 
 /-- Coalgebra configuration between scalar `SeqStream α` and 2-wide `Simd2Stream α`. -/
-@[expose] def seqSimd2StreamConfig (α : Type u) : CoalgConfig α StreamPos (SeqStream α) (Simd2Stream α) :=
+def seqSimd2StreamConfig (α : Type u) : CoalgConfig α StreamPos (SeqStream α) (Simd2Stream α) :=
   (SeqStream.finalPCoalg α, Simd2Stream.finalPCoalg α)
 
 /-- Carrier-free stream `cons` seed coalgebra over `Sum (α × S) S` (Plante et al. Example 4.13). -/
-@[expose] def streamConsSeed {α : Type u} {S : Type u} (coalgS : PCoalg α StreamPos S) :
+def streamConsSeed {α : Type u} {S : Type u} (coalgS : PCoalg α StreamPos S) :
     PCoalg α StreamPos (Sum (α × S) S) where
   out
     | .inl (a, s) => ⟨a, fun _ => .inr s⟩
     | .inr s => ⟨coalgS.shape s, fun b => .inr (coalgS.pos s b)⟩
 
 /-- Carrier-free `consVia` defined purely against an abstract `FinalPCoalg α StreamPos S`. -/
-@[expose] def streamConsVia {α : Type u} {S : Type u} (F : FinalPCoalg α StreamPos S) (a : α) (s : S) : S :=
+def streamConsVia {α : Type u} {S : Type u} (F : FinalPCoalg α StreamPos S) (a : α) (s : S) : S :=
   F.corec (streamConsSeed F.coalg) (.inl (a, s))
 
 /-- Carrier-free coinductive decomposition theorem `cons (shape s) (pos s ()) = s` proved once via
@@ -714,7 +715,7 @@ theorem stream_eta_via {α : Type u} {S : Type u} (F : FinalPCoalg α StreamPos 
     exact ⟨rfl, fun b => .inl (.inr rfl)⟩
 
 /-- Scar-free repaired `Simd2Stream` `cons` and decomposition proof—zero mention of `SeqStream`! -/
-@[expose] def simd2Cons {α : Type u} : α → Simd2Stream α → Simd2Stream α :=
+def simd2Cons {α : Type u} : α → Simd2Stream α → Simd2Stream α :=
   streamConsVia (Simd2Stream.finalPCoalg α)
 
 theorem simd2_eta {α : Type u} (w : Simd2Stream α) :

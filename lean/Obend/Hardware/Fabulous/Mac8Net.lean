@@ -14,7 +14,7 @@ public import Obend.Hardware.Fabulous.Mac8Ref
 public import Obend.AssertCompiled
 public import Std.Tactic.BVDecide
 public meta import Std.Tactic.BVDecide.Reflect
-@[expose] public section
+public section
 
 namespace Obend.Hardware.Fabulous
 

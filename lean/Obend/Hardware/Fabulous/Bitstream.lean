@@ -27,7 +27,7 @@ with their flops, and the switch matrix. A configuration that routes through the
 public import Obend.Hardware.Fabulous.Net
 public import Std.Data.HashMap
 public import Std.Data.HashSet
-@[expose] public section
+public section
 
 namespace Obend.Hardware.Fabulous
 

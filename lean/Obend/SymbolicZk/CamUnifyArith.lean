@@ -43,7 +43,7 @@ inductive SubstDependsOn (p : CamDagPool) : Nat → Nat → Prop where
   | aliasRight {u v w} : SubstDependsOn p u v → Assigned p v w → SubstDependsOn p u w
   | trans {u v w} : SubstDependsOn p u v → SubstDependsOn p v w → SubstDependsOn p u w
 
-@[expose] def strictHeight (a b : Nat) : Bool := decide (b < a)
+def strictHeight (a b : Nat) : Bool := decide (b < a)
 
 /-- O(nodes + encoded edges), with direct array reads. Assignments are accepted only
 at metavariable nodes. Rank values are ordinary integers, not field residues. -/
@@ -216,7 +216,7 @@ example : checkTopologicalUnifyExec ⟨#[], #[]⟩ #[] = true := by
   simp [checkTopologicalUnifyExec, Array.range_eq_range']
 
 /-- Adjacent comparisons suffice for strict ordering; no quadratic pairwise check. -/
-@[expose] def checkStrictKeys (keys : Array Nat) : Bool :=
+def checkStrictKeys (keys : Array Nat) : Bool :=
   (Array.range (keys.size - 1)).all fun i => keys[i]! < keys[i + 1]!
 
 theorem checkStrictKeys_order {keys : Array Nat} (h : checkStrictKeys keys = true)
@@ -314,12 +314,12 @@ structure CongruenceRow where
   reason : CongruenceReason
   deriving Repr, Inhabited
 
-@[expose] def edgeAt (rows : Array CongruenceRow) (i : Nat) : Option (Nat × Nat) :=
+def edgeAt (rows : Array CongruenceRow) (i : Nat) : Option (Nat × Nat) :=
   rows[i]?.map (fun r => (r.lhs,r.rhs))
 
 /-- Two child-equality references justify a constructor edge. The proof DAG's references
 strictly precede their consumer, independently of the union-find forest's ranks. -/
-@[expose] def checkCongruenceRow (pool : Array CamWord64) (seeds : Array (Nat × Nat))
+def checkCongruenceRow (pool : Array CamWord64) (seeds : Array (Nat × Nat))
     (rows : Array CongruenceRow) (i : Nat) (r : CongruenceRow) : Bool :=
   match r.reason with
   | .refl => r.lhs == r.rhs
@@ -496,9 +496,9 @@ structure LinMem where
 
 @[expose] def births (m : LinMem) : Array LinearCell := m.initCells ++ m.producedCells
 @[expose] def exits (m : LinMem) : Array LinearCell := m.consumedCells.map Consumption.cell ++ m.finalCells
-@[expose] def sortCells (a : Array LinearCell) : Array LinearCell :=
+def sortCells (a : Array LinearCell) : Array LinearCell :=
   a.mergeSort (fun x y => x.cellId ≤ y.cellId)
-@[expose] def bornBefore (c : Consumption) : Bool := c.cell.birthStep < c.consumeStep
+def bornBefore (c : Consumption) : Bool := c.cell.birthStep < c.consumeStep
 
 /-- Sorting is O(n log n); equality, freshness, and causality are linear passes.
 Birth timestamps must additionally be bound to producer events by the transition relation. -/
