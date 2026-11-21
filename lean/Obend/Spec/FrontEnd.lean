@@ -2,29 +2,12 @@ module
 /-
 # Obend.Spec.FrontEnd — the Objective Bend front end, source text to checked typed core
 
-`lower` is the whole front end on an already-read package: parse every module (`Obend.Spec.Parse`),
-check each module's locked import transcript against its parsed imports, elaborate the selected
-declaration (`Obend.Spec.Elaborate`), apply result projections, and render the core
-(`dregg.objective-bend.core.v2`) and the typing proposal packet (`dregg.objective-bend.typed-core.v3`)
-that the checker reads.
-
-`accept` closes the loop on the SAME value: it decodes the packet the front end just rendered with
-the checker's own decoder (`Obend.Core.Packet.decodePacket`) and runs the gate on it
-(`Obend.Elab.Gate.admit`: executable annotation preparation with the packet's annotations as hints,
-then the proof-producing bidirectional checker `Obend.Core.Bidirectional.checkAgainst`). That the decoded term IS the erasure of the elaborator's annotated
-term is a theorem (`Obend.Spec.Proofs.TermWire.decode_json`, applied to the `shallow` bound `accept`
-records as `Accepted.packetTerm`), not a run-time comparison: `accept` refuses only a term nested
-deeper than the decoder's capacity. An `Accepted` value therefore carries
-a typing derivation for exactly the Core4 term the elaborator produced
-(`Obend.Spec.Proofs.FrontEndAdequacy` states what that buys).
-
-Ported from minidregg `Compiler/ObjectiveBendFrontEnd.lean` (commit 092027a2). Two changes of
-shape, both forced by the module system: `Accepted`'s constructor was `private mk ::` there, and an
-exposed body (`accept`) may not cite a private constructor (REPORT-20261030 D5), so it is public and
-"built only by `accept`" is a convention of this module; and `packetTerm` was a FIELD proved inside
-`accept` from `decode_json`, whose proof unfolds `Lean.Json`, which no `module` can see, so the
-proofs are the legacy leaf `Obend.Spec.Proofs.TermWire`, `accept` records the depth bound it checked
-(`shallow`) and `packetTerm` is a theorem there about every `Accepted`.
+`lower` parses every module (`Obend.Spec.Parse`), checks each module's locked import transcript via
+typed structural comparison (`checkLockedImportsTyped`), elaborates the selected declaration
+(`Obend.Spec.Elaborate`), applies result projections, and renders `dregg.objective-bend.core.v2`
+and `dregg.objective-bend.typed-core.v3`. `accept` decodes that packet with `Obend.Core.Packet.decodePacket`
+and runs `Obend.Elab.Gate.admit`; `acceptSyntaxExpr` elaborates and certifies `Syntax.Expr` directly
+via `Obend.Spec.BidirectionalSurfaceElab.checkSyntaxExpr` without JSON wire round-trips.
 -/
 public import Lean
 public import Obend.Core.Ty
@@ -40,6 +23,10 @@ public import Obend.Spec.Elaborate
 public import Obend.Spec.Sha256
 public import Obend.Elab.Gate
 public import Obend.Elab.AutoCert
+public import Obend.Spec.BidirectionalSurfaceElab
+public import Obend.Core.Proofs.Preservation
+import all Obend.Core.Check
+import all Obend.Spec.BidirectionalSurfaceElab
 public section
 namespace Obend.Spec.FrontEnd
 open Lean (Json toJson)
@@ -105,13 +92,82 @@ def declarationName (d : Json) : String :=
   | some "package" => "package " ++ (d.getObjValAs? String "name").toOption.getD ""
   | _ => (d.getObjValAs? String "name").toOption.getD ""
 
-/-- A parsed module, checked: its locked import transcript is exactly the parsed one, and its
-AST decodes to the elaborator's module. -/
+/-- Typed source span of a parsed or locked import edge (replacing stringified JSON `.compress`). -/
+inductive ImportSpan where
+  | none
+  | span (start stop line : Nat)
+  deriving DecidableEq, Repr
+
+/-- Typed import transcript entry `(path, importAlias, span)` for structural lock checking. -/
+structure ParsedImportEdge where
+  path : String
+  importAlias : String
+  span : ImportSpan
+  deriving DecidableEq, Repr
+
+def decodeImportSpan (j : Json) : Option ImportSpan :=
+  if j.isNull then some .none
+  else do
+    let s ← (j.getObjValAs? Nat "start").toOption
+    let e ← (j.getObjValAs? Nat "end").toOption
+    let l ← (j.getObjValAs? Nat "line").toOption
+    some (.span s e l)
+
+def decodeParsedImportEdge (j : Json) : Option ParsedImportEdge := do
+  let path ← (j.getObjValAs? String "path").toOption
+  let importAlias ← (j.getObjValAs? String "alias").toOption
+  let spanJson ← (j.getObjVal? "span").toOption
+  let span ← decodeImportSpan spanJson
+  some ⟨path, importAlias, span⟩
+
+def lockedImportToEdge (i : LockedImport) : Option ParsedImportEdge := do
+  let span ← decodeImportSpan i.span
+  some ⟨i.path, i.importAlias, span⟩
+
+def checkLockedImportsTyped (parsed locked : List ParsedImportEdge) : Bool :=
+  decide (parsed = locked)
+
+theorem checkLockedImportsTyped_sound (parsed locked : List ParsedImportEdge) :
+    checkLockedImportsTyped parsed locked = true ↔ parsed = locked := by
+  simp [checkLockedImportsTyped]
+
+def checkLockedImportsJson (parsedJson : List Json) (locked : List LockedImport) : Bool :=
+  match parsedJson.mapM decodeParsedImportEdge, locked.mapM lockedImportToEdge with
+  | some pEdges, some lEdges => checkLockedImportsTyped pEdges lEdges
+  | _, _ => false
+
+theorem checkLockedImportsJson_sound {parsedJson : List Json} {locked : List LockedImport}
+    (h : checkLockedImportsJson parsedJson locked = true) :
+    ∃ edges : List ParsedImportEdge,
+      parsedJson.mapM decodeParsedImportEdge = some edges ∧
+      locked.mapM lockedImportToEdge = some edges := by
+  unfold checkLockedImportsJson at h
+  cases hp : parsedJson.mapM decodeParsedImportEdge with
+  | none => simp [hp] at h
+  | some pEdges =>
+    cases hl : locked.mapM lockedImportToEdge with
+    | none => simp [hp, hl] at h
+    | some lEdges =>
+      simp only [hp, hl] at h
+      have heq : pEdges = lEdges := (checkLockedImportsTyped_sound pEdges lEdges).mp h
+      subst heq
+      exact ⟨pEdges, rfl, rfl⟩
+
+theorem checkLockedImportsJson_complete {parsedJson : List Json} {locked : List LockedImport}
+    {edges : List ParsedImportEdge}
+    (hp : parsedJson.mapM decodeParsedImportEdge = some edges)
+    (hl : locked.mapM lockedImportToEdge = some edges) :
+    checkLockedImportsJson parsedJson locked = true := by
+  unfold checkLockedImportsJson; simp [hp, hl, checkLockedImportsTyped]
+
+example : checkLockedImportsJson [] [] = true := rfl
+
+/-- A parsed module, checked: its locked import transcript matches the parsed edges by typed
+structural equality (`checkLockedImportsTyped`, zero JSON `.compress` round-trips), and its AST
+decodes to the elaborator's module. -/
 def checkParsed (m : SourceModule) (ast : Json) : Except Diagnostic Syntax.Module := do
-  let parsed := ((ast.getObjVal? "imports").bind Json.getArr?).toOption.getD #[]
-  let locked := m.imports.toArray.map fun i =>
-    Json.mkObj [("path", toJson i.path), ("alias", toJson i.importAlias), ("span", i.span)]
-  if (Json.arr parsed).compress != (Json.arr locked).compress then
+  let parsed := (((ast.getObjVal? "imports").bind Json.getArr?).toOption.getD #[]).toList
+  if !checkLockedImportsJson parsed m.imports then
     throw (elaborationRefusal "import transcript differs from parsed imports")
   match Syntax.decodeModule (Json.mkObj [("name", toJson m.name),
       ("imports", Json.arr (m.imports.map fun i =>
@@ -397,6 +453,9 @@ theorem verifyCertJudgeTags_sound (admitsTag : String → Bool) (cert : Elaborat
   simp only [verifyCertJudgeTags, Bool.and_eq_true] at h
   exact ⟨h.1, fun tag hmem => allJudgeTagsAdmitted_mem admitsTag h.2 hmem⟩
 
+example : verifyCertJudgeTags (fun _ => true)
+    ⟨"k", "Nat", .bool true, [], true, ["z3"], .keeps "inv" "law"⟩ = true := rfl
+
 /-- End-to-end soundness of `verifyCertJudgeTags` on `Elaborate.elaborateContractIsarCert m c`
     (`0 sorry`, `0 Classical.choice`):
     whenever `verifyCertJudgeTags admitsTag (Elaborate.elaborateContractIsarCert m c) = true`,
@@ -506,6 +565,72 @@ theorem verifyContractIsarCert_sound (admitsTag : String → Bool) (m : Syntax.M
      Obend.Elab.AutoCert.synthesizeContractExternalJudges
        Obend.Elab.AutoCert.autoCertFormats m.name book? c)
   return (contracts, certs, synthBundles)
+
+/-! ## Direct Structured `Spec.Syntax.Expr` Acceptance Entrypoint (Zero JSON Packet Round-Trip) -/
+
+/-- Closed `Syntax.Expr` elaborated directly via `BidirectionalSurfaceElab.checkSyntaxExpr` and
+    verified by the kernel-checked `Obend.Core.Bidirectional.checkAgainst` gate without any JSON
+    serialization round-trip. -/
+structure AcceptedSyntaxExpr (env : BidirectionalSurfaceElab.Env) (fuel : Nat)
+    (expr : Syntax.Expr) (expected : Obend.Core.Ty.Ty) where
+  elaborated : { e : BidirectionalSurfaceElab.ElaboratedSyntax env [] fuel expr //
+    e.type = expected ∧
+    Obend.Core.Ty.safeUses [] e.uses = true ∧
+    Obend.Core.Ty.validContext env.assumptions.shareableVariables [] = true ∧
+    env.assumptions.valid = true }
+  elaboratedExact : BidirectionalSurfaceElab.checkSyntaxExpr env [] fuel expr expected = .inr elaborated
+  source : Obend.Core.Check.AnnotatedTerm
+  sourceExact : source = elaborated.val.annotated
+  typed : Checked source []
+  typedExact : Obend.Core.Bidirectional.checkAgainst source [] expected = .ok typed
+
+def acceptSyntaxExpr (env : BidirectionalSurfaceElab.Env) (fuel : Nat)
+    (expr : Syntax.Expr) (expected : Obend.Core.Ty.Ty) :
+    Except Diagnostic (AcceptedSyntaxExpr env fuel expr expected) :=
+  match hElab : BidirectionalSurfaceElab.checkSyntaxExpr env [] fuel expr expected with
+  | .inl diag =>
+    .error (elaborationRefusal ("surface elaboration refused: " ++ reprStr diag))
+  | .inr out =>
+    let src := out.val.annotated
+    match hChk : Obend.Core.Bidirectional.checkAgainst src [] expected with
+    | .ok chk => .ok ⟨out, hElab, src, rfl, chk, hChk⟩
+    | .error _ =>
+      .error ⟨"objective-typed-check", "the checker refused the elaborated surface expression", none, none⟩
+
+theorem acceptSyntaxExpr_complete {env : BidirectionalSurfaceElab.Env} {fuel : Nat}
+    {expr : Syntax.Expr} {expected : Obend.Core.Ty.Ty}
+    {out : { e : BidirectionalSurfaceElab.ElaboratedSyntax env [] fuel expr //
+      e.type = expected ∧
+      Obend.Core.Ty.safeUses [] e.uses = true ∧
+      Obend.Core.Ty.validContext env.assumptions.shareableVariables [] = true ∧
+      env.assumptions.valid = true }}
+    (h : BidirectionalSurfaceElab.checkSyntaxExpr env [] fuel expr expected = .inr out) :
+    ∃ accepted, acceptSyntaxExpr env fuel expr expected = .ok accepted ∧
+      accepted.source.erase = out.val.term := by
+  obtain ⟨chk, hChk, _, _⟩ := BidirectionalSurfaceElab.elabSyntaxExpr_checks_bidirectionally h
+  have hChk' : Obend.Core.Bidirectional.checkAgainst out.val.annotated [] expected = .ok chk := hChk
+  unfold acceptSyntaxExpr
+  split
+  · rename_i _ heq; rw [h] at heq; cases heq
+  · rename_i out' heq; cases PSum.inr.inj (h.symm.trans heq)
+    dsimp only; split
+    · exact ⟨_, rfl, rfl⟩
+    · rename_i _ herr; rw [hChk'] at herr; cases herr
+
+/-- **Bounded Machine Safety (`acceptSyntaxExpr_never_refused`)**:
+    Every closed `Syntax.Expr` admitted by `acceptSyntaxExpr` executes on `Obend.Core.Machine.runBounded`
+    without ever hitting `.refused`, at any heap/stack/tick budget. -/
+theorem acceptSyntaxExpr_never_refused {env : BidirectionalSurfaceElab.Env} {fuel : Nat}
+    {expr : Syntax.Expr} {expected : Obend.Core.Ty.Ty}
+    (a : AcceptedSyntaxExpr env fuel expr expected)
+    (limits : Obend.Core.Machine.Limits) (ticks : Nat)
+    (reason : Obend.Core.Machine.Refusal) (retained : Obend.Core.Machine.State) :
+    Obend.Core.Machine.runBounded limits ticks
+      (Obend.Core.Machine.initial a.elaborated.val.term) ≠ .refused reason retained := by
+  have hNoRef := Obend.Core.Proofs.Preservation.checked_runBounded_no_refusal
+    a.source a.typed limits ticks reason retained
+  have hErase : a.source.erase = a.elaborated.val.term := by rw [a.sourceExact]; rfl
+  rwa [hErase] at hNoRef
 
 end Obend.Spec.FrontEnd
 
