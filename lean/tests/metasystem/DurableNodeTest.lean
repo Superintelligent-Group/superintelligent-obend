@@ -18,7 +18,7 @@ Verifies:
 -/
 
 public import Obend.Vault.UnifiedDeos
-public import Obend.Hardware.AgenticEDA
+public import Obend.Hardware.PinoutEquiv
 public import Obend.FFI.Bridge
 public import Obend.Tactic.Tooth
 import all Obend.Consensus.Simplex
@@ -26,7 +26,42 @@ import all Obend.Consensus.SimplexProtocol
 import all Obend.Consensus.Finality
 import all Obend.Digest.Cshake256.Seam
 import all Obend.Vault.UnifiedDeos
-import all Obend.Hardware.AgenticEDA
+import all Obend.Hardware.PinoutEquiv
+import all Obend.Hardware.Datasheet
+import all Obend.Doc.Merge
+import all Obend.Consensus.Epistemic
+import all Obend.Vault.Page
+import all Obend.Vault.Law
+import all Obend.Spec.Law
+import all Obend.Spec.LawCompile
+import all Obend.Spec.LawDial
+import all Obend.Spec.C4
+import all Obend.Spec.DataWire
+import all Obend.Run.Core4
+import all Obend.Core.Data
+import all Obend.Core.Term
+import all Obend.Core.Ty
+import all Obend.Core.Code
+import all Obend.Core.Machine
+import all Obend.Core.MachineFast
+import all Obend.Core.Check
+import all Obend.Core.Nominal
+import all Obend.Core.Brand
+import all Obend.Core.Assumptions
+import all Obend.Core.RowHit
+import all Obend.Core.Traverse
+import all Obend.Core.TermTraverse
+import all Obend.Core.Invariant
+import all Obend.Core.Bidirectional
+import all Obend.Core.MachineTyping
+import all Obend.Core.TypeGraph
+import all Obend.Core.TypeGraphHead
+import all Obend.Core.TypeGraphAlias
+import all Obend.Core.TypeGraphResource
+import all Obend.Core.FieldCongruence
+import all Obend.Core.RowCongruence
+import all Obend.Core.EquiRecursiveLookup
+import all Obend.Core.FinitePresentation
 import all Obend.FFI.Bridge
 
 public section
@@ -39,7 +74,7 @@ open Obend.Consensus.SimplexProtocol
 open Obend.Consensus.SimplexTrace
 open Obend.Consensus.Finality
 open Obend.Consensus.Epistemic
-open Obend.Hardware.AgenticEDA
+open Obend.Hardware.PinoutEquiv
 open Obend.Run.Durable
 open Obend.Fold.Collapse
 open Obend.FFI
@@ -104,37 +139,31 @@ instance : VerifiableRace Nat MultiAgentBoardMergeProposal where
   cost baseCost p := baseCost + p.rfLayoutAgentBoard.costCents
   digest p := ByteArray.mk #[UInt8.ofNat (p.rfLayoutAgentBoard.costCents % 256)]
 
-/-- 3. Concrete verification of `AgenticEDA` epistemic race winner selection and conflict refusal. -/
+def powerAgentBranch : EdaVaultPart :=
+  { baselineLdoPart with vohMinMv := 2950, volMaxMv := 180, maxTempMc := 68000 }
+
+def rfLayoutAgentBranch : EdaVaultPart :=
+  { baselineLdoPart with vswrMilli := 1280, costCents := 120 }
+
+def multiAgentProposal : MultiAgentBoardMergeProposal :=
+  { laws := defaultEdaLaws
+    baseBoard := baselineLdoPart
+    powerAgentBoard := powerAgentBranch
+    rfLayoutAgentBoard := rfLayoutAgentBranch }
+
+def conflictingProposal : MultiAgentBoardMergeProposal :=
+  { multiAgentProposal with
+    powerAgentBoard := { powerAgentBranch with costCents := 135 } }
+
+/-- 3. Concrete verification of `PinoutEquiv` epistemic race winner selection and conflict refusal. -/
 theorem test_eda_swarm_epistemic_winner :
-    checkEdaSwarmCandidate goldenMultiAgentCoDesignProposal = true ∧
-    checkEdaSwarmCandidate conflictingMultiAgentCoDesignProposal = false ∧
-    selectWinner 500 [conflictingMultiAgentCoDesignProposal, goldenMultiAgentCoDesignProposal] =
-      some goldenMultiAgentCoDesignProposal ∧
-    selectWinner 500 [goldenMultiAgentCoDesignProposal, conflictingMultiAgentCoDesignProposal] =
-      some goldenMultiAgentCoDesignProposal := by
-  have hAdm := goldenMultiAgentCoDesign_admitted_and_conflict_refused.2.1
-  have hConf := goldenMultiAgentCoDesign_admitted_and_conflict_refused.2.2
-  have hc1 : checkEdaSwarmCandidate goldenMultiAgentCoDesignProposal = true := by
-    unfold checkEdaSwarmCandidate; rw [hAdm]; decide
-  have hc2 : checkEdaSwarmCandidate conflictingMultiAgentCoDesignProposal = false := by
-    unfold checkEdaSwarmCandidate; rw [hConf]; decide
-  have hv1 : certValid 500 goldenMultiAgentCoDesignProposal = true := by
-    change (decide (goldenMultiAgentCoDesignProposal.rfLayoutAgentBoard.costCents ≤ 500) &&
-      checkEdaSwarmCandidate goldenMultiAgentCoDesignProposal) = true
-    rw [hc1]
-    decide
-  have hv2 : certValid 500 conflictingMultiAgentCoDesignProposal = false := by
-    change (decide (conflictingMultiAgentCoDesignProposal.rfLayoutAgentBoard.costCents ≤ 500) &&
-      checkEdaSwarmCandidate conflictingMultiAgentCoDesignProposal) = false
-    rw [hc2]
-    simp
-  refine ⟨hc1, hc2, ?_, ?_⟩
-  · unfold selectWinner
-    simp only [List.filter_cons, hv1, hv2, Bool.false_eq_true, ↓reduceIte, List.filter_nil]
-    rfl
-  · unfold selectWinner
-    simp only [List.filter_cons, hv1, hv2, Bool.false_eq_true, ↓reduceIte, List.filter_nil]
-    rfl
+    checkEdaSwarmCandidate multiAgentProposal = true ∧
+    checkEdaSwarmCandidate conflictingProposal = false ∧
+    selectWinner 500 [conflictingProposal, multiAgentProposal] =
+      some multiAgentProposal ∧
+    selectWinner 500 [multiAgentProposal, conflictingProposal] =
+      some multiAgentProposal := by
+  decide +kernel
 
 /-- Any `AgenticEDA` board merge proposal refused by physical/merge DRC is strictly refused by `checkEdaSwarmCandidate`. -/
 theorem edaSwarm_refusedByPhysics_candidate_refused

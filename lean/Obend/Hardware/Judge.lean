@@ -11,23 +11,24 @@ public import Obend.Hardware.HDL
 public import Obend.Hardware.Compiler
 public import Obend.Hardware.Retiming
 public import Obend.Hardware.PlaceRoute
-public import Obend.Hardware.DRC
-public import Obend.Hardware.Analog
+public import Obend.Hardware.SmallSignalMna
 public import Obend.Hardware.Datasheet
 public import Obend.Hardware.Circuits
 public import Obend.Hardware.ReductionMachine
-public import Obend.Hardware.DSP
-public import Obend.Hardware.AgenticEDA
+public import Obend.Hardware.DigitalFilterAndArray
+public import Obend.Hardware.PinoutEquiv
 public import Obend.Hardware.Codec
+import all Obend.Hardware.PinoutEquiv
+import all Obend.Hardware.Codec
 public section
 namespace Obend.Hardware.Judge
 open Lean (Json toJson)
 open Obend.Judge
 open Obend.Hardware.Process Obend.Hardware.HDL Obend.Hardware.Compiler
 open Obend.Hardware.Retiming Obend.Hardware.PlaceRoute
-open Obend.Hardware.DRC Obend.Hardware.Analog
+open Obend.Hardware.SmallSignalMna
 open Obend.Hardware.Datasheet Obend.Hardware.Circuits
-open Obend.Hardware.ReductionMachine Obend.Hardware.DSP Obend.Hardware.AgenticEDA
+open Obend.Hardware.ReductionMachine Obend.Hardware.DigitalFilterAndArray Obend.Hardware.PinoutEquiv
 open Obend.Hardware.Codec
 set_option autoImplicit false
 /-! Lossless deterministic CBOR. Arrays are fixed tuples or cons cells; arbitrary
@@ -1000,28 +1001,29 @@ theorem datasheetFitFormat_complete {o : String} (h : ∃ c : DatasheetFitCert, 
 /-- Declarative semantic specification for `agentic-eda-swap@1`: vault `.obend` law admission plus
 denotational law satisfaction and physical 3.3V LVCMOS static noise-margin inequalities. -/
 def AgenticEdaSwapMeaning (minMarginMv : Int) (c : EdaVaultPart) : Prop :=
-  let oldData := Obend.Vault.stateOf edaStateKeys goldenBaselinePart.toScalarFields
+  let oldData := Obend.Vault.stateOf edaStateKeys baselineLdoPart.toScalarFields
   let newData := Obend.Vault.stateOf edaStateKeys c.toScalarFields
   let reqData := Obend.Vault.requestOf "procurement_scout" .write defaultEdaFacts
-  Obend.Vault.judge (Obend.Vault.stateTy edaStateKeys) c.pageName goldenEdaLaws oldData newData reqData = .admitted ∧
-  (∀ p ∈ goldenEdaLaws, p.2.denote defaultEdaFacts (some oldData) newData = true) ∧
+  Obend.Vault.judge (Obend.Vault.stateTy edaStateKeys) c.pageName defaultEdaLaws oldData newData reqData = .admitted ∧
+  (∀ p ∈ defaultEdaLaws, p.2.denote defaultEdaFacts (some oldData) newData = true) ∧
+  defaultDatasheetCite256.pinnedDigest256 = defaultDatasheetCite256.currentDigest256 ∧
   minMarginMv ≤ noiseMarginHigh c.toLogicFamilySpec lvcmos33ReceiverSpec 0 ∧
   minMarginMv ≤ noiseMarginLow c.toLogicFamilySpec lvcmos33ReceiverSpec ∧
   c.toLogicFamilySpec.volMaxMv < lvcmos33ReceiverSpec.vihMinMv
 def checkAgenticEdaSwapBool (minMarginMv : Int) (candidatePart : EdaVaultPart) : Bool :=
-  judgeAgenticEdaProposal goldenEdaLaws goldenBaselinePart candidatePart lvcmos33ReceiverSpec
-    minMarginMv goldenFreshDatasheetCite "procurement_scout" defaultEdaFacts == .admitted
+  judgeAgenticEdaProposal defaultEdaLaws baselineLdoPart candidatePart lvcmos33ReceiverSpec
+    minMarginMv defaultDatasheetCite256 "procurement_scout" defaultEdaFacts == .admitted
 def checkAgenticEdaJudge (_grade : Nat) (minMarginMv : Int) (candidatePart : EdaVaultPart) : Verdict HwClause :=
   if decide (800 < minMarginMv) then .refused .unsatAgenticMarginTarget []
   else if checkAgenticEdaSwapBool minMarginMv candidatePart then .ok
   else .refused (.agenticEdaSwapViolation candidatePart.pageName) []
 theorem checkAgenticEdaSwapBool_iff (minMarginMv : Int) (c : EdaVaultPart) :
     checkAgenticEdaSwapBool minMarginMv c = true ↔ AgenticEdaSwapMeaning minMarginMv c := by
-  have hCite : checkDatasheetCiteFresh goldenFreshDatasheetCite = true := rfl
+  have hCite : checkDatasheetCite256Fresh defaultDatasheetCite256 = true := by decide
   unfold checkAgenticEdaSwapBool judgeAgenticEdaProposal AgenticEdaSwapMeaning
   dsimp only
-  cases hj : Obend.Vault.judge (Obend.Vault.stateTy edaStateKeys) c.pageName goldenEdaLaws
-      (Obend.Vault.stateOf edaStateKeys goldenBaselinePart.toScalarFields)
+  cases hj : Obend.Vault.judge (Obend.Vault.stateTy edaStateKeys) c.pageName defaultEdaLaws
+      (Obend.Vault.stateOf edaStateKeys baselineLdoPart.toScalarFields)
       (Obend.Vault.stateOf edaStateKeys c.toScalarFields)
       (Obend.Vault.requestOf "procurement_scout" .write defaultEdaFacts) with
   | refused _ _ => simp
@@ -1032,16 +1034,16 @@ theorem checkAgenticEdaSwapBool_iff (minMarginMv : Int) (c : EdaVaultPart) :
     cases hIf : checkLogicInterface c.toLogicFamilySpec lvcmos33ReceiverSpec 0 minMarginMv
     · simp only [checkLogicInterface, Bool.and_eq_true, Bool.and_eq_false_imp, decide_eq_true_eq,
         decide_eq_false_iff_not] at hIf
-      exact ⟨fun h => (by cases h), fun ⟨_, _, h1, h2, h3⟩ => False.elim (hIf ⟨h1, h2⟩ h3)⟩
+      exact ⟨fun h => (by cases h), fun ⟨_, _, _, h1, h2, h3⟩ => False.elim (hIf ⟨h1, h2⟩ h3)⟩
     · simp only [checkLogicInterface, Bool.and_eq_true, decide_eq_true_eq] at hIf
-      exact ⟨fun _ => ⟨rfl, hDenote, hIf.1.1, hIf.1.2, hIf.2⟩, fun _ => rfl⟩
+      exact ⟨fun _ => ⟨rfl, hDenote, rfl, hIf.1.1, hIf.1.2, hIf.2⟩, fun _ => rfl⟩
 theorem checkAgenticEdaJudge_ok_iff (r : Nat) (minMarginMv : Int) (c : EdaVaultPart) :
     checkAgenticEdaJudge r minMarginMv c = .ok ↔ AgenticEdaSwapMeaning minMarginMv c := by
   unfold checkAgenticEdaJudge
   by_cases hGt : 800 < minMarginMv
   · simp only [decide_eq_true hGt, ↓reduceIte, reduceCtorEq, false_iff]
     intro hm
-    have hLow := hm.2.2.2.1
+    have hLow := hm.2.2.2.2.1
     dsimp only [noiseMarginLow, lvcmos33ReceiverSpec, EdaVaultPart.toLogicFamilySpec] at hLow
     omega
   · simp only [decide_eq_false hGt, Bool.false_eq_true, ↓reduceIte]
@@ -1059,7 +1061,7 @@ instance agenticEdaJudge : Obend.Judge Int EdaVaultPart where
     split at hc
     · rename_i hGt
       have hGt' : 800 < o := of_decide_eq_true hGt
-      have hLow := hm.2.2.2.1
+      have hLow := hm.2.2.2.2.1
       dsimp only [noiseMarginLow, lvcmos33ReceiverSpec, EdaVaultPart.toLogicFamilySpec] at hLow
       omega
     · split at hc <;> cases hc; cases hk
@@ -1130,7 +1132,7 @@ def BinaryHwCertDomainMeaning (c : BinaryHwCert) : Prop :=
       evalRtlExpr (fun _ => BitVec.ofNat 64 c.p4.toNat) (fun _ => 0#64) (fun _ => 0#64) decTile.datapath =
         BitVec.ofNat 64 c.p5.toNat
   | .edaBomSwap =>
-    AgenticEdaSwapMeaning c.p5 { goldenBaselinePart with
+    AgenticEdaSwapMeaning c.p5 { baselineLdoPart with
       vohMinMv := c.p0.toNat, volMaxMv := c.p1.toNat, maxTempMc := c.p2.toNat,
       vswrMilli := c.p3.toNat, costCents := c.p4.toNat }
   | .multiphysics =>
@@ -1171,7 +1173,7 @@ theorem verifyBinaryHwCert_iff (c : BinaryHwCert) :
       · simp [h1, h2, h3]
       · simp [h1, h2, h3, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq]
   · simpa [verifyBinaryHwCert, BinaryHwCertDomainMeaning, checkAgenticEdaSwapBool] using
-      (checkAgenticEdaSwapBool_iff p5 { goldenBaselinePart with
+      (checkAgenticEdaSwapBool_iff p5 { baselineLdoPart with
         vohMinMv := p0.toNat, volMaxMv := p1.toNat, maxTempMc := p2.toNat,
         vswrMilli := p3.toNat, costCents := p4.toNat })
   · simp [verifyBinaryHwCert, BinaryHwCertDomainMeaning, decide_eq_true_eq]
@@ -1391,7 +1393,7 @@ theorem extractNatField_and_extractIntField_verified {grade : Nat} :
                belSlot := 0, lutInit := 0x6 } ] }
      checkPnrJudge grade 2000 pnr = .refused (.pnrCollisionShortOrTiming "obend_routed_adder2") []) ∧
     (let cand : EdaVaultPart :=
-       { goldenBaselinePart with
+       { baselineLdoPart with
          costCents := (extractNatField "{\"costCents\": 320}" "costCents").getD 120 }
      checkAgenticEdaJudge grade 400 cand = .refused (.agenticEdaSwapViolation "U4_LDO") []) := by
   simp only [checkPnrJudge_grade_irrel, checkAgenticEdaJudge_grade_irrel]

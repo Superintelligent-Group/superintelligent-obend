@@ -16,10 +16,9 @@ public import Obend.Hardware.HDL
 public import Obend.Hardware.Synth
 public import Obend.Hardware.Process
 public import Obend.Hardware.PlaceRoute
-public import Obend.Hardware.DRC
+public import Obend.Hardware.PlaneSweepDrcLvs
 public import Obend.Hardware.Circuits
 public import Obend.Hardware.Retiming
-public import Obend.Hardware.Analog
 public import Obend.Leaf.Emit
 public import Obend.Hardware.Kinematics
 public import Obend.Hardware.Magnetics
@@ -37,10 +36,9 @@ open Obend.Hardware.HDL
 open Obend.Hardware.Synth
 open Obend.Hardware.Process
 open Obend.Hardware.PlaceRoute
-open Obend.Hardware.DRC
+open Obend.Hardware.PlaneSweepDrcLvs
 open Obend.Hardware.Circuits
 open Obend.Hardware.Retiming
-open Obend.Hardware.Analog
 open Obend.Hardware.Magnetics
 
 set_option autoImplicit false

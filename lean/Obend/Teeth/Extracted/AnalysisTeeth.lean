@@ -28,13 +28,13 @@ import all Obend.Core.Term
 import all Obend.Core.Ty
 import all Obend.Elab.AutoCert
 import all Obend.Fold
-import all Obend.Hardware.AgenticEDA
-import all Obend.Hardware.Analog
+import all Obend.Hardware.PinoutEquiv
+import all Obend.Hardware.SmallSignalMna
 import all Obend.Hardware.Circuits
 import all Obend.Hardware.Codec
 import all Obend.Hardware.Compiler
-import all Obend.Hardware.DRC
-import all Obend.Hardware.DSP
+import all Obend.Hardware.PlaneSweepDrcLvs
+import all Obend.Hardware.DigitalFilterAndArray
 import all Obend.Hardware.Datasheet
 import all Obend.Hardware.HDL
 import all Obend.Hardware.Judge

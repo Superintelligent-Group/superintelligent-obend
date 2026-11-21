@@ -4,7 +4,7 @@ import Obend.Doc.Merge
 import Obend.Doc.Backlinks
 import Obend.Receipt.Merkle
 import Obend.Receipt.Negotiation
-import Obend.Hardware.AgenticEDA
+import Obend.Hardware.PinoutEquiv
 
 /-!
 # `tests/metasystem/SemanticMergeAndEdaTest.lean` — WS-L End-to-End Verification Suite
@@ -22,7 +22,7 @@ Comprehensive verification of the WS-L deliverables:
 4. **`Obend.Receipt.Negotiation`** — Pareto-Optimal / Minimum-Cost Cross-World Judge Negotiation
    (`NegotiatedJudgeFormat`, `selectMinCostCommonJudge`,
    `selectMinCostCommonJudge_supported_by_both`, `selectMinCostCommonJudge_minimal`).
-5. **`Obend.Hardware.AgenticEDA`** — Multi-Agent Concurrent PCB/BOM Co-Design over 3-Way Merge &
+5. **`Obend.Hardware.PinoutEquiv`** — Multi-Agent Concurrent PCB/BOM Co-Design over 3-Way Merge &
    Merkle Receipts (`MultiAgentBoardMergeProposal`, `mergeAndJudgeAgenticEdaBoard`,
    `mergeAndJudgeAgenticEdaBoard_sound`, `conflictingAgentBoardEdits_refused`).
 -/
@@ -33,7 +33,7 @@ open Obend.Core.Data (Data)
 open Obend.Doc
 open Obend.Receipt.Merkle
 open Obend.Receipt.Negotiation
-open Obend.Hardware.AgenticEDA
+open Obend.Hardware.PinoutEquiv
 
 -- ============================================================================
 -- 1. 3-Way Keyed Section/Cell LCA Merge (`Obend.Doc.Patch`, `Obend.Doc.Merge`)
@@ -376,14 +376,30 @@ theorem test_selectMinCostCommonJudge_complete_probe :
   selectMinCostCommonJudge := fun _ _ => none
 
 -- ============================================================================
--- 5. Multi-Agent Concurrent PCB/BOM Co-Design (`Obend.Hardware.AgenticEDA`)
+-- 5. Multi-Agent Concurrent PCB/BOM Co-Design (`Obend.Hardware.PinoutEquiv`)
 -- ============================================================================
 
--- Disjoint Power/Analog and RF/Layout agent edits merge cleanly into `goldenSecondSourcePart` and pass judge:
-#guard edaBoardConflictFields goldenBaselinePart goldenPowerAgentBranch goldenRfLayoutAgentBranch == []
-#guard mergeEdaPartFields3 goldenBaselinePart goldenPowerAgentBranch goldenRfLayoutAgentBranch ==
-  goldenSecondSourcePart
-#guard mergeAndJudgeAgenticEdaBoard goldenMultiAgentCoDesignProposal == .admitted
+def powerAgentBranch : EdaVaultPart :=
+  { baselineLdoPart with vohMinMv := 2950, volMaxMv := 180, maxTempMc := 68000 }
+
+def rfLayoutAgentBranch : EdaVaultPart :=
+  { baselineLdoPart with vswrMilli := 1280, costCents := 120 }
+
+def multiAgentProposal : MultiAgentBoardMergeProposal :=
+  { laws := defaultEdaLaws
+    baseBoard := baselineLdoPart
+    powerAgentBoard := powerAgentBranch
+    rfLayoutAgentBoard := rfLayoutAgentBranch }
+
+def conflictingProposal : MultiAgentBoardMergeProposal :=
+  { multiAgentProposal with
+    powerAgentBoard := { powerAgentBranch with costCents := 135 } }
+
+-- Disjoint Power/Analog and RF/Layout agent edits merge cleanly into `secondSourceLdoPart` and pass judge:
+#guard edaBoardConflictFields baselineLdoPart powerAgentBranch rfLayoutAgentBranch == []
+#guard mergeEdaPartFields3 baselineLdoPart powerAgentBranch rfLayoutAgentBranch ==
+  secondSourceLdoPart
+#guard mergeAndJudgeAgenticEdaBoard multiAgentProposal == .admitted
 
 -- Commutativity of multi-agent board merge & judge:
 example (prop : MultiAgentBoardMergeProposal) :
@@ -397,29 +413,29 @@ example (prop : MultiAgentBoardMergeProposal) :
 -- Merkle batch receipt verification over merged EDA board scalar fields (`voh_min_mv`, `max_temp_mc`, `vswr_milli`, `cost_cents`):
 #guard verifyMerkleBatchProof
   fastMerkleTestHash
-  (buildEdaBoardBatchProof fastMerkleTestHash goldenSecondSourcePart [0, 8, 9, 11])
-  (commitEdaBoardMerkleRoot fastMerkleTestHash goldenSecondSourcePart) == true
+  (buildEdaBoardBatchProof fastMerkleTestHash secondSourceLdoPart [0, 8, 9, 11])
+  (commitEdaBoardMerkleRoot fastMerkleTestHash secondSourceLdoPart) == true
 
-theorem deployed_goldenSecondSourceBoard_batch_verifies :
+theorem deployed_secondSourceBoard_batch_verifies :
     verifyMerkleBatchProof Obend.Core.Digest.deployed
-      (buildEdaBoardBatchProof Obend.Core.Digest.deployed goldenSecondSourcePart [0, 8, 9, 11])
-      (commitEdaBoardMerkleRoot Obend.Core.Digest.deployed goldenSecondSourcePart) = true :=
-  deployed_edaBoardBatchProof_verifies goldenSecondSourcePart [0, 8, 9, 11]
+      (buildEdaBoardBatchProof Obend.Core.Digest.deployed secondSourceLdoPart [0, 8, 9, 11])
+      (commitEdaBoardMerkleRoot Obend.Core.Digest.deployed secondSourceLdoPart) = true :=
+  deployed_edaBoardBatchProof_verifies secondSourceLdoPart [0, 8, 9, 11]
     (by decide) (by intro i hi; simp at hi; omega)
 
 -- Conflicting agent edits on `costCents` are localized and deterministically refused:
 #guard edaBoardConflictFields
-  conflictingMultiAgentCoDesignProposal.baseBoard
-  conflictingMultiAgentCoDesignProposal.powerAgentBoard
-  conflictingMultiAgentCoDesignProposal.rfLayoutAgentBoard == ["cost_cents"]
-#guard mergeAndJudgeAgenticEdaBoard conflictingMultiAgentCoDesignProposal ==
+  conflictingProposal.baseBoard
+  conflictingProposal.powerAgentBoard
+  conflictingProposal.rfLayoutAgentBoard == ["cost_cents"]
+#guard mergeAndJudgeAgenticEdaBoard conflictingProposal ==
   .refusedByPhysics "concurrent-field-merge-conflict"
 
 -- Disjoint agent edits where the RF/BOM agent exceeds the BOM budget (`costCents = 320 > 250`)
 -- merge cleanly at the 3-way LCA layer but are refused by the `.obend` `"bom_budget"` smart contract:
 def overbudgetMultiAgentProposal : MultiAgentBoardMergeProposal :=
-  { goldenMultiAgentCoDesignProposal with
-    rfLayoutAgentBoard := { goldenRfLayoutAgentBranch with costCents := 320 } }
+  { multiAgentProposal with
+    rfLayoutAgentBoard := { rfLayoutAgentBranch with costCents := 320 } }
 
 #guard edaBoardConflictFields
   overbudgetMultiAgentProposal.baseBoard
@@ -436,7 +452,7 @@ example (prop : MultiAgentBoardMergeProposal)
     let mergedData := Obend.Vault.stateOf edaStateKeys mergedBoard.toScalarFields
     edaBoardConflictFields prop.baseBoard prop.powerAgentBoard prop.rfLayoutAgentBoard = [] ∧
     (∀ p ∈ prop.laws, p.2.denote prop.facts (some baseData) mergedData = true) ∧
-    prop.citePin.pinnedBlockHash = prop.citePin.currentDatasheetHash ∧
+    prop.citePin.pinnedDigest256 = prop.citePin.currentDigest256 ∧
     prop.downstreamReceiver.vihMinMv + prop.minNoiseMarginMv ≤ mergedBoard.toLogicFamilySpec.vohMinMv ∧
     mergedBoard.toLogicFamilySpec.volMaxMv + prop.minNoiseMarginMv ≤ prop.downstreamReceiver.vilMaxMv :=
   mergeAndJudgeAgenticEdaBoard_sound prop hAdmit

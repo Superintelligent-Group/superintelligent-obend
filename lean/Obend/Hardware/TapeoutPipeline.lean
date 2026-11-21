@@ -22,19 +22,19 @@ public import Obend.Hardware.Compiler
 public import Obend.Hardware.Synth
 public import Obend.Hardware.Retiming
 public import Obend.Hardware.PlaceRoute
-public import Obend.Hardware.DRC
+public import Obend.Hardware.PlaneSweepDrcLvs
 public import Obend.Hardware.Judge
 import all Obend.Spec.Syntax
 import all Obend.Lower.Proofs.Hardware
 import all Obend.Hardware.Compiler
+import all Obend.Hardware.PlaneSweepDrcLvs
 import all Obend.Hardware.Judge
 public section
 namespace Obend.Hardware.TapeoutPipeline
 open Lean (Json toJson)
 open Obend.Core.Term Obend.Equiv Obend.Logic Obend.Leaf Obend.Lower Obend.Spec Obend.Hardware.Process Obend.Hardware.HDL
-open Obend.Hardware.Compiler Obend.Hardware.Synth Obend.Hardware.Retiming Obend.Hardware.PlaceRoute Obend.Hardware.DRC Obend.Hardware.Judge
+open Obend.Hardware.Compiler Obend.Hardware.Synth Obend.Hardware.Retiming Obend.Hardware.PlaceRoute Obend.Hardware.PlaneSweepDrcLvs Obend.Hardware.Judge
 set_option autoImplicit false
-
 /-! ## 1. Hardware Compilation Modes, Default DRC Geometry, Configuration & Error Diagnostics -/
 /-- RTL compilation strategy for Stage 3 of the `.obend` tapeout pipeline. -/
 inductive RtlCompileMode where

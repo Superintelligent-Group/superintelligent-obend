@@ -40,6 +40,9 @@ def checkTrenchFillVoidFree (spec : TrenchFillSpec) : Bool :=
    decide (2 * spec.topCornerOverhangPct * spec.trenchDepthNm ≤ spec.stepCoveragePct * spec.trenchWidthNm))
 theorem conformal_ald_void_free (depthNm widthNm : Nat) (hWidth : widthNm > 0) :
     checkTrenchFillVoidFree ⟨depthNm, widthNm, 100, 100⟩ = true := by unfold checkTrenchFillVoidFree; simp [hWidth]
+theorem pvd_high_ar_keyhole_refused (extraDepthNm : Nat) :
+    checkTrenchFillVoidFree ⟨200 + extraDepthNm, 50, 20, 60⟩ = false := by
+  unfold checkTrenchFillVoidFree; simp; omega
 structure OverlayEnclosureSpec where
   padLeftNm         : Nat
   padRightNm        : Nat
