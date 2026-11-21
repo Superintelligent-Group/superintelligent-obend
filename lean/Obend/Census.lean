@@ -108,6 +108,8 @@ import Obend.Analysis.Hybrid
 import Obend.Analysis.HyperbolicBalanceLaws
 import Obend.Analysis.HyperbolicPdeCert
 import Obend.Analysis.Impact
+import Obend.Analysis.LaxWendroffConvergence
+import Obend.Analysis.LaxWendroffDefs
 import Obend.Analysis.NonlinearErrorTube
 import Obend.Analysis.NonlinearMultiDPde
 import Obend.Analysis.NonlinearPdeCli

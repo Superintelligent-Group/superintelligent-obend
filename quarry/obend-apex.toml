@@ -2094,6 +2094,27 @@ module = "Obend.Analysis.BuchbergerCompletion"
 theorem = "polyDivMod_zero_rem_cert"
 description = "Verified multivariate polynomial division with irreducible remainders (`polyDivMod_sound_and_irreducible`), `IdealMembershipCert` extraction, Lex/GrLex order laws, and Buchberger's coprime leading-monomial criterion (`buchberger_first_criterion_coprime`)."
 
+[[apex]]
+id = "analysis-muscl-second-order-and-strang-commutator"
+subsystem = "Analysis"
+module = "Obend.Analysis.LaxWendroffDefs"
+theorem = "muscl_nonextrema_second_order_truncation"
+description = "Rusanov/MUSCL-minmod consistency and Lipschitz continuity (`verifyFluxLipschitz_sound`), 1st-order Rusanov and 2nd-order non-extrema MUSCL Taylor truncation (`symJacobian_frechet_taylor`), and Strang `O(dt^2)` commutator cancellation (`strang_local_commutator_second_order`)."
+
+[[apex]]
+id = "analysis-lax-wendroff-sbp-and-weak-convergence"
+subsystem = "Analysis"
+module = "Obend.Analysis.LaxWendroffConvergence"
+theorem = "lax_wendroff_weak_residual_bound"
+description = "Exact multi-D discrete summation-by-parts (`evalSchemeStepRat_summation_by_parts`), quantitative Lax–Wendroff continuum weak-form convergence (`lax_wendroff_weak_residual_bound`, `lax_wendroff_1d_tvd_shock_rate`), `lax-wendroff-weak@1` Judge, and `runMeshRefinementTrace_sound`."
+
+[[apex]]
+id = "analysis-end-to-end-q32-silicon-weak-form"
+subsystem = "Analysis"
+module = "Obend.Analysis.LaxWendroffConvergence"
+theorem = "endToEnd_q32_silicon_weak_form_bound"
+description = "End-to-end continuum-to-Q32 silicon weak-form certificate welding `EndToEndPdeCert` (`q32_scheme_trajectory_error_tube`, Lie/Strang fused GPU kernel sweeps, and systolic RTL DAG refinement) to `lax_wendroff_weak_residual_bound`."
+
 # ==============================================================================
 # Planned Wave 5+ Vertical Spine Apex Theorems (`master_interface_and_systems_architecture.md`)
 # ==============================================================================
