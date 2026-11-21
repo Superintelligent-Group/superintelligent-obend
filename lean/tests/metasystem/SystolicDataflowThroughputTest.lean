@@ -72,6 +72,9 @@ private def flatPlane (_ : Nat) (_ _ : Nat → Nat) := 1
 #tooth systolic_wavefront_latency_and_throughput by mutation waveTime := flatPlane
 #tooth pipeline_register_contents by mutation stepPipelineStages := fun _ _ _ _ => none
 #tooth multiplexed_single_cell_matches_unrolled_array by mutation clockSamples := fun ys => ys.map some
+#tooth multiplexed_single_cell_matches_unrolled_array by mutation runUnrolled := fun _ _ _ => []
+#tooth euler_cube_stream by mutation Obend.Hardware.PdeHypergraphSymmetry.permuteEulerWords := fun _ ins => ins
+#tooth mhd_cube_stream by mutation Obend.Hardware.PdeHypergraphSymmetry.permuteMhdWords := fun _ ins => ins
 #tooth multiplexed_flux_trace by mutation runRtlStreamPipeline := fun _ r _ _ => ([], r)
 #tooth multiplexed_systolic_time_march_sound by mutation integrateFaces := fun _ sample _ j => sample 0 j
 
