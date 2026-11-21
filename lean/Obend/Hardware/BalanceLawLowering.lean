@@ -1,7 +1,6 @@
 module
 public import Obend.Analysis.HyperbolicBalanceLaws
 public import Obend.Tactic.SymDiffAndFlux
-public import Obend.Hardware.YosysLec
 import all Obend.Analysis.HyperbolicPdeCert
 import all Obend.Analysis.PdeSexprAndApprox
 import all Obend.Analysis.NonlinearMultiDPde
@@ -10,7 +9,6 @@ import all Obend.Hardware.Gpu.ArraySource
 import all Obend.Hardware.Gpu.SoacOptimize
 import all Obend.Hardware.Gpu.StencilTile
 import all Obend.Hardware.HDL
-import all Obend.Hardware.YosysLec
 import all Obend.Hardware.MultiDStencilTile
 import all Obend.Tactic.SymDiffAndFlux
 
@@ -25,8 +23,9 @@ import all Obend.Tactic.SymDiffAndFlux
   standard forward rounding-error analysis of Higham, *Accuracy and Stability of Numerical
   Algorithms* (2002), ch. 3, specialised to truncating fixed point.
 * Section 2: one shared CSE DAG for a directional flux and the source vector, its Q32 interval
-  gate, its systolic RTL (well-formed and SMT-faithful for the Yosys miter) and the GPU source
-  step `u_c + qmul32 dt S_c(u)`.
+  gate, its systolic RTL (well-formed and free of width-changing operators, which is what the
+  Yosys miter of `YosysLec` needs; this module does not import `YosysLec`, whose cone is large)
+  and the GPU source step `u_c + qmul32 dt S_c(u)`.
 -/
 
 public section
@@ -35,7 +34,7 @@ open Obend.Analysis.HyperbolicPde Obend.Analysis.PdeSexprAndApprox Obend.Analysi
 open Obend.Analysis.HyperbolicBalanceLaws
 open Obend.Hardware.ArrayHypergraph (Word)
 open Obend.Hardware.Gpu.ArraySource Obend.Hardware.Gpu.SoacOptimize Obend.Hardware.Gpu.StencilTile
-open Obend.Hardware.HDL Obend.Hardware.YosysLec Obend.Hardware.MultiDStencilTile
+open Obend.Hardware.HDL Obend.Hardware.MultiDStencilTile
 open Obend.Tactic.SymDiffAndFlux
 set_option autoImplicit false
 
@@ -150,8 +149,8 @@ theorem err_neg (w a : Word) (x ea : Rat) (ha : ratAbs (decodeQ32 a - x) ≤ ea)
     ratAbs_neg]
   exact ha
 
-/-- `decodeQ32_sshiftRight1_error`: arithmetic halving adds at most `ulp / 2`. -/
-theorem err_half (w a : Word) (x ea : Rat) (ha : ratAbs (decodeQ32 a - x) ≤ ea)
+/-- arithmetic halving adds at most `ulp / 2`. -/
+theorem decodeQ32_sshiftRight1_error (w a : Word) (x ea : Rat) (ha : ratAbs (decodeQ32 a - x) ≤ ea)
     (h : w.toInt = a.toInt / 2) : ratAbs (decodeQ32 w - x / 2) ≤ ea / 2 + ulp / 2 := by
   unfold decodeQ32 at *
   rw [h]
@@ -159,9 +158,9 @@ theorem err_half (w a : Word) (x ea : Rat) (ha : ratAbs (decodeQ32 a - x) ≤ ea
   obtain ⟨l2, u2⟩ := ratAbs_bounds_iff.mp ha
   exact ratAbs_bounds_iff.mpr ⟨by grind, by grind⟩
 
-/-- `decodeQ32_qmul32_error`: a non-wrapping floored product adds one ulp to the propagated
+/-- a non-wrapping floored product adds one ulp to the propagated
 operand errors, with operand magnitudes `Ma`, `Mb` in word units. -/
-theorem err_qmul (w a b : Word) (x y ea eb : Rat) (Ma Mb : Int)
+theorem decodeQ32_qmul32_error (w a b : Word) (x y ea eb : Rat) (Ma Mb : Int)
     (ha : ratAbs (decodeQ32 a - x) ≤ ea) (hb : ratAbs (decodeQ32 b - y) ≤ eb)
     (hMa : -Ma ≤ a.toInt ∧ a.toInt ≤ Ma) (hMb : -Mb ≤ b.toInt ∧ b.toInt ≤ Mb)
     (h : w.toInt = a.toInt * b.toInt / (2 : Int)^32) :
@@ -228,9 +227,9 @@ theorem resid_cast (r d n : Int) (hn : n = d ∨ n = -d) (hn0 : 0 ≤ n)
   unfold decodeInt at *
   exact ratAbs_bounds_iff.mpr ⟨by grind, by grind⟩
 
-/-- `decodeQ32_evalQ32Reciprocal_error`: on a denominator word with `m ≤ |d| ≤ 2^60`, `16 ≤ m`,
+/-- on a denominator word with `m ≤ |d| ≤ 2^60`, `16 ≤ m`,
 that approximates `x` within `ea < m / 2^32`, the Newton reciprocal word approximates `1 / x`. -/
-theorem err_recip (a : Word) (m : Int) (hm : 16 ≤ m) (hd : m ≤ a.toInt ∨ a.toInt ≤ -m)
+theorem decodeQ32_evalQ32Reciprocal_error (a : Word) (m : Int) (hm : 16 ≤ m) (hd : m ≤ a.toInt ∨ a.toInt ≤ -m)
     (hb : -(2 : Int)^60 ≤ a.toInt ∧ a.toInt ≤ (2 : Int)^60) (x ea : Rat)
     (hx : ratAbs (decodeQ32 a - x) ≤ ea) (hea : ea < decodeInt m) :
     ratAbs (decodeQ32 (evalQ32Reciprocal a) - 1 / x) ≤
@@ -360,7 +359,7 @@ theorem Tracks.half {a : Word} {x : Rat} {p : Q32Bound} (ha : Tracks a x p) :
   obtain ⟨ea, la, ua⟩ := ha
   have ht : (BitVec.sshiftRight a 1).toInt = a.toInt / 2 := by
     rw [BitVec.toInt_sshiftRight]; simp [Int.shiftRight_eq_div_pow]
-  refine ⟨err_half _ a x _ ea ht, ?_, ?_⟩ <;> (unfold Q32Bound.half; dsimp only; omega)
+  refine ⟨decodeQ32_sshiftRight1_error _ a x _ ea ht, ?_, ?_⟩ <;> (unfold Q32Bound.half; dsimp only; omega)
 
 theorem Tracks.qmul {a b : Word} {x y : Rat} {p q r : Q32Bound} (ha : Tracks a x p)
     (hb : Tracks b y q) (h : p.qmul q = some r) : Tracks (evalAluOp .qmul32 a b) (x * y) r := by
@@ -369,7 +368,7 @@ theorem Tracks.qmul {a b : Word} {x y : Rat} {p q r : Q32Bound} (ha : Tracks a x
   · cases Option.some.inj h
     obtain ⟨m1, m2⟩ := int_mul_abs_le ⟨la, ua⟩ ⟨lb, ub⟩
     have ht := qmul32_toInt a b (by constructor <;> omega)
-    refine ⟨err_qmul _ a b x y _ _ p.mag q.mag ea eb ⟨la, ua⟩ ⟨lb, ub⟩ ht, ?_, ?_⟩ <;>
+    refine ⟨decodeQ32_qmul32_error _ a b x y _ _ p.mag q.mag ea eb ⟨la, ua⟩ ⟨lb, ub⟩ ht, ?_, ?_⟩ <;>
       (dsimp only; omega)
   · cases h
 
@@ -466,41 +465,54 @@ theorem checkBalanceQ32Intervals_sound (S : ConservationLawSpec)
   obtain ⟨ivs, hivs⟩ := Option.isSome_iff_exists.mp (h d (List.mem_range.mpr hd))
   exact (inferSsaDagQ32Intervals_encloses_eval _ _ _ _ ivs hivs inputs hin).2
 
-theorem ssaWireRef_faithful (refs : Array Nat) (bound a : Nat) :
-    smtFaithful (ssaWireRef refs bound a) = true := by
+/-- No width-changing operator occurs in the expression. `YosysLec.smtFaithful` holds on every
+such expression, so `YosysLec.moduleFaithful` holds on every module built from them. -/
+def rtlResizeFree : RtlExpr → Bool
+  | .const _ | .inputPort _ | .wireRef _ | .regRead _ => true
+  | .alu _ a b => rtlResizeFree a && rtlResizeFree b
+  | .mux c t f => rtlResizeFree c && rtlResizeFree t && rtlResizeFree f
+  | .bitNot a => rtlResizeFree a
+  | .resize _ _ => false
+
+def moduleResizeFree (m : RtlModule) : Bool :=
+  m.wires.all (fun w => rtlResizeFree w.expr) && m.outputs.all (fun o => rtlResizeFree o.expr) &&
+    m.regs.all (fun r => rtlResizeFree r.nextExpr)
+
+theorem ssaWireRef_resizeFree (refs : Array Nat) (bound a : Nat) :
+    rtlResizeFree (ssaWireRef refs bound a) = true := by
   unfold ssaWireRef; split <;> (try split) <;> rfl
 
-theorem lowerSsaNodeToRtl_faithful (nv base : Nat) (refs : Array Nat) (params : Nat → Rat)
-    (n : FluxSsaNode) : (lowerSsaNodeToRtl nv base refs params n).all smtFaithful = true := by
+theorem lowerSsaNodeToRtl_resizeFree (nv base : Nat) (refs : Array Nat) (params : Nat → Rat)
+    (n : FluxSsaNode) : (lowerSsaNodeToRtl nv base refs params n).all rtlResizeFree = true := by
   cases n with
   | var i => simp only [lowerSsaNodeToRtl]; split <;> rfl
-  | _ => simp [lowerSsaNodeToRtl, reciprocalRtlExprs, smtFaithful, ssaWireRef_faithful]
+  | _ => simp [lowerSsaNodeToRtl, reciprocalRtlExprs, rtlResizeFree, ssaWireRef_resizeFree]
 
-theorem assignRtlExprs_faithful (idx : Nat) (es : List RtlExpr)
-    (h : es.all smtFaithful = true) :
-    (assignRtlExprs idx es).all (fun w => smtFaithful w.expr) = true := by
+theorem assignRtlExprs_resizeFree (idx : Nat) (es : List RtlExpr)
+    (h : es.all rtlResizeFree = true) :
+    (assignRtlExprs idx es).all (fun w => rtlResizeFree w.expr) = true := by
   induction es generalizing idx with
   | nil => rfl
   | cons e es ih =>
     simp only [List.all_cons, Bool.and_eq_true] at h
     simp [assignRtlExprs, h.1, ih _ h.2]
 
-theorem lowerSsaNodesToWires_faithful (nv : Nat) (params : Nat → Rat) (idx : Nat)
+theorem lowerSsaNodesToWires_resizeFree (nv : Nat) (params : Nat → Rat) (idx : Nat)
     (refs : Array Nat) (ns : List FluxSsaNode) :
-    (lowerSsaNodesToWires nv params idx refs ns).1.all (fun w => smtFaithful w.expr) = true := by
+    (lowerSsaNodesToWires nv params idx refs ns).1.all (fun w => rtlResizeFree w.expr) = true := by
   induction ns generalizing idx refs with
   | nil => rfl
   | cons n ns ih =>
     simp only [lowerSsaNodesToWires, List.all_append, Bool.and_eq_true]
-    exact ⟨assignRtlExprs_faithful _ _ (lowerSsaNodeToRtl_faithful _ _ _ _ _), ih _ _⟩
+    exact ⟨assignRtlExprs_resizeFree _ _ (lowerSsaNodeToRtl_resizeFree _ _ _ _ _), ih _ _⟩
 
-/-- Every systolic flux module is SMT-faithful: the Yosys miter of `YosysLec` applies to it. -/
-theorem emitSystolicFluxCellRtlModule_faithful (modName : String) (varNames : List String)
+/-- Every systolic flux module is free of width-changing operators. -/
+theorem emitSystolicFluxCellRtlModule_resizeFree (modName : String) (varNames : List String)
     (dag : FluxSsaDag) (params : Nat → Rat) :
-    moduleFaithful (emitSystolicFluxCellRtlModule modName varNames dag params) = true := by
-  unfold emitSystolicFluxCellRtlModule moduleFaithful
+    moduleResizeFree (emitSystolicFluxCellRtlModule modName varNames dag params) = true := by
+  unfold emitSystolicFluxCellRtlModule moduleResizeFree
   simp only [Bool.and_eq_true]
-  refine ⟨⟨lowerSsaNodesToWires_faithful _ _ _ _ _, ?_⟩, ?_⟩ <;>
+  refine ⟨⟨lowerSsaNodesToWires_resizeFree _ _ _ _ _, ?_⟩, ?_⟩ <;>
     (rw [List.all_eq_true]; intro x hx; rw [List.mem_map] at hx; obtain ⟨k, _, rfl⟩ := hx; rfl)
 
 /-- Pipelined Q32.32 systolic module computing the flux of `axis` and the source in one DAG. -/
@@ -510,8 +522,8 @@ def buildSpecBalanceSystolicRtl (S : ConservationLawSpec) (axis : Nat) : RtlModu
 
 theorem buildSpecBalanceSystolicRtl_ok (S : ConservationLawSpec) (axis : Nat) :
     checkRtlModule (buildSpecBalanceSystolicRtl S axis) = true ∧
-      moduleFaithful (buildSpecBalanceSystolicRtl S axis) = true :=
-  ⟨emitSystolicFluxCellRtlModule_ok _ _ _ _, emitSystolicFluxCellRtlModule_faithful _ _ _ _⟩
+      moduleResizeFree (buildSpecBalanceSystolicRtl S axis) = true :=
+  ⟨emitSystolicFluxCellRtlModule_ok _ _ _ _, emitSystolicFluxCellRtlModule_resizeFree _ _ _ _⟩
 
 /-- GPU array source of the Q32 Euler source step `u_c + qmul32 dt S_c(u)` on every cell, with
 `dt` the spec's `cfl` word and the source vector compiled once as a shared DAG. -/

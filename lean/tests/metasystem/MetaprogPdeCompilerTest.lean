@@ -17,6 +17,7 @@ public import Obend.Analysis.NonlinearMultiDPde
 public import Obend.Hardware.MultiDStencilTile
 public import Obend.Tactic.SymDiffAndFlux
 public import Obend.Elab.PdeSolverElab
+public import Obend.Hardware.YosysLec
 public import Obend.Tactic.Tooth
 public import Obend.AssertAxioms
 import all Obend.Analysis.Diff
@@ -175,15 +176,144 @@ import all Obend.Tactic.Tooth
 import all Obend.Analysis.Groebner
 import all Obend.Analysis.SosLyapunov
 import all Obend.Judge.RealAnalysis
+import all Obend.Analysis.Equitable
+import all Obend.Analysis.Flowpipe
+import all Obend.Analysis.HyperbolicBalanceLaws
+import all Obend.Analysis.NonlinearErrorTube
+import all Obend.Analysis.SimplicialFeecFem
+import all Obend.Analysis.TaylorModel
+import all Obend.Codec.DetCbor
+import all Obend.Consensus.Simplex
+import all Obend.Consensus.SimplexProtocol
+import all Obend.Core.Collect
+import all Obend.Core.Packet
+import all Obend.Core.Proofs.Collect.Compact
+import all Obend.Core.Proofs.Collect.Extract
+import all Obend.Core.Proofs.Collect.Lockstep
+import all Obend.Core.Proofs.Collect.Mark
+import all Obend.Core.Proofs.Collect.Rename
+import all Obend.Core.Proofs.Collect.Runs
+import all Obend.Core.Proofs.Collect.Segment
+import all Obend.Core.Proofs.Collect.Statements
+import all Obend.Core.Proofs.Collect.Typing
+import all Obend.Core.Proofs.Force
+import all Obend.Core.Proofs.Preservation
+import all Obend.Core.Proofs.Preservation.Base.Focus
+import all Obend.Core.Proofs.Preservation.Cases.Activities
+import all Obend.Core.Proofs.Preservation.Cases.Arithmetic
+import all Obend.Core.Proofs.Preservation.Cases.Functions
+import all Obend.Core.Proofs.Preservation.Cases.Pairs
+import all Obend.Core.Proofs.Preservation.Cases.Records
+import all Obend.Core.Proofs.Preservation.Cases.Split
+import all Obend.Core.Proofs.Preservation.Cases.Sums
+import all Obend.Crypto.Multilinear
+import all Obend.Crypto.Transcript
+import all Obend.Doc
+import all Obend.Doc.Backlinks
+import all Obend.Doc.Graph
+import all Obend.Doc.Merge
+import all Obend.Doc.Patch
+import all Obend.Doc.Render
+import all Obend.Doc.Section
+import all Obend.Doc.Structured
+import all Obend.Elab.AutoCert
+import all Obend.Elab.Gate
+import all Obend.Elab.Prepare
+import all Obend.Fold
+import all Obend.Hardware.Accelerators
+import all Obend.Hardware.AgenticEDA
+import all Obend.Hardware.Analog
+import all Obend.Hardware.BalanceLawLowering
+import all Obend.Hardware.Circuits
+import all Obend.Hardware.Codec
+import all Obend.Hardware.DRC
+import all Obend.Hardware.DSP
+import all Obend.Hardware.Datasheet
+import all Obend.Hardware.GeometryCAM
+import all Obend.Hardware.Judge
+import all Obend.Hardware.Magnetics
+import all Obend.Hardware.PCB
+import all Obend.Hardware.Photonics
+import all Obend.Hardware.PlaceRoute
+import all Obend.Hardware.Process
+import all Obend.Hardware.ReductionMachine
+import all Obend.Hardware.Retiming
+import all Obend.Hardware.Synth
+import all Obend.Hardware.ThermalPassivity
+import all Obend.Hardware.VerilateRunner
+import all Obend.Hardware.YosysLec
+import all Obend.Judge.Clearing
+import all Obend.Judge.Computational
+import all Obend.Judge.Lrat
+import all Obend.Law.Contract
+import all Obend.Law.Proofs.Typing
+import all Obend.Leaf.BytecodeRegisterJit
+import all Obend.Leaf.Served
+import all Obend.Leaf.Specialize
+import all Obend.Leaf.Static
+import all Obend.Ledger.Book
+import all Obend.Ledger.Floors
+import all Obend.Ledger.Register
+import all Obend.Ledger.Seat
+import all Obend.Logic.Frame
+import all Obend.Logic.Ground
+import all Obend.Logic.Obligation
+import all Obend.Logic.Program
+import all Obend.Logic.Receipt
+import all Obend.Logic.Rewrite
+import all Obend.Logic.SeparationFrame
+import all Obend.Lower.Fragment
+import all Obend.Lower.Inductive
+import all Obend.Lower.Judge
+import all Obend.Lower.LCNF
+import all Obend.Lower.Proofs.Book
+import all Obend.Lower.Proofs.Complete
+import all Obend.Lower.Proofs.Hardware
+import all Obend.Polis.CapTP
+import all Obend.Receipt
+import all Obend.Receipt.Merkle
+import all Obend.Run.Control
+import all Obend.Run.Core4
+import all Obend.Run.Fold
+import all Obend.Run.Fork
+import all Obend.Run.Proofs.Control
+import all Obend.Run.Proofs.Invariant
+import all Obend.Run.Proofs.Shared
+import all Obend.Run.Runner
+import all Obend.Run.Shared
+import all Obend.Run.Spec
+import all Obend.Slot.Integrity
+import all Obend.Slot.Proofs.Protocol
+import all Obend.Slot.Proofs.ProtocolTyping
+import all Obend.Slot.Selection
+import all Obend.Slot.World
+import all Obend.Spec.Annotated
+import all Obend.Spec.Contract
+import all Obend.Spec.DataWire
+import all Obend.Spec.Elaborate
+import all Obend.Spec.FrontEnd
+import all Obend.Spec.Law
+import all Obend.Spec.LawCompile
+import all Obend.Spec.LawDial
+import all Obend.Spec.Parse
+import all Obend.Spec.Proofs.LawCompile
+import all Obend.Spec.Sha256
+import all Obend.Spec.Syntax
+import all Obend.Spec.Types
+import all Obend.Vault.Law
+import all Obend.Vault.Mandate
+import all Obend.Vault.Page
 
 /-!
 # Metaprogrammed Multi-Dimensional Nonlinear PDE Solver & Accelerator Test Suite
 
 End-to-end verification of `#pde_solver` (`Obend.Elab.PdeSolverElab`), `SymDiffAndFlux`,
 `NonlinearMultiDPde`, and `MultiDStencilTile` across Burgers, 3D Euler, 8-wave GLM MHD,
-curved-spacetime Maxwell, Vlasov–Poisson and the 1+1 Bona–Massó principal system, adversarial
-boundary/domain/CFL edge cases, `#tooth` mutation witnesses, and computational choice / axiom
-tree audits.
+curved-spacetime Maxwell, Vlasov–Poisson and the 1+1 Bona–Massó principal system, and three
+balance laws with sources (Bona–Massó with lower-order terms, GLM-damped MHD, shallow water over
+bathymetry); derived Gershgorin wavespeeds, the Q32 step defect and the error tube; adversarial
+boundary/domain/CFL/wavespeed edge cases, `#tooth` mutation witnesses, and computational choice /
+axiom tree audits.
 -/
 
 public section
@@ -199,6 +329,8 @@ open Obend.Hardware.HDL
 open Obend.Hardware.MultiDStencilTile
 open Obend.Tactic.SymDiffAndFlux
 open Obend.Elab.PdeSolverElab
+open Obend.Analysis.HyperbolicBalanceLaws Obend.Analysis.NonlinearErrorTube
+open Obend.Hardware.BalanceLawLowering
 set_option autoImplicit false
 
 /-! ## 1. Nonlinear & Multi-Dimensional Conservation-Law Systems via `#pde_solver` -/
@@ -214,6 +346,7 @@ set_option autoImplicit false
      (fluxes
        (x (* 1/2 (sq u))))
      (wavespeed 2 1/4)
+     (state-box (u -2 2))
      (limiter minmod))"
 
 -- 1.2: 3D Compressible Euler Gas Dynamics: (rho, rhou, rhov, rhow, E) with rho > 0
@@ -250,6 +383,8 @@ set_option autoImplicit false
             (+ (* rhow w) p)
             (* (+ E p) w))))
      (wavespeed 4 1/8)
+     (state-box (rho 1 2) (rhou -1/4 1/4) (rhov -1/4 1/4) (rhow -1/4 1/4) (E 1 3))
+     (wavespeed-weights 1 1 1 1 5/2)
      (limiter minmod))"
 
 -- 1.3: 2D 8-Wave GLM Divergence-Cleaned Ideal Magnetohydrodynamics (9 state variables, rho > 0)
@@ -296,6 +431,9 @@ set_option autoImplicit false
             (- (* (+ E pTot) v) (* By uDotB))
             (* (sq ch) By))))
      (wavespeed 5 1/10)
+     (state-box (rho 1 2) (rhou -1/4 1/4) (rhov -1/4 1/4) (rhow -1/4 1/4) (Bx -1/4 1/4)
+       (By -1/4 1/4) (Bz -1/4 1/4) (E 1 3) (psi -2 2))
+     (wavespeed-weights 1 1 1 1 1/2 1/2 1/2 5/2 1)
      (limiter minmod))"
 
 -- 1.4: 3+1 Curved-Spacetime ADM Electrodynamics (lapse alpha > 0, shift beta^i)
@@ -340,6 +478,8 @@ set_option autoImplicit false
        (x (* vChar f) (* jCoef f))
        (vx (* (/ qCharge mMass) (* Ex f)) 0))
      (wavespeed 3 1/6)
+     (state-box (f -4 4) (Ex -5/2 5/2))
+     (wavespeed-weights 8 1)
      (limiter minmod))"
 
 -- 1.6: 1+1 Bona–Massó hyperbolic ADM relativity, principal part only.
@@ -366,6 +506,96 @@ set_option autoImplicit false
             (+ (- (* beta Dx)) (* alpha trK))
             (+ (- (* beta Kxx)) (* alpha Ax)))))
      (wavespeed 9 1/10)
+     (wavespeed-weights 1/256 1/256 2 1 1)
+     (limiter minmod))"
+
+-- 1.7: 1+1 Bona–Massó with lower-order terms. The lapse and metric sources are the first-order
+-- form of `∂_t alpha = -alpha^2 f trK` and `∂_t gxx = -2 alpha Kxx` (Bona, Massó, Seidel, Stela
+-- 1995; Alcubierre, *Introduction to 3+1 Numerical Relativity*, 2008, ch. 5), with constant
+-- `f = fBM`. The `Kxx` source `alpha (Ax Dx - Kxx^2 / gxx)` is the lane brief's form of the
+-- quadratic terms and has not been checked against the 1995 paper.
+#pde_solver BonaMasso1DFull :=
+  "(conservation-law
+     (name BonaMasso1DFull)
+     (coords x)
+     (vars alpha gxx Ax Dx Kxx)
+     (params (fBM 2) (beta 1/5))
+     (domain (> alpha 0) (> gxx 0))
+     (fluxes
+       (x (let ((trK (/ Kxx gxx)))
+            (- (* beta alpha))
+            (- (* beta gxx))
+            (+ (- (* beta Ax)) (* fBM (* alpha trK)))
+            (+ (- (* beta Dx)) (* alpha trK))
+            (+ (- (* beta Kxx)) (* alpha Ax)))))
+     (sources
+       (- (* (sq alpha) fBM (/ Kxx gxx)))
+       (- (* 2 alpha Kxx))
+       0
+       0
+       (* alpha (- (* Ax Dx) (/ (sq Kxx) gxx))))
+     (max-wavespeed 9) (cfl 1/10)
+     (state-box (alpha 1/2 2) (gxx 1 4) (Ax -1/2 1/2) (Dx -1/2 1/2) (Kxx -1/2 1/2))
+     (wavespeed-weights 1/4 1/4 1 1 1)
+     (limiter minmod))"
+
+-- 1.8: 2D GLM MHD with the mixed hyperbolic/parabolic cleaning source `-damp psi` on `psi`
+-- (Dedner, Kemm, Kröner, Munz, Schnitzer, Wesenberg 2002, eq. 24).
+#pde_solver DednerGlmMhd2D :=
+  "(conservation-law
+     (name DednerGlmMhd2D)
+     (coords x y)
+     (vars rho rhou rhov rhow Bx By Bz E psi)
+     (params (gamma 5/3) (ch 2) (damp 1/2))
+     (domain (> rho 0))
+     (fluxes
+       (x (let ((u (/ rhou rho)) (v (/ rhov rho)) (w (/ rhow rho))
+                (ke (* 1/2 (/ (+ (sq rhou) (sq rhov) (sq rhow)) rho)))
+                (me (* 1/2 (+ (sq Bx) (sq By) (sq Bz))))
+                (pGas (* (- gamma 1) (- E (+ ke me))))
+                (pTot (+ pGas me))
+                (uDotB (+ (* u Bx) (* v By) (* w Bz))))
+            rhou
+            (- (+ (* rhou u) pTot) (sq Bx))
+            (- (* rhov u) (* Bx By)) (- (* rhow u) (* Bx Bz))
+            psi
+            (- (* u By) (* v Bx)) (- (* u Bz) (* w Bx))
+            (- (* (+ E pTot) u) (* Bx uDotB))
+            (* (sq ch) Bx)))
+       (y (let ((u (/ rhou rho)) (v (/ rhov rho)) (w (/ rhow rho))
+                (ke (* 1/2 (/ (+ (sq rhou) (sq rhov) (sq rhow)) rho)))
+                (me (* 1/2 (+ (sq Bx) (sq By) (sq Bz))))
+                (pGas (* (- gamma 1) (- E (+ ke me))))
+                (pTot (+ pGas me))
+                (uDotB (+ (* u Bx) (* v By) (* w Bz))))
+            rhov
+            (- (* rhou v) (* By Bx)) (- (+ (* rhov v) pTot) (sq By))
+            (- (* rhow v) (* By Bz))
+            (- (* v Bx) (* u By))
+            psi
+            (- (* v Bz) (* w By)) (- (* (+ E pTot) v) (* By uDotB))
+            (* (sq ch) By))))
+     (sources 0 0 0 0 0 0 0 0 (- (* damp psi)))
+     (wavespeed 5 1/10)
+     (state-box (rho 1 2) (rhou -1/4 1/4) (rhov -1/4 1/4) (rhow -1/4 1/4) (Bx -1/4 1/4)
+       (By -1/4 1/4) (Bz -1/4 1/4) (E 1 3) (psi -2 2))
+     (wavespeed-weights 1 1 1 1 1/2 1/2 1/2 5/2 1)
+     (limiter minmod))"
+
+-- 1.9: 1D shallow water over bathymetry, with the bed slope `bx` carried as a steady component
+-- and the topography source `-g h bx` on the discharge (Audusse et al. 2004, eq. 1.1).
+#pde_solver ShallowWater1D :=
+  "(conservation-law
+     (name ShallowWater1D)
+     (coords x)
+     (vars h q bx)
+     (params (g 2))
+     (domain (> h 0))
+     (fluxes (x q (+ (/ (sq q) h) (* 1/2 g (sq h))) 0))
+     (sources 0 (- (* g h bx)) 0)
+     (max-wavespeed 4) (cfl 1/8)
+     (state-box (h 1 2) (q -1/2 1/2) (bx -1/2 1/2))
+     (wavespeed-weights 1 2 1)
      (limiter minmod))"
 
 /-! ## 2. Inhabitedness, Exact Symbolic Fréchet AD, Tadmor Entropy & Symmetrizer Proofs -/
@@ -516,7 +746,7 @@ theorem bonaMasso_q32_flux_guarded (inputs : Nat → Word)
     ∀ dag ∈ BonaMasso1D.specializedPlan.axisFluxDags,
       ∀ w ∈ evalFluxSsaDagQ32 inputs BonaMasso1D.spec.paramEnv dag,
         -((2 : Int)^62) < w.toInt ∧ w.toInt < (2 : Int)^62 :=
-  (checkPdeSolverSpec_sound BonaMasso1D.spec [] (by decide +kernel) (by simp)).2.2.2.2.2 inputs hin
+  (checkPdeSolverSpec_sound BonaMasso1D.spec [] (by decide +kernel) (by simp)).2.2.2.2.2.1 inputs hin
 
 -- Concrete Tadmor Quadratic Entropy Dissipation for Nonlinear Burgers:
 -- η(u) = 1/2 u^2, v(u) = u, q(u) = 1/3 u^3, ψ(u) = v(u)f(u) - q(u) = 1/6 u^3,
@@ -727,6 +957,9 @@ example : checkPdeSolverSpec IdealMhd8Wave.spec = true := by decide +kernel
 example : checkPdeSolverSpec CurvedSpacetimeMaxwell.spec = true := by decide +kernel
 example : checkPdeSolverSpec VlasovPoissonPhase.spec = true := by decide +kernel
 example : checkPdeSolverSpec BonaMasso1D.spec = true := by decide +kernel
+example : checkPdeSolverSpec BonaMasso1DFull.spec = true := by decide +kernel
+example : checkPdeSolverSpec DednerGlmMhd2D.spec = true := by decide +kernel
+example : checkPdeSolverSpec ShallowWater1D.spec = true := by decide +kernel
 -- Without the `gxx > 0` declaration the shared `trK = Kxx / gxx` is refused.
 example : checkPdeSolverSpec { BonaMasso1D.spec with domain := [.stateVar 0] } = false := by
   decide +kernel
@@ -865,7 +1098,164 @@ def nonlinearSourceValues (spec : ConservationLawSpec) (dims : List Nat) (axis :
 #guard [Burgers1D.spec, EulerGas3D.spec, IdealMhd8Wave.spec].all fun spec =>
   (compileMultiDNonlinearFluxSweepSource spec .periodic (List.replicate spec.numDims 2)).scopedB spec.numVars
 
-/-! ## 4. Mutation-Sensitivity `#tooth` Suite -/
+/-! ## 4. Derived Wavespeeds, Balance Laws, Q32 Step Defect and Error Tube -/
+
+-- An under-declared wavespeed is refused: Burgers on `[-2, 2]` has `|f'(u)| = |u|` up to 2.
+example : validatePdeSolverSexpr
+    "(conservation-law (name SlowBurgers) (coords x) (vars u) (params) (domain) (fluxes (x (* 1/2 (sq u)))) (wavespeed 1 1/4) (state-box (u -2 2)) (limiter minmod))" =
+    .error "declared max wavespeed is not certified by the Gershgorin bound of the symbolic Jacobian on the state box" := by
+  decide +kernel
+example : checkPdeSolverSpec { Burgers1D.spec with aMax := 1 } = false := by decide +kernel
+-- Without its declared box Burgers falls back to `[-4, 4]`, where speed 2 is not enough.
+#guard !verifyWavespeedGershgorin { Burgers1D.spec with stateBox := [] }
+-- Unit weights do not certify Euler at speed 4; the declared energy weight 5/2 does.
+#guard !verifyWavespeedGershgorin { EulerGas3D.spec with wavespeedWeights := [] }
+-- Malformed balance fields are refused at validation: a box that is not positive on `h > 0`,
+-- a source vector of the wrong length, and a nonpositive weight.
+#guard [{ ShallowWater1D.spec with stateBox := [(0, 2), (-1/2, 1/2), (-1/2, 1/2)] },
+  { ShallowWater1D.spec with sources := [.const 0] },
+  { ShallowWater1D.spec with wavespeedWeights := [1, 0, 1] }].all (!·.checkValid)
+#guard (parseConservationLawSexprWithDiag
+  "(conservation-law (name NoBox) (coords x) (vars u v) (params) (domain) (fluxes (x u v)) (wavespeed 1 1/2) (state-box (u -1 1)))").toOption.isNone
+
+-- The eigenvalue bound is inhabited: at `u = 3/2` the Burgers Jacobian has eigenvalue `3/2`.
+example : -(2 : Rat) ≤ 3 / 2 ∧ (3 / 2 : Rat) ≤ 2 := by
+  have h := (Burgers1D.wavespeed_certified 0 (by decide +kernel) (fun _ => 3 / 2) (fun i hi => by
+    have hi0 : i = 0 := by have : Burgers1D.spec.numVars = 1 := by decide +kernel
+                           omega
+    subst hi0; decide +kernel)).2 (3 / 2) (fun _ => 1) ⟨0, by decide +kernel, by decide +kernel⟩
+    (fun i hi => by
+      have hi0 : i = 0 := by have : Burgers1D.spec.numVars = 1 := by decide +kernel
+                             omega
+      subst hi0; decide +kernel)
+  have ha : Burgers1D.spec.aMax = 2 := by decide +kernel
+  rwa [ha] at h
+
+-- Concrete step error bounds: a few ulps for Burgers and shallow water, more through the
+-- Bona–Massó reciprocal and the wavespeed-9 dissipation.
+#guard Burgers1D.q32ErrorBound ≤ 4 * ulp && ShallowWater1D.q32ErrorBound ≤ 4 * ulp
+#guard EulerGas3D.q32ErrorBound ≤ 6 * ulp && IdealMhd8Wave.q32ErrorBound ≤ 28 * ulp
+#guard BonaMasso1DFull.q32ErrorBound ≤ 48 * ulp && 0 < BonaMasso1D.q32ErrorBound
+-- The defect theorem at a concrete non-constant stencil (words 1/4, 1/2, 1, 3/4, 1/8).
+def burgersStencil (off : Int) (_ : Nat) : Word :=
+  ratToQ32Word (if off = -2 then 1/4 else if off = -1 then 1/2 else if off = 0 then 1
+    else if off = 1 then 3/4 else 1/8)
+example : ratAbs (decodeQ32 ((evalNonlinearFluxCellQ32 Burgers1D.spec (stepDag Burgers1D.spec 0)
+      burgersStencil).getD 0 0#64) -
+    evalAxisCellRat Burgers1D.spec 0 Burgers1D.spec.cfl (fun off => decV (burgersStencil off)) 0) ≤
+    Burgers1D.q32ErrorBound :=
+  Burgers1D.q32_step_defect_bound 0 (by decide +kernel) burgersStencil (fun off j hj => by
+    have hj0 : j = 0 := by have : Burgers1D.spec.numVars = 1 := by decide +kernel
+                           omega
+    subst hj0; unfold burgersStencil; (repeat' split) <;> decide +kernel) 0 (by decide +kernel)
+#guard (evalNonlinearFluxCellQ32 Burgers1D.spec (stepDag Burgers1D.spec 0) burgersStencil).getD 0 0#64
+  != burgersStencil 0 0
+
+-- Mass (`h`) and the bed slope are source-free and conserved; the discharge is not.
+theorem shallowWater_mass_conserved (N : Nat) (hN : 0 < N) (dt : Rat) (strang : Bool)
+    (U : MultiDGrid) :
+    totalGridIntegral [N] (ShallowWater1D.schemeStepRat .periodic [N] dt strang U) 0 =
+      totalGridIntegral [N] U 0 :=
+  ShallowWater1D.scheme_conserves_sourceless [N]
+    (fun M hM => by rw [List.mem_singleton] at hM; omega) dt strang U 0 (Or.inr (by decide +kernel))
+def swGrid (idx c : Nat) : Rat := if c = 0 then 3/2 else if c = 2 then (if idx = 0 then 1/4 else 0) else 0
+#guard totalGridIntegral [4] (ShallowWater1D.schemeStepRat .periodic [4] (1/8) true swGrid) 0 ==
+  totalGridIntegral [4] swGrid 0
+#guard totalGridIntegral [4] (ShallowWater1D.schemeStepRat .periodic [4] (1/8) true swGrid) 1 !=
+  totalGridIntegral [4] swGrid 1
+
+-- Source Fréchet theorem at a concrete wet state and perturbation.
+def swState : Vec | 0 => 3/2 | 1 => 1/4 | 2 => 1/8 | _ => 0
+def swPerturb : Vec | 0 => -1/2 | 1 => 1 | 2 => 1/3 | _ => 0
+example := ShallowWater1D.source_frechet_sound swState swPerturb (1/10)
+  (by intro t ht
+      have htEq : t = .stateVar 0 := by revert ht; decide +kernel +revert
+      subst htEq; decide +kernel)
+  (by intro t ht
+      have htEq : t = .stateVar 0 := by revert ht; decide +kernel +revert
+      subst htEq; simp only [shiftVecEnv]; decide +kernel) 1 (by decide +kernel)
+
+-- Joint flux/source lowering: shared DAG, guarded words, RTL, GPU source step.
+#guard [BonaMasso1DFull.spec, DednerGlmMhd2D.spec, ShallowWater1D.spec].all fun S =>
+  checkBalanceQ32Intervals S && checkFluxSsaDag (compileJointFluxSourceDag S 0) &&
+  (compileJointFluxSourceDag S 0).roots.length == 2 * S.numVars
+-- `trK = Kxx / gxx` is shared between the fluxes and the lapse source.
+#guard fluxSsaFlops (BonaMasso1DFull.jointDag 0) <
+  fluxSsaFlops (compileFluxSsaDag (some BonaMasso1DFull.spec.paramEnv)
+    (getOr BonaMasso1DFull.spec.fluxes 0 [])) +
+  fluxSsaFlops (compileFluxSsaDag (some BonaMasso1DFull.spec.paramEnv) BonaMasso1DFull.spec.sources)
+example : checkBalanceQ32Intervals { ShallowWater1D.spec with
+    sources := [.const 0, .invSafe (.var 1), .const 0] } = false := by decide +kernel
+
+/-- A module free of width-changing operators is SMT-faithful, so the Yosys miter of `YosysLec`
+applies to every balance-law systolic module. -/
+theorem rtlResizeFree_faithful (e : RtlExpr) (h : rtlResizeFree e = true) :
+    Obend.Hardware.YosysLec.smtFaithful e = true := by
+  induction e with
+  | resize op a _ => simp [rtlResizeFree] at h
+  | _ => simp_all [rtlResizeFree, Obend.Hardware.YosysLec.smtFaithful]
+theorem balanceSystolicRtl_faithful (S : ConservationLawSpec) (axis : Nat) :
+    Obend.Hardware.YosysLec.moduleFaithful (buildSpecBalanceSystolicRtl S axis) = true := by
+  have h := (buildSpecBalanceSystolicRtl_ok S axis).2
+  simp only [moduleResizeFree, Bool.and_eq_true, List.all_eq_true] at h
+  simp only [Obend.Hardware.YosysLec.moduleFaithful, Bool.and_eq_true, List.all_eq_true]
+  exact ⟨⟨fun w hw => rtlResizeFree_faithful _ (h.1.1 w hw),
+    fun o ho => rtlResizeFree_faithful _ (h.1.2 o ho)⟩,
+    fun r hr => rtlResizeFree_faithful _ (h.2 r hr)⟩
+example : checkRtlModule (ShallowWater1D.balanceSystolicRtl 0) = true ∧
+    Obend.Hardware.YosysLec.moduleFaithful (ShallowWater1D.balanceSystolicRtl 0) = true :=
+  ⟨(ShallowWater1D.balanceSystolicRtl_ok 0).1, balanceSystolicRtl_faithful _ 0⟩
+#guard (BonaMasso1DFull.balanceSystolicRtl 0).regs.length == 10 &&
+  (DednerGlmMhd2D.balanceSystolicRtl 1).regs.length == 18
+
+-- GPU source step: `q ← q + qmul32 dt (-g h bx)`; `h` and `bx` are unchanged.
+def swSourceValues (bx : Rat) : List (List Word) :=
+  (ShallowWater1D.balanceSourceGpu [2]).eval fun c =>
+    List.replicate 2 (ratToQ32Word (if c == 2 then 3/2 else if c == 1 then 0 else bx))
+#guard swSourceValues 0 == [3/2, 0, 0].map fun q => List.replicate 2 (ratToQ32Word q)
+#guard swSourceValues (1/4) == [3/2, -3/32, 1/4].map fun q => List.replicate 2 (ratToQ32Word q)
+#guard (ShallowWater1D.balanceSourceGpu [2]).scopedB 3
+
+-- Audusse–Bouchut on a ring of four cells over a bump: a lake at rest is a fixed point, a
+-- perturbed surface is not, and mass is conserved in both.
+def abBed : Nat → Rat | 0 => 0 | 1 => 1/2 | 2 => 3/4 | _ => 1/4
+def abLake (i : Nat) : Rat := 1 - abBed i
+def abWave (i : Nat) : Rat := if i = 1 then 3/4 else 1 - abBed i
+#guard (List.range 4).all fun i => (abStep 2 3 (1/8) 4 abBed abLake (fun _ => 0)).1 i == abLake i &&
+  (abStep 2 3 (1/8) 4 abBed abLake (fun _ => 0)).2 i == 0
+#guard (List.range 4).any fun i => (abStep 2 3 (1/8) 4 abBed abWave (fun _ => 0)).2 i != 0
+#guard sumTo 4 (abStep 2 3 (1/8) 4 abBed abWave (fun _ => 0)).1 == sumTo 4 abWave
+example (i : Nat) (hi : i < 4) : (abStep 2 3 (1/8) 4 abBed abLake (fun _ => 0)).1 i = abLake i :=
+  ((audusseBouchut_lakeAtRest_wellBalanced 2 3 (1/8) 4 abBed abLake (fun _ => 0)).2.1 1
+    (fun j _ => ⟨by unfold abLake; grind, by
+      unfold abLake abBed; split <;> decide +kernel, rfl⟩) i hi).1
+
+-- The defect recursion and the Lipschitz constants at concrete values; an inhabited tube.
+#guard nonlinearDefectTube 2 1 (fun _ => 1/4) 3 == 39/4
+#guard axisLip Burgers1D.spec (1/4) == 4 && axisLip { Burgers1D.spec with limiter := .firstOrder } (1/4) == 2
+example (U0 : MultiDGrid) (K : Nat) : GridClose 1 (fun _ => 1)
+    (nonlinearDefectTube 1 0 (fun _ => 0) K) U0
+    (Obend.Analysis.PdeSexprAndApprox.exactTrajectory id U0 K) :=
+  have hz : ∀ x : Rat, ratAbs (x - x) ≤ 0 * 1 := fun x => by
+    rw [show x - x = 0 by grind]; decide +kernel
+  nonlinear_aposteriori_error_tube 1 (fun _ => 1) id (fun _ => True) 1
+    (fun δ U V _ _ h idx c hc => by rw [Rat.one_mul]; exact h idx c hc) (fun _ => U0) U0 0
+    (fun _ => 0) (fun _ => ⟨trivial, trivial⟩) (fun _ _ _ => hz _) (fun _ _ _ _ => hz _) K
+#tooth verifyWavespeedGershgorin_sound by mutation jacAbsBound := fun _ _ _ _ => some 0
+#tooth jacAbsBound_sound by mutation evalFluxInterval := fun _ _ _ _ => some ⟨0, 0⟩
+#tooth evalFluxInterval_encloses by mutation Interval.mul := fun a _ => a
+#tooth audusseBouchut_lakeAtRest_wellBalanced by mutation abDepth := fun h _ i _ => h i
+#tooth stepQ32Axis_rat_defect_bound by mutation cellBound := fun _ _ _ _ => some ⟨0, 0⟩
+#tooth dag_root_tracks by mutation nodeErr := fun _ _ _ _ _ => some 0
+#tooth decodeQ32_qmul32_error by mutation decodeInt := fun z => (z : Rat)
+#tooth nonlinear_aposteriori_error_tube by mutation nonlinearDefectTube := fun _ e _ _ => e
+#tooth evalAxisStepRat_lipschitz by mutation axisLip := fun _ _ => 1
+#tooth evalSchemeStepRat_conserves_sourceless_component by mutation evalSourceStepRat :=
+  fun _ _ U idx c => U idx c + 1
+#tooth checkBalanceQ32Intervals_sound by mutation checkBalanceQ32Intervals := fun _ => true
+#tooth checkPdeSolverSpec_sound by mutation verifyWavespeedGershgorin := fun _ => true
+
+/-! ## 5. Mutation-Sensitivity `#tooth` Suite -/
 
 def acceptPos (_ : List PosTarget) (_ : FluxExpr) : Bool := true
 def zeroSymPartial (_ : Nat) (_ : FluxExpr) : FluxExpr := .const 0
@@ -915,7 +1305,7 @@ def bogusParsedSpec (_ : String) : Option ConservationLawSpec :=
 #tooth fluctuationConservation_of_reflective by mutation verifyFluctuationsReflective := fun _ => true
 #tooth symmetrizerReflective_sound by mutation checkSymmetrizerReflective := fun _ _ _ _ => true
 
-/-! ## 5. Axiom Census, Zero-Closed-Theorem & Zero-Computational-Choice Audit -/
+/-! ## 6. Axiom Census, Zero-Closed-Theorem & Zero-Computational-Choice Audit -/
 
 private meta partial def auditComputationalChoice (e : Lean.Expr) :
     StateRefT Lean.NameSet Lean.Meta.MetaM Unit := do
@@ -947,7 +1337,10 @@ run_cmd do
     `Obend.Analysis.NonlinearMultiDPde,
     `Obend.Hardware.MultiDStencilTile,
     `Obend.Tactic.SymDiffAndFlux,
-    `Obend.Elab.PdeSolverElab
+    `Obend.Elab.PdeSolverElab,
+    `Obend.Analysis.HyperbolicBalanceLaws,
+    `Obend.Analysis.NonlinearErrorTube,
+    `Obend.Hardware.BalanceLawLowering
   ]
   for (name, info) in env.constants.map₁.toList do
     let some idx := env.getModuleIdxFor? name | continue
@@ -969,7 +1362,12 @@ run_cmd do
       ``specializeFluxSweep,
       ``evalMultiDBrickTiled,
       ``compileMultiDSweepFused,
-      ``emitSystolicFluxCellRtlModule
+      ``emitSystolicFluxCellRtlModule,
+      ``verifyWavespeedGershgorin,
+      ``evalSchemeStepRat,
+      ``computeStepQ32ErrorBound,
+      ``checkBalanceQ32Intervals,
+      ``compileBalanceSourceStepGpu
     ] do
     Lean.Elab.Command.liftTermElabM do
       let _ ← (auditComputationalChoice (Lean.mkConst name)).run {}

@@ -7,6 +7,12 @@ public import Obend.Hardware.MultiDStencilTile
 public meta import Obend.Hardware.MultiDStencilTile
 public import Obend.Tactic.SymDiffAndFlux
 public meta import Obend.Tactic.SymDiffAndFlux
+public import Obend.Analysis.HyperbolicBalanceLaws
+public meta import Obend.Analysis.HyperbolicBalanceLaws
+public import Obend.Hardware.BalanceLawLowering
+public meta import Obend.Hardware.BalanceLawLowering
+public import Obend.Analysis.NonlinearErrorTube
+public meta import Obend.Analysis.NonlinearErrorTube
 
 /-!
 # Compile-Time `#pde_solver` Conservation-Law Elaborator (`Obend.Elab.PdeSolverElab`)
@@ -27,6 +33,15 @@ Implements `#pde_solver <Name> := "<conservation-law S-expr>"` and `elabConserva
    - `<Name>.minmod_tvd_sound` (2nd-order `minmod` affine exactness, mirror symmetry & MUSCL-Rusanov TVD)
    - `<Name>.specializedPlan`, `<Name>.specializedPlan_sound`, `<Name>.fusedGpuKernel`,
      `<Name>.fusedGpuKernel_sound`, `<Name>.systolicRtl`, and `<Name>.systolicRtl_ok`.
+   - `<Name>.wavespeed_certified` (Gershgorin Jacobian-norm and eigenvalue bound by `aMax` on the
+     declared state box), `<Name>.schemeStepRat` & `<Name>.scheme_conserves_sourceless`,
+     `<Name>.q32ErrorBound` & `<Name>.q32_step_defect_bound`, `<Name>.nonlinear_error_tube`.
+   - With `(sources ...)`: `<Name>.sourceJacobian`, `<Name>.source_frechet_sound`,
+     `<Name>.jointDag`, `<Name>.balanceSystolicRtl`, `<Name>.balanceSystolicRtl_ok`,
+     `<Name>.balanceSourceGpu`.
+
+Optional clauses: `(sources e_0 … e_{m-1})`, `(state-box (var lo hi) …)`,
+`(wavespeed-weights w_0 … w_{m-1})`; `(max-wavespeed a) (cfl c)` may replace `(wavespeed a c)`.
 -/
 
 public section
@@ -222,8 +237,18 @@ def parseParamEntry : PdeSexpr → Except String (String × Rat)
     | none => .error s!"invalid rational parameter value `{v}` for `{k}`"
   | _ => .error "malformed parameter entry; expected (name rational)"
 
+def parseStateBoxEntry (params : List (String × Rat)) :
+    PdeSexpr → Except String (String × (Rat × Rat))
+  | .list [.atom v, lo, hi] =>
+    match evalParamOrRat params lo, evalParamOrRat params hi with
+    | some a, some b => .ok (v, (a, b))
+    | _, _ => .error s!"malformed bounds for `{v}` in `(state-box ...)`"
+  | _ => .error "malformed `(state-box ...)` entry; expected (var lo hi)"
+
 def diagnoseSpecFailure (s : ConservationLawSpec) : String :=
-  if s.coords.isEmpty then "coordinate list `(coords ...)` must be non-empty"
+  if !s.checkBalanceFields then
+    "balance-law fields: `(sources ...)`, `(state-box ...)` and `(wavespeed-weights ...)` need one entry per state variable, guarded source denominators, an ordered box that is positive on declared-positive variables, positive weights and positive declared-positive parameters"
+  else if s.coords.isEmpty then "coordinate list `(coords ...)` must be non-empty"
   else if s.vars.isEmpty then "state variable list `(vars ...)` must be non-empty"
   else if s.coords.eraseDups.length != s.coords.length then "duplicate coordinate names in `(coords ...)`"
   else if s.vars.eraseDups.length != s.vars.length then "duplicate state variable names in `(vars ...)`"
@@ -267,17 +292,36 @@ def parseConservationLawRaw (text : String) : Except String ConservationLawSpec 
     | some fs => .ok fs
     | none => .error "missing `(fluxes ...)` clause"
   let fluxes ← parseAxisFluxRows vars paramNames coords fluxRowsSexpr
-  let (aMax, cfl) ← match findClause clauses "wavespeed" with
-    | some [spSx, cflSx] =>
+  let (aMax, cfl) ← match findClause clauses "wavespeed",
+      findClause clauses "max-wavespeed", findClause clauses "cfl" with
+    | some [spSx, cflSx], _, _ | none, some [spSx], some [cflSx] =>
       match evalParamOrRat params spSx, evalParamOrRat params cflSx with
       | some a, some nu => .ok (a, nu)
       | _, _ => .error "malformed `(wavespeed aMax cfl)` values"
-    | _ => .error "missing or malformed `(wavespeed aMax cfl)` clause"
+    | _, _, _ => .error "missing or malformed `(wavespeed aMax cfl)` clause"
+  let sources ← match findClause clauses "sources" with
+    | some ss => ss.mapM (parseFluxExprWithFuel 64 vars paramNames [])
+    | none => .ok []
+  let stateBox ← match findClause clauses "state-box" with
+    | some bs => do
+      let entries ← bs.mapM (parseStateBoxEntry params)
+      if entries.length != vars.length then
+        .error "`(state-box ...)` must list every state variable exactly once"
+      else vars.mapM fun v => match entries.lookup v with
+        | some b => .ok b
+        | none => .error s!"`(state-box ...)` has no entry for state variable `{v}`"
+    | none => .ok []
+  let wavespeedWeights ← match findClause clauses "wavespeed-weights" with
+    | some ws => ws.mapM fun w => match evalParamOrRat params w with
+      | some q => .ok q
+      | none => .error "malformed `(wavespeed-weights ...)` entry"
+    | none => .ok []
   let limiter ← match findClause clauses "limiter" with
     | some [limSx] => parseLimiterKind limSx
     | none => .ok .minmod
     | _ => .error "malformed `(limiter ...)` clause"
-  .ok { name, coords, vars, params, domain, fluxes, aMax, cfl, limiter }
+  .ok { name, coords, vars, params, domain, fluxes, aMax, cfl, limiter, sources, stateBox,
+        wavespeedWeights }
 
 /-- Parse and statically validate a multi-dimensional nonlinear conservation-law S-expression,
 returning descriptive diagnostics on syntax, domain-positivity, dimension, or CFL errors. -/
@@ -315,6 +359,8 @@ open Obend.Hardware.Gpu.StencilTile
 open Obend.Hardware.HDL
 open Obend.Hardware.MultiDStencilTile
 open Obend.Tactic.SymDiffAndFlux
+open Obend.Analysis.HyperbolicBalanceLaws Obend.Hardware.BalanceLawLowering
+open Obend.Analysis.NonlinearErrorTube
 set_option autoImplicit false
 
 /-- Evaluate the single runtime parser in elaboration; generated declarations still carry
@@ -332,13 +378,17 @@ elab "pde_spec_from_sexpr% " s:str : term => do
 
 /-- Pure compile-time gate checking structural/domain/CFL validity, reflective `CanonPoly`
 two-state fluctuation conservation, topological SSA DAG well-formedness across every axis,
-and pre-modulo Q32.32 constant representability. -/
+pre-modulo Q32.32 constant representability, the Gershgorin certificate of the declared wavespeed
+on the state box, existence of the Q32 step error bound, and (with sources) the Q32 interval gate
+of the joint flux/source DAG. -/
 def checkPdeSolverSpec (spec : ConservationLawSpec) : Bool :=
   spec.checkValid &&
   verifyFluctuationsReflective spec &&
   ((List.range spec.numDims).all fun d =>
     checkFluxSsaDag (getOr (specializeFluxSweep spec).axisFluxDags d ⟨[], []⟩)) &&
-  (checkPdeQ32Constants spec && checkPdeQ32Intervals spec)
+  ((checkPdeQ32Constants spec && checkPdeQ32Intervals spec) &&
+    (verifyWavespeedGershgorin spec && (computeStepQ32ErrorBound spec).isSome &&
+      (spec.sources.isEmpty || checkBalanceQ32Intervals spec)))
 
 /-- Pure S-expression parser and compile-time conservation/SSA gate backing `elabConservationLaw`. -/
 def validatePdeSolverSexpr (rawText : String) :
@@ -353,6 +403,12 @@ def validatePdeSolverSexpr (rawText : String) :
       else if !checkPdeQ32Constants parsedSpec then
         "Q32.32 constant outside the signed guard-bit range"
       else if !checkPdeQ32Intervals parsedSpec then "Q32.32 state box cannot certify all intermediates"
+      else if !verifyWavespeedGershgorin parsedSpec then
+        "declared max wavespeed is not certified by the Gershgorin bound of the symbolic Jacobian on the state box"
+      else if (computeStepQ32ErrorBound parsedSpec).isNone then
+        "Q32.32 step error bound: a datapath word may leave its checked range"
+      else if !(parsedSpec.sources.isEmpty || checkBalanceQ32Intervals parsedSpec) then
+        "Q32.32 state box cannot certify the joint flux/source DAG"
       else "internal SSA DAG topological check failed")
 
 theorem checkPdeSolverSpec_valid (spec : ConservationLawSpec)
@@ -368,12 +424,19 @@ theorem checkPdeSolverSpec_valid (spec : ConservationLawSpec)
 theorem checkPdeSolverSpec_q32Constants (spec : ConservationLawSpec)
     (h : checkPdeSolverSpec spec = true) : checkPdeQ32Constants spec = true := by
   simp only [checkPdeSolverSpec, Bool.and_eq_true] at h
-  exact h.2.1
+  exact h.2.1.1
 
 theorem checkPdeSolverSpec_q32Intervals (spec : ConservationLawSpec)
     (h : checkPdeSolverSpec spec = true) : checkPdeQ32Intervals spec = true := by
   simp only [checkPdeSolverSpec, Bool.and_eq_true] at h
-  exact h.2.2
+  exact h.2.1.2
+
+theorem checkPdeSolverSpec_continuum (spec : ConservationLawSpec)
+    (h : checkPdeSolverSpec spec = true) :
+    verifyWavespeedGershgorin spec = true ∧ (computeStepQ32ErrorBound spec).isSome = true ∧
+      (spec.sources.isEmpty = true ∨ checkBalanceQ32Intervals spec = true) := by
+  simp only [checkPdeSolverSpec, Bool.and_eq_true, Bool.or_eq_true] at h
+  exact ⟨h.2.2.1.1, h.2.2.1.2, h.2.2.2⟩
 
 /-- **Kernel Soundness of `checkPdeSolverSpec` (`checkPdeSolverSpec_sound`)**:
 Every `ConservationLawSpec` accepted by `checkPdeSolverSpec` satisfies:
@@ -384,7 +447,13 @@ Every `ConservationLawSpec` accepted by `checkPdeSolverSpec` satisfies:
    DAG well-formedness) and Q32.32 systolic RTL module validity on every axis,
 5. Q32.32 overflow-freedom: for every input word vector inside `pdeQ32StateBox`, every directional
    flux output word of `evalFluxSsaDagQ32` stays strictly inside the guard-bit range `(-2^62, 2^62)`
-   (`inferSsaDagQ32Intervals_encloses_eval`, with `evalQ32Reciprocal_residual_bound` on `invSafe`). -/
+   (`inferSsaDagQ32Intervals_encloses_eval`, with `evalQ32Reciprocal_residual_bound` on `invSafe`),
+6. Derived wavespeed: on the state box, the weighted `ℓ∞` norm of every directional Jacobian and
+   every rational eigenvalue of it are bounded by `aMax` (`verifyWavespeedGershgorin_sound`),
+7. Quantitative Q32 step defect: a concrete `ε` bounds the distance between the Q32.32 cell update
+   and the exact rational cell update for every stencil in the Q32 state box
+   (`stepQ32Axis_rat_defect_bound`),
+8. With sources: every word of the joint flux/source DAG stays inside the guard-bit range. -/
 theorem checkPdeSolverSpec_sound (spec : ConservationLawSpec) (dims : List Nat)
     (hCheck : checkPdeSolverSpec spec = true) (hPos : ∀ N ∈ dims, 0 < N) :
     spec.checkValid = true ∧
@@ -412,10 +481,36 @@ theorem checkPdeSolverSpec_sound (spec : ConservationLawSpec) (dims : List Nat)
         (inputs i).toInt ≤ (pdeQ32StateBox spec i).hi) →
       ∀ dag ∈ (specializeFluxSweep spec).axisFluxDags,
         ∀ w ∈ evalFluxSsaDagQ32 inputs spec.paramEnv dag,
+          -((2 : Int)^62) < w.toInt ∧ w.toInt < (2 : Int)^62) ∧
+    (∀ d, d < spec.numDims → ∀ U : Vec,
+      (∀ i, i < spec.numVars → (effectiveStateBox spec i).contains (U i)) →
+      (∀ v : Vec, weightedLInf spec (mulVec spec.numVars (jacMat spec d U) v) ≤
+        spec.aMax * weightedLInf spec v) ∧
+      (∀ (lam : Rat) (v : Vec), (∃ k, k < spec.numVars ∧ v k ≠ 0) →
+        (∀ i, i < spec.numVars → mulVec spec.numVars (jacMat spec d U) v i = lam * v i) →
+        -spec.aMax ≤ lam ∧ lam ≤ spec.aMax)) ∧
+    (∃ ε : Rat, computeStepQ32ErrorBound spec = some ε ∧
+      ∀ axis, axis < spec.numDims → ∀ W : Int → Nat → Word,
+        (∀ off j, j < spec.numVars → InBoxW spec (W off j) j) →
+        ∀ c, c < spec.numVars →
+          Obend.Analysis.PdeSexprAndApprox.ratAbs
+            (decodeQ32 ((evalNonlinearFluxCellQ32 spec (stepDag spec axis) W).getD c 0#64) -
+              evalAxisCellRat spec axis spec.cfl (fun off => decV (W off)) c) ≤ ε) ∧
+    (spec.sources.isEmpty = false → ∀ inputs : Nat → Word,
+      (∀ i, i < spec.numVars → InBoxW spec (inputs i) i) →
+      ∀ d, d < spec.numDims →
+        ∀ w ∈ evalFluxSsaDagQ32 inputs spec.paramEnv (compileJointFluxSourceDag spec d),
           -((2 : Int)^62) < w.toInt ∧ w.toInt < (2 : Int)^62) := by
   obtain ⟨hVal, hRefl, hDags⟩ := checkPdeSolverSpec_valid spec hCheck
+  obtain ⟨hGersh, hEps, hBal⟩ := checkPdeSolverSpec_continuum spec hCheck
+  obtain ⟨ε, hε⟩ := Option.isSome_iff_exists.mp hEps
   refine ⟨hVal, checkValid_cfl_bounds spec hVal, ?_, ?_, ?_,
-    checkPdeQ32Intervals_sound spec (checkPdeSolverSpec_q32Intervals spec hCheck)⟩
+    checkPdeQ32Intervals_sound spec (checkPdeSolverSpec_q32Intervals spec hCheck),
+    fun d hd U hU => verifyWavespeedGershgorin_sound spec hGersh d hd U hU,
+    ⟨ε, hε, fun axis haxis W hW c hc =>
+      stepQ32Axis_rat_defect_bound spec axis haxis ε hε W hW c hc⟩,
+    fun hSrc inputs hin d hd => checkBalanceQ32Intervals_sound spec
+      (hBal.resolve_left (by rw [hSrc]; exact Bool.false_ne_true)) inputs hin d hd⟩
   · intro d i hd hi uL uR hL hR
     exact (fluctuationConservation_of_reflective spec hRefl d i hd hi uL uR hL hR).1
   · exact (spec_sweep_conserves_integral spec dims hPos).1
@@ -504,6 +599,137 @@ meta def summarizeConservationLawSynthesis (spec : ConservationLawSpec) : String
   s!"[#pde_solver `{spec.name}`] D={spec.numDims}, m={spec.numVars}, " ++
   s!"FLOPs: {plan.naiveTotalFlops} -> {plan.specializedTotalFlops} (specialized+CSE)"
 
+/-- Emits the continuum declarations of a solver inside its open namespace: the Gershgorin
+wavespeed certificate, the rational scheme step and its conservation, the Q32 step error bound and
+defect theorem, the Q32 trajectory tube, and (with sources) the balance-law lowering. -/
+meta def elabContinuumDecls (solverId : TSyntax `ident) (parsedSpec : ConservationLawSpec) :
+    CommandElabM Unit := do
+  let mkSubId (n : Name) : TSyntax `ident := mkIdentFrom solverId n
+  let idSpec := mkSubId `spec
+  let idSpecValid := mkSubId `spec_valid
+  let idWaveOk := mkSubId `wavespeed_ok
+  let idQ32Err := mkSubId `q32ErrorBound
+  let idQ32ErrOk := mkSubId `q32ErrorBound_ok
+
+  elabCommand (← `(command|
+    private theorem $idWaveOk :
+        Obend.Analysis.HyperbolicBalanceLaws.verifyWavespeedGershgorin $idSpec = true := by
+      decide +kernel))
+
+  elabCommand (← `(command|
+    theorem $(mkSubId `wavespeed_certified) (d : Nat) (hd : d < ($idSpec).numDims) (U : Vec)
+        (hU : ∀ i, i < ($idSpec).numVars → (effectiveStateBox $idSpec i).contains (U i)) :
+        (∀ v : Vec, weightedLInf $idSpec (mulVec ($idSpec).numVars (jacMat $idSpec d U) v) ≤
+          ($idSpec).aMax * weightedLInf $idSpec v) ∧
+        (∀ (lam : Rat) (v : Vec), (∃ k, k < ($idSpec).numVars ∧ v k ≠ 0) →
+          (∀ i, i < ($idSpec).numVars →
+            mulVec ($idSpec).numVars (jacMat $idSpec d U) v i = lam * v i) →
+          -($idSpec).aMax ≤ lam ∧ lam ≤ ($idSpec).aMax) :=
+      verifyWavespeedGershgorin_sound $idSpec $idWaveOk d hd U hU))
+
+  elabCommand (← `(command|
+    def $(mkSubId `schemeStepRat) (b : Obend.Hardware.Gpu.StencilTile.StencilBoundary)
+        (dims : List Nat) (dt : Rat) (useStrang : Bool) (U : MultiDGrid) : MultiDGrid :=
+      evalSchemeStepRat $idSpec b dims dt useStrang U))
+
+  elabCommand (← `(command|
+    theorem $(mkSubId `scheme_conserves_sourceless) (dims : List Nat) (hPos : ∀ N ∈ dims, 0 < N)
+        (dt : Rat) (useStrang : Bool) (U : MultiDGrid) (c : Nat)
+        (hSrc : ($idSpec).sources.isEmpty = true ∨
+          getOr ($idSpec).sources c (.const 0) = .const 0) :
+        totalGridIntegral dims ($(mkSubId `schemeStepRat) .periodic dims dt useStrang U) c =
+          totalGridIntegral dims U c :=
+      evalSchemeStepRat_conserves_sourceless_component $idSpec dims hPos dt useStrang U c hSrc))
+
+  elabCommand (← `(command|
+    def $idQ32Err : Rat :=
+      (Obend.Analysis.NonlinearErrorTube.computeStepQ32ErrorBound $idSpec).getD 0))
+
+  elabCommand (← `(command|
+    private theorem $idQ32ErrOk :
+        Obend.Analysis.NonlinearErrorTube.computeStepQ32ErrorBound $idSpec = some $idQ32Err := by
+      decide +kernel))
+
+  elabCommand (← `(command|
+    theorem $(mkSubId `q32_step_defect_bound) (axis : Nat) (haxis : axis < ($idSpec).numDims)
+        (W : Int → Nat → Obend.Hardware.ArrayHypergraph.Word)
+        (hW : ∀ off j, j < ($idSpec).numVars → InBoxW $idSpec (W off j) j)
+        (c : Nat) (hc : c < ($idSpec).numVars) :
+        Obend.Analysis.PdeSexprAndApprox.ratAbs (decodeQ32 ((evalNonlinearFluxCellQ32 $idSpec (stepDag $idSpec axis) W).getD c 0#64) -
+          evalAxisCellRat $idSpec axis ($idSpec).cfl (fun off => decV (W off)) c) ≤ $idQ32Err :=
+      stepQ32Axis_rat_defect_bound $idSpec axis haxis _ $idQ32ErrOk W hW c hc))
+
+  elabCommand (← `(command|
+    theorem $(mkSubId `nonlinear_error_tube)
+        (b : Obend.Hardware.Gpu.StencilTile.StencilBoundary) (dims : List Nat) (axis : Nat)
+        (haxis : axis < ($idSpec).numDims) (hdim : axis < dims.length)
+        (box : Nat → Obend.Analysis.HyperbolicBalanceLaws.Interval)
+        (hLip : FluxLipOn $idSpec axis box)
+        (W0 : Nat → Nat → Obend.Hardware.ArrayHypergraph.Word) (U0 : MultiDGrid) (initErr : Rat)
+        (hW : ∀ k idx j, j < ($idSpec).numVars →
+          InBoxW $idSpec (q32Trajectory $idSpec b dims axis W0 k idx j) j)
+        (hP : ∀ k,
+          (∀ idx, InBox ($idSpec).numVars box
+            (decodeGrid (q32Trajectory $idSpec b dims axis W0 k) idx)) ∧
+          ∀ idx, InBox ($idSpec).numVars box
+            (Obend.Analysis.PdeSexprAndApprox.exactTrajectory (evalAxisStepRat $idSpec b dims axis ($idSpec).cfl) U0 k idx))
+        (h0 : GridClose ($idSpec).numVars (weightOf $idSpec) initErr (decodeGrid W0) U0)
+        (K : Nat) :
+        GridClose ($idSpec).numVars (weightOf $idSpec)
+          (nonlinearDefectTube (axisLip $idSpec ($idSpec).cfl) initErr
+            (fun _ => $idQ32Err * maxTo ($idSpec).numVars (fun c => 1 / weightOf $idSpec c)) K)
+          (decodeGrid (q32Trajectory $idSpec b dims axis W0 K))
+          (Obend.Analysis.PdeSexprAndApprox.exactTrajectory (evalAxisStepRat $idSpec b dims axis ($idSpec).cfl) U0 K) :=
+      q32_trajectory_error_tube $idSpec b dims axis haxis hdim _ $idQ32ErrOk box hLip
+        (Rat.le_of_lt (checkValid_cfl_bounds $idSpec $idSpecValid).1)
+        (checkValid_cfl_bounds $idSpec $idSpecValid).2.1
+        (checkValid_cfl_bounds $idSpec $idSpecValid).2.2 W0 U0 initErr hW hP h0 K))
+
+  if !parsedSpec.sources.isEmpty then
+    let idSrcNe := mkSubId `sources_nonempty
+    elabCommand (← `(command|
+      private theorem $idSrcNe : ($idSpec).sources.isEmpty = false := by decide +kernel))
+
+    elabCommand (← `(command|
+      def $(mkSubId `sourceJacobian) : List (List Obend.Analysis.NonlinearMultiDPde.FluxExpr) :=
+        Obend.Analysis.NonlinearMultiDPde.symJacobian ($idSpec).numVars ($idSpec).sources))
+
+    elabCommand (← `(command|
+      theorem $(mkSubId `source_frechet_sound) (u V : Vec) (h : Rat)
+          (hDom0 : DomainValid ($idSpec).domain ⟨u, ($idSpec).paramEnv⟩)
+          (hDom1 : DomainValid ($idSpec).domain
+            (shiftVecEnv ($idSpec).numVars ⟨u, ($idSpec).paramEnv⟩ h V))
+          (i : Nat) (hi : i < ($idSpec).numVars) :
+          evalFlux (getOr ($idSpec).sources i (.const 0))
+              (shiftVecEnv ($idSpec).numVars ⟨u, ($idSpec).paramEnv⟩ h V) -
+            evalFlux (getOr ($idSpec).sources i (.const 0)) ⟨u, ($idSpec).paramEnv⟩ =
+            h * mulVec ($idSpec).numVars
+              (evalSymJacobianMat $(mkSubId `sourceJacobian) ⟨u, ($idSpec).paramEnv⟩) V i +
+            (h * h) * symDirectionalRem ($idSpec).numVars (getOr ($idSpec).sources i (.const 0))
+              ⟨u, ($idSpec).paramEnv⟩ V h :=
+        Obend.Analysis.HyperbolicBalanceLaws.sourceJacobian_frechet_sound $idSpec $idSpecValid
+          $idSrcNe u V h hDom0 hDom1 i hi))
+
+    elabCommand (← `(command|
+      def $(mkSubId `jointDag) (axis : Nat) : Obend.Hardware.MultiDStencilTile.FluxSsaDag :=
+        Obend.Hardware.BalanceLawLowering.compileJointFluxSourceDag $idSpec axis))
+
+    elabCommand (← `(command|
+      def $(mkSubId `balanceSystolicRtl) (axis : Nat) : Obend.Hardware.HDL.RtlModule :=
+        Obend.Hardware.BalanceLawLowering.buildSpecBalanceSystolicRtl $idSpec axis))
+
+    elabCommand (← `(command|
+      theorem $(mkSubId `balanceSystolicRtl_ok) (axis : Nat) :
+          Obend.Hardware.HDL.checkRtlModule ($(mkSubId `balanceSystolicRtl) axis) = true ∧
+            Obend.Hardware.BalanceLawLowering.moduleResizeFree
+              ($(mkSubId `balanceSystolicRtl) axis) = true :=
+        Obend.Hardware.BalanceLawLowering.buildSpecBalanceSystolicRtl_ok $idSpec axis))
+
+    elabCommand (← `(command|
+      def $(mkSubId `balanceSourceGpu) (dims : List Nat) :
+          Obend.Hardware.Gpu.ArraySource.Program :=
+        Obend.Hardware.BalanceLawLowering.compileBalanceSourceStepGpu $idSpec dims))
+
 /-- Programmatic `CommandElabM` entry point synthesizing the full verified solver & accelerator suite
 under `namespace <solverId>`. -/
 meta def elabConservationLaw (solverId : TSyntax `ident) (sexprLit : TSyntax `str) :
@@ -522,6 +748,15 @@ meta def elabConservationLaw (solverId : TSyntax `ident) (sexprLit : TSyntax `st
   if !checkPdeQ32Intervals parsedSpec then
     throwErrorAt sexprLit
       "[#pde_solver `{solverId.getId}`] Q32.32 state box cannot certify all intermediates"
+  if !verifyWavespeedGershgorin parsedSpec then
+    throwErrorAt sexprLit
+      "[#pde_solver `{solverId.getId}`] declared max wavespeed {parsedSpec.aMax} is not certified by the Gershgorin bound of the symbolic Jacobian on the state box"
+  if (computeStepQ32ErrorBound parsedSpec).isNone then
+    throwErrorAt sexprLit
+      "[#pde_solver `{solverId.getId}`] Q32.32 step error bound: a datapath word may leave its checked range"
+  if !(parsedSpec.sources.isEmpty || checkBalanceQ32Intervals parsedSpec) then
+    throwErrorAt sexprLit
+      "[#pde_solver `{solverId.getId}`] Q32.32 state box cannot certify the joint flux/source DAG"
   let plan := specializeFluxSweep parsedSpec
   for d in List.range parsedSpec.numDims do
     let dag := getOr plan.axisFluxDags d ⟨[], []⟩
@@ -682,6 +917,8 @@ meta def elabConservationLaw (solverId : TSyntax `ident) (sexprLit : TSyntax `st
     theorem $idSystolicRtlOk (axis : Nat) :
         Obend.Hardware.HDL.checkRtlModule ($idSystolicRtl axis) = true :=
       Obend.Tactic.SymDiffAndFlux.spec_systolicRtl_ok $idSpec axis))
+
+  elabContinuumDecls solverId parsedSpec
 
   elabCommand (← `(command| end $solverId))
 

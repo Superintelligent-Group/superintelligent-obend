@@ -75,10 +75,10 @@ theorem rat_mul_self_nonneg (x : Rat) : 0 ≤ x * x := by
   · have := Rat.mul_nonneg (show 0 ≤ -x by grind) (show 0 ≤ -x by grind); grind
 
 theorem ratAbs_sumTo_le (n : Nat) (f : Nat → Rat) :
-    ratAbs (sumTo n f) ≤ sumTo n (fun i => ratAbs (f i)) := by
+    PdeSexprAndApprox.ratAbs (sumTo n f) ≤ sumTo n (fun i => PdeSexprAndApprox.ratAbs (f i)) := by
   induction n with
-  | zero => simp only [sumTo]; unfold ratAbs; split <;> grind
-  | succ n ih => simp only [sumTo]; have := ratAbs_add_le (sumTo n f) (f n); grind
+  | zero => simp only [sumTo]; unfold PdeSexprAndApprox.ratAbs; split <;> grind
+  | succ n ih => simp only [sumTo]; have := NonlinearMultiDPde.ratAbs_add_le (sumTo n f) (f n); grind
 
 /-- `1 / ·` is antitone between two rationals of the same strict sign. -/
 theorem rat_inv_antitone {x y : Rat} (hxy : x ≤ y) (hpos : 0 < x * y) :
@@ -111,7 +111,7 @@ abbrev Interval.contains (iv : Interval) (x : Rat) : Prop := iv.lo ≤ x ∧ x �
   ⟨rmin (rmin (a.lo * b.lo) (a.lo * b.hi)) (rmin (a.hi * b.lo) (a.hi * b.hi)),
    rmax (rmax (a.lo * b.lo) (a.lo * b.hi)) (rmax (a.hi * b.lo) (a.hi * b.hi))⟩
 
-def Interval.absBound (a : Interval) : Rat := rmax (ratAbs a.lo) (ratAbs a.hi)
+def Interval.absBound (a : Interval) : Rat := rmax (PdeSexprAndApprox.ratAbs a.lo) (PdeSexprAndApprox.ratAbs a.hi)
 
 theorem rat_mul_between (a lo hi t : Rat) (h1 : lo ≤ t) (h2 : t ≤ hi) :
     rmin (a * lo) (a * hi) ≤ a * t ∧ a * t ≤ rmax (a * lo) (a * hi) := by
@@ -132,9 +132,9 @@ theorem Interval.mul_contains {a b : Interval} {x y : Rat} (hx : a.contains x)
     Rat.le_trans h1.2 (rmax_le (Rat.le_trans h2.2 (le_rmax_left _ _))
       (Rat.le_trans h3.2 (le_rmax_right _ _)))⟩
 
-theorem Interval.abs_le {a : Interval} {x : Rat} (h : a.contains x) : ratAbs x ≤ a.absBound := by
+theorem Interval.abs_le {a : Interval} {x : Rat} (h : a.contains x) : PdeSexprAndApprox.ratAbs x ≤ a.absBound := by
   obtain ⟨h1, h2⟩ := h
-  unfold Interval.absBound rmax ratAbs
+  unfold Interval.absBound rmax PdeSexprAndApprox.ratAbs
   (repeat' split) <;> grind
 
 /-- Interval enclosure of a guarded rational expression over a state box. A syntactic square
@@ -268,7 +268,7 @@ abbrev fluxComp (S : ConservationLawSpec) (d i : Nat) : FluxExpr :=
 @[expose] def jacAbsBound (S : ConservationLawSpec) (d i j : Nat) : Option Rat :=
   match evalFluxInterval S.numVars (effectiveStateBox S) S.paramEnv
       (specializeFluxExpr (some S.paramEnv) (symPartial j (fluxComp S d i))) with
-  | some iv => some (rmax (ratAbs iv.lo) (ratAbs iv.hi))
+  | some iv => some (rmax (PdeSexprAndApprox.ratAbs iv.lo) (PdeSexprAndApprox.ratAbs iv.hi))
   | none => none
 
 @[expose] def optSumTo : Nat → (Nat → Option Rat) → Option Rat
@@ -305,7 +305,7 @@ theorem optSumTo_some (n : Nat) (f : Nat → Option Rat) (s : Rat) (h : optSumTo
 theorem jacAbsBound_sound (S : ConservationLawSpec) (d i j : Nat) (a : Rat)
     (h : jacAbsBound S d i j = some a) (U : Vec)
     (hU : ∀ k, k < S.numVars → (effectiveStateBox S k).contains (U k)) :
-    ratAbs (evalFlux (symPartial j (fluxComp S d i)) ⟨U, S.paramEnv⟩) ≤ a := by
+    PdeSexprAndApprox.ratAbs (evalFlux (symPartial j (fluxComp S d i)) ⟨U, S.paramEnv⟩) ≤ a := by
   unfold jacAbsBound at h
   split at h
   · next iv hiv =>
@@ -324,8 +324,8 @@ def jacMat (S : ConservationLawSpec) (d : Nat) (U : Vec) : Mat :=
 theorem gershgorin_row (S : ConservationLawSpec) (h : verifyWavespeedGershgorin S = true)
     (d i : Nat) (hd : d < S.numDims) (hi : i < S.numVars) (U : Vec)
     (hU : ∀ k, k < S.numVars → (effectiveStateBox S k).contains (U k))
-    (v : Vec) (M : Rat) (hM : 0 ≤ M) (hv : ∀ j, j < S.numVars → ratAbs (v j) ≤ M * weightOf S j) :
-    ratAbs (mulVec S.numVars (jacMat S d U) v i) ≤ S.aMax * weightOf S i * M := by
+    (v : Vec) (M : Rat) (hM : 0 ≤ M) (hv : ∀ j, j < S.numVars → PdeSexprAndApprox.ratAbs (v j) ≤ M * weightOf S j) :
+    PdeSexprAndApprox.ratAbs (mulVec S.numVars (jacMat S d U) v i) ≤ S.aMax * weightOf S i * M := by
   simp only [verifyWavespeedGershgorin, List.all_eq_true, List.mem_range] at h
   have hr := h d hd i hi
   split at hr
@@ -333,7 +333,7 @@ theorem gershgorin_row (S : ConservationLawSpec) (h : verifyWavespeedGershgorin 
     have hle : s ≤ S.aMax * weightOf S i := of_decide_eq_true hr
     obtain ⟨hall, hsum⟩ := optSumTo_some _ _ s hs
     have hterm : ∀ j, j < S.numVars →
-        ratAbs (jacMat S d U i j * v j) ≤
+        PdeSexprAndApprox.ratAbs (jacMat S d U i j * v j) ≤
           ((match jacAbsBound S d i j with
             | some a => some (a * weightOf S j)
             | none => none : Option Rat).getD 0) * M := by
@@ -344,8 +344,8 @@ theorem gershgorin_row (S : ConservationLawSpec) (h : verifyWavespeedGershgorin 
       | some a =>
         simp only [Option.getD_some]
         have ha := jacAbsBound_sound S d i j a hjb U hU
-        rw [ratAbs_mul]
-        have := rat_mul_le_mul (ratAbs_nonneg _) ha (ratAbs_nonneg _) (hv j hj)
+        rw [PdeSexprAndApprox.ratAbs_mul]
+        have := rat_mul_le_mul (PdeSexprAndApprox.ratAbs_nonneg _) ha (PdeSexprAndApprox.ratAbs_nonneg _) (hv j hj)
         unfold jacMat; grind
     have h1 := ratAbs_sumTo_le S.numVars (fun j => jacMat S d U i j * v j)
     have h2 := sumTo_le hterm
@@ -394,12 +394,12 @@ theorem maxTo_attained (n : Nat) (f : Nat → Rat) :
 
 /-- Weighted `ℓ∞` norm `max_i |v_i| / w_i` with the spec's Gershgorin weights. -/
 def weightedLInf (S : ConservationLawSpec) (v : Vec) : Rat :=
-  maxTo S.numVars (fun i => ratAbs (v i) / weightOf S i)
+  maxTo S.numVars (fun i => PdeSexprAndApprox.ratAbs (v i) / weightOf S i)
 
 theorem abs_le_weightedLInf (S : ConservationLawSpec) (v : Vec) (j : Nat) (hj : j < S.numVars) :
-    ratAbs (v j) ≤ weightedLInf S v * weightOf S j :=
+    PdeSexprAndApprox.ratAbs (v j) ≤ weightedLInf S v * weightOf S j :=
   rat_le_mul_of_div_le (weightOf_pos S j)
-    (le_maxTo S.numVars (fun i => ratAbs (v i) / weightOf S i) j hj)
+    (le_maxTo S.numVars (fun i => PdeSexprAndApprox.ratAbs (v i) / weightOf S i) j hj)
 
 theorem weightedLInf_nonneg (S : ConservationLawSpec) (v : Vec) : 0 ≤ weightedLInf S v := by
   unfold weightedLInf
@@ -407,11 +407,11 @@ theorem weightedLInf_nonneg (S : ConservationLawSpec) (v : Vec) : 0 ≤ weighted
   cases n with
   | zero => exact Rat.le_refl
   | succ n =>
-    have h1 := le_maxTo (n + 1) (fun i => ratAbs (v i) / weightOf S i) n (by omega)
-    have hc := Rat.div_mul_cancel (a := ratAbs (v n)) (b := weightOf S n)
+    have h1 := le_maxTo (n + 1) (fun i => PdeSexprAndApprox.ratAbs (v i) / weightOf S i) n (by omega)
+    have hc := Rat.div_mul_cancel (a := PdeSexprAndApprox.ratAbs (v n)) (b := weightOf S n)
       (by have := weightOf_pos S n; grind)
-    have h2 : 0 ≤ ratAbs (v n) / weightOf S n :=
-      rat_le_of_mul_le_mul (weightOf_pos S n) (by have := ratAbs_nonneg (v n); grind)
+    have h2 : 0 ≤ PdeSexprAndApprox.ratAbs (v n) / weightOf S n :=
+      rat_le_of_mul_le_mul (weightOf_pos S n) (by have := PdeSexprAndApprox.ratAbs_nonneg (v n); grind)
     exact Rat.le_trans h2 h1
 
 /-- **Derived wavespeed certificate (`verifyWavespeedGershgorin_sound`)**: on the state box, an
@@ -425,7 +425,7 @@ theorem verifyWavespeedGershgorin_sound (S : ConservationLawSpec)
       (∀ i, i < S.numVars → mulVec S.numVars (jacMat S d U) v i = lam * v i) →
       -S.aMax ≤ lam ∧ lam ≤ S.aMax) := by
   have hrow : ∀ (v : Vec) (i : Nat), i < S.numVars →
-      ratAbs (mulVec S.numVars (jacMat S d U) v i) ≤ S.aMax * weightOf S i * weightedLInf S v :=
+      PdeSexprAndApprox.ratAbs (mulVec S.numVars (jacMat S d U) v i) ≤ S.aMax * weightOf S i * weightedLInf S v :=
     fun v i hi => gershgorin_row S h d i hd hi U hU v _ (weightedLInf_nonneg S v)
       (abs_le_weightedLInf S v)
   refine ⟨fun v => ?_, fun lam v ⟨k, hk, hvk⟩ hEig => ?_⟩
@@ -434,29 +434,29 @@ theorem verifyWavespeedGershgorin_sound (S : ConservationLawSpec)
     · have h0 := hrow v 0 (by omega)
       have hB : 0 ≤ S.aMax * weightedLInf S v :=
         rat_le_of_mul_le_mul (weightOf_pos S 0)
-          (by have := ratAbs_nonneg (mulVec S.numVars (jacMat S d U) v 0); grind)
+          (by have := PdeSexprAndApprox.ratAbs_nonneg (mulVec S.numVars (jacMat S d U) v 0); grind)
       exact maxTo_le _ _ _ hB fun i hi =>
         rat_div_le (weightOf_pos S i) (by have := hrow v i hi; grind)
-  · have hMk := le_maxTo S.numVars (fun i => ratAbs (v i) / weightOf S i) k hk
-    have hck := Rat.div_mul_cancel (a := ratAbs (v k)) (b := weightOf S k)
+  · have hMk := le_maxTo S.numVars (fun i => PdeSexprAndApprox.ratAbs (v i) / weightOf S i) k hk
+    have hck := Rat.div_mul_cancel (a := PdeSexprAndApprox.ratAbs (v k)) (b := weightOf S k)
       (by have := weightOf_pos S k; grind)
-    have habs : 0 < ratAbs (v k) := by unfold ratAbs; split <;> grind
+    have habs : 0 < PdeSexprAndApprox.ratAbs (v k) := by unfold PdeSexprAndApprox.ratAbs; split <;> grind
     have hMpos : 0 < weightedLInf S v := by
-      by_cases hp : 0 < ratAbs (v k) / weightOf S k
+      by_cases hp : 0 < PdeSexprAndApprox.ratAbs (v k) / weightOf S k
       · unfold weightedLInf; grind
-      · have := Rat.mul_nonneg (show 0 ≤ -(ratAbs (v k) / weightOf S k) by grind)
+      · have := Rat.mul_nonneg (show 0 ≤ -(PdeSexprAndApprox.ratAbs (v k) / weightOf S k) by grind)
           (Rat.le_of_lt (weightOf_pos S k))
         grind
-    rcases maxTo_attained S.numVars (fun i => ratAbs (v i) / weightOf S i) with h0 | ⟨i, hi, he⟩
+    rcases maxTo_attained S.numVars (fun i => PdeSexprAndApprox.ratAbs (v i) / weightOf S i) with h0 | ⟨i, hi, he⟩
     · unfold weightedLInf at hMpos; grind
-    · have hci := Rat.div_mul_cancel (a := ratAbs (v i)) (b := weightOf S i)
+    · have hci := Rat.div_mul_cancel (a := PdeSexprAndApprox.ratAbs (v i)) (b := weightOf S i)
         (by have := weightOf_pos S i; grind)
-      have hvi : ratAbs (v i) = weightedLInf S v * weightOf S i := by
+      have hvi : PdeSexprAndApprox.ratAbs (v i) = weightedLInf S v * weightOf S i := by
         unfold weightedLInf; rw [← he]; exact hci.symm
       have hr := hrow v i hi
-      rw [hEig i hi, ratAbs_mul, hvi] at hr
+      rw [hEig i hi, PdeSexprAndApprox.ratAbs_mul, hvi] at hr
       have hpos := Rat.mul_pos hMpos (weightOf_pos S i)
-      exact ratAbs_bounds_iff.mp (rat_le_of_mul_le_mul hpos (by grind))
+      exact NonlinearMultiDPde.ratAbs_bounds_iff.mp (rat_le_of_mul_le_mul hpos (by grind))
 
 /-! ## 4. Rung 2: rational MUSCL/Rusanov axis step, source step and scheme step -/
 
