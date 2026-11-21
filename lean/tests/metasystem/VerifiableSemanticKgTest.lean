@@ -1,20 +1,25 @@
 /-
-# `tests/metasystem/VerifiableSemanticKgTest.lean` — Wave-1 Stage 1 & Stage 2 Verification Suite
+# `tests/metasystem/VerifiableSemanticKgTest.lean` — Wave-1 Stage 1–3 Verification Suite
 
-Verifies `Obend.SemanticKG.Databank` (Stage 1) and `Obend.SemanticKG.SpanParse` (Stage 2) via:
-1. Six live `#tooth` mutation-sensitivity kills guarding universal Stage-1 & Stage-2 soundness theorems.
+Verifies `Obend.SemanticKG.Databank` (Stage 1), `Obend.SemanticKG.SpanParse` (Stage 2), and
+`Obend.SemanticKG.HypergraphChase` (Stage 3) via:
+1. Eleven live `#tooth` mutation-sensitivity kills guarding universal Stage-1, Stage-2, and Stage-3 theorems.
 2. Concrete redaction token-splice, `\"` escape-smuggling, cross-string-boundary, and positive
    delimiter-confined redaction regression vectors (`decide +kernel`).
 3. Concrete Stage-2 `SpanParse` acceptance (multi-field multi-object JSON chunk) and refusal vectors
    (`spanInsideStringLiteral` / escaped-quote `\"` fake object, `forbiddenDelimiterMatched`,
    `arityMismatch`, `uninternedEntity`).
-4. `#assert_axioms_tree` plus `Obend.SemanticKG` closed-theorem census guard.
+4. Concrete Stage-3 `HypergraphChase` regression vectors (`ProvVec4` multi-eval, guarded saturation
+   positive/negative, RMFA vs Weak Acyclicity separation, GL/VGRS stratified vs even-cycle negation,
+   evidenced Ocap query guard, and `coreQuotientBcqHom` tracker `rfl` reduction).
+5. `#assert_axioms_tree` plus `Obend.SemanticKG` closed-theorem census guard.
 -/
 
 import Obend.Tactic.Tooth
 import Obend.AssertAxioms
 import Obend.SemanticKG.Databank
 import Obend.SemanticKG.SpanParse
+import Obend.SemanticKG.HypergraphChase
 
 namespace Obend.Tests.Metasystem.VerifiableSemanticKgTest
 
@@ -327,7 +332,206 @@ example :
     (by decide +kernel)
 
 
-/-! ## §4. Whole-Tree Axiom Guard & Closed-Theorem Census -/
+/-! ## §4. Stage-3 `HypergraphChase` `#tooth` Kills & Concrete Regression Vectors -/
+
+-- Tooth 7 (HypergraphChase): short-circuiting `checkGuardedHeadFast` breaks saturation equivalence.
+#guard_msgs (drop info) in
+#tooth Obend.SemanticKG.checkGuardedSaturationFast_eq_spec by mutation
+  Obend.SemanticKG.checkGuardedHeadFast := fun _ _ _ _ => true
+
+-- Tooth 8 (HypergraphChase): treating every relation as EDB-only breaks RMFA Skolem-depth bound.
+#guard_msgs (drop info) in
+#tooth Obend.SemanticKG.rmfa_chase_terminates_bounded by mutation
+  Obend.SemanticKG.isEdbOnlyRel := fun _ _ => true
+
+-- Tooth 9 (HypergraphChase): ignoring `subMask` in `checkKgQueryGuard` breaks evidenced Ocap soundness.
+#guard_msgs (drop info) in
+#tooth Obend.SemanticKG.evidenced_kg_query_guard_sound by mutation
+  Obend.SemanticKG.checkKgQueryGuard := fun pol _ _ ρ =>
+    Obend.Polis.KleenePred3.accepts (pol.caveat.eval ρ)
+
+-- Tooth 10 (HypergraphChase): ignoring `KleenePred3.accepts` breaks fail-closed caveat refinement.
+#guard_msgs (drop info) in
+#tooth Obend.SemanticKG.evidenced_kg_query_guard_sound by mutation
+  Obend.SemanticKG.checkKgQueryGuard := fun pol rights mask _ =>
+    Obend.Polis.subMask pol.needRights (rights &&& mask)
+
+-- Tooth 11 (HypergraphChase): returning constant `true` on `.evalBcq` breaks core quotient BCQ lift.
+#guard_msgs (drop info) in
+#tooth Obend.SemanticKG.core_quotient_bcq_lift_sound by mutation
+  Obend.SemanticKG.KgAsmCode.eval := fun c v =>
+    match c, v with
+    | .id, v => some v
+    | .comp _ _, _ => none
+    | .evalBcq _, .factSet _ => some (.boolVal true)
+    | .evalBcq _, .boolVal _ => none
+
+-- Vector 3.1: `ProvVec4` polynomial multi-evaluation on 4 distinct Goldilocks challenge points.
+private def testChallengeEnvs : Fin 4 → Nat → Obend.Crypto.Goldilocks
+  | ⟨0, _⟩, 0 => Obend.Crypto.Goldilocks.ofNat 2
+  | ⟨0, _⟩, _ => Obend.Crypto.Goldilocks.ofNat 3
+  | ⟨1, _⟩, 0 => Obend.Crypto.Goldilocks.ofNat 5
+  | ⟨1, _⟩, _ => Obend.Crypto.Goldilocks.ofNat 7
+  | ⟨2, _⟩, 0 => Obend.Crypto.Goldilocks.ofNat 11
+  | ⟨2, _⟩, _ => Obend.Crypto.Goldilocks.ofNat 13
+  | ⟨3, _⟩, 0 => Obend.Crypto.Goldilocks.ofNat 17
+  | ⟨3, _⟩, _ => Obend.Crypto.Goldilocks.ofNat 19
+
+private def testProvPolyA : Obend.SymbolicZk.Datalog.ProvExpr Nat :=
+  .add (.var 0) (.var 1)
+
+private def testProvPolyB : Obend.SymbolicZk.Datalog.ProvExpr Nat :=
+  .add (.var 0) .one
+
+example :
+    let vProd : ProvVec4 := evalProvVec testChallengeEnvs (.mul testProvPolyA testProvPolyB)
+    let vMul : ProvVec4 := Obend.SymbolicZk.Datalog.ProvenanceSemiringOps.mul
+      (evalProvVec testChallengeEnvs testProvPolyA) (evalProvVec testChallengeEnvs testProvPolyB)
+    testChallengeEnvs ⟨0, by decide⟩ 0 ≠ testChallengeEnvs ⟨1, by decide⟩ 0 ∧
+    testChallengeEnvs ⟨1, by decide⟩ 0 ≠ testChallengeEnvs ⟨2, by decide⟩ 0 ∧
+    testChallengeEnvs ⟨2, by decide⟩ 0 ≠ testChallengeEnvs ⟨3, by decide⟩ 0 ∧
+    vProd = vMul ∧
+    vProd.limbs[0].val = 15 ∧ vProd.limbs[1].val = 72 ∧
+    vProd.limbs[2].val = 288 ∧ vProd.limbs[3].val = 648 := by
+  refine ⟨by decide +kernel, by decide +kernel, by decide +kernel,
+    (evalProvenancePoly_hom 4 testChallengeEnvs).map_mul testProvPolyA testProvPolyB, ?_, ?_, ?_, ?_⟩ <;>
+  · simp only [evalProvVec, Vector.getElem_ofFn, testProvPolyA, testProvPolyB, testChallengeEnvs,
+      Obend.SymbolicZk.Datalog.evalProvGoldilocks,
+      Obend.SymbolicZk.Datalog.ProvenanceSemiringOps.add,
+      Obend.SymbolicZk.Datalog.ProvenanceSemiringOps.mul,
+      Obend.SymbolicZk.Datalog.ProvenanceSemiringOps.one,
+      Obend.Crypto.CommRingOps.add, Obend.Crypto.CommRingOps.mul, Obend.Crypto.CommRingOps.one,
+      Obend.Crypto.Goldilocks.add_val, Obend.Crypto.Goldilocks.mul_val,
+      Obend.Crypto.Goldilocks.ofNat, Obend.Crypto.Goldilocks.one]
+    decide +kernel
+
+-- Vector 3.2: `checkGuardedSaturationFast` positive saturated acceptance & negative rejection.
+private def guardedRule1 : Obend.SymbolicZk.SkolemChaseCore.TgdRule where
+  id := 1
+  frontierVars := [0]
+  existVars := [1]
+  body := [⟨0, [.var 0]⟩, ⟨1, [.var 0]⟩]
+  head := [⟨2, [.var 0, .var 1]⟩]
+
+private def satInternTbl : SymInternTable :=
+  ⟨#[.const 10, .skolem 1 1 [.const 10]]⟩
+
+private def satTablePos : Obend.SymbolicZk.Datalog.SortedKTable Bool :=
+  ⟨#[(⟨0, #[0]⟩, true), (⟨1, #[0]⟩, true), (⟨2, #[0, 1]⟩, true)]⟩
+
+private def satTableNeg : Obend.SymbolicZk.Datalog.SortedKTable Bool :=
+  ⟨#[(⟨0, #[0]⟩, true), (⟨1, #[0]⟩, true)]⟩
+
+example :
+    satInternTbl.WF = true ∧
+    IsGuardedRule guardedRule1 = true ∧
+    tableSymsInBounds satInternTbl satTablePos = true ∧
+    tableSymsInBounds satInternTbl satTableNeg = true ∧
+    checkGuardedSaturationFast satInternTbl satTablePos #[guardedRule1] = true ∧
+    Obend.SymbolicZk.SkolemChaseCore.allRulesSatisfied [guardedRule1]
+      (decodeSortedFactSet satInternTbl satTablePos) = true ∧
+    checkGuardedSaturationFast satInternTbl satTableNeg #[guardedRule1] = false ∧
+    Obend.SymbolicZk.SkolemChaseCore.allRulesSatisfied [guardedRule1]
+      (decodeSortedFactSet satInternTbl satTableNeg) = false := by
+  decide +kernel
+
+-- Vector 3.3: Concrete RMFA vs Weak Acyclicity separation.
+private def rmfaSepRules : List Obend.SymbolicZk.SkolemChaseCore.TgdRule := [
+  { id := 1, frontierVars := [0], existVars := [1]
+    body := [⟨1, [.var 0]⟩], head := [⟨2, [.var 0, .var 1]⟩] },
+  { id := 2, frontierVars := [1], existVars := []
+    body := [⟨2, [.var 0, .var 1]⟩, ⟨3, [.var 1]⟩], head := [⟨1, [.var 1]⟩] }
+]
+
+private def rmfaSepWitness : RmfaRankWitness :=
+  ⟨[(⟨1, 0⟩, 0), (⟨2, 0⟩, 0), (⟨2, 1⟩, 1)]⟩
+
+example :
+    isEdbOnlyRel rmfaSepRules 3 = true ∧
+    isEdbOnlyRel rmfaSepRules 1 = false ∧
+    isEdbOnlyRel rmfaSepRules 2 = false ∧
+    Obend.SymbolicZk.SkolemChaseCore.checkWeaklyAcyclic rmfaSepWitness.posRanks rmfaSepRules = false ∧
+    checkRmfaRankWitness rmfaSepWitness rmfaSepRules = true ∧
+    maxRmfaRank rmfaSepWitness = 1 ∧
+    (Obend.SymbolicZk.SkolemChaseCore.runBoundedChase rmfaSepRules 4
+      [{ rel := 1, args := [.const 7] }, { rel := 3, args := [.const 7] }]).all
+      (fun a => a.args.all (fun t => decide (Obend.SymbolicZk.SkolemChaseCore.skolemDepth t ≤ 1))) = true := by
+  decide +kernel
+
+-- Vector 3.4: Concrete `checkGlFixpointLinear` & `checkVgrsFixpointLinear`:
+-- (a) Stratified negation with negative blocker; (b) Even-cycle negation ambiguity vs WFS undefinedness.
+private def stratNegProg : Obend.SymbolicZk.Ranked.ArithProgram where
+  numAtoms := 3
+  rules := #[⟨0, #[], #[]⟩, ⟨1, #[], #[0]⟩, ⟨2, #[0], #[1]⟩]
+
+private def evenCycleProg : Obend.SymbolicZk.Ranked.ArithProgram where
+  numAtoms := 2
+  rules := #[⟨0, #[], #[1]⟩, ⟨1, #[], #[0]⟩]
+
+example :
+    -- Stratified negation: unique GL stable model & matching total WFS with negative blocker on rule 1
+    checkGlFixpointLinear stratNegProg #[true, false, true] ⟨#[0, 0, 1], #[0, 0, 2]⟩ = true ∧
+    checkGlFixpointLinear stratNegProg #[true, true, false] ⟨#[0, 0, 1], #[0, 1, 2]⟩ = false ∧
+    checkVgrsFixpointLinear stratNegProg #[true, false, true] #[true, false, true]
+      ⟨#[0, 0, 1], #[0, 0, 0], #[0, 0, 1], #[0, 0, 2], #[0, 0, 2], #[(false, 0), (true, 0), (false, 0)]⟩ = true ∧
+    -- Even-cycle negation: two distinct GL stable models, but WFS leaves both atoms undefined (T=∅, U={0,1})
+    checkGlFixpointLinear evenCycleProg #[true, false] ⟨#[0, 0], #[0, 0]⟩ = true ∧
+    checkGlFixpointLinear evenCycleProg #[false, true] ⟨#[0, 0], #[0, 1]⟩ = true ∧
+    checkVgrsFixpointLinear evenCycleProg #[false, false] #[true, true]
+      ⟨#[0, 0], #[0, 0], #[0, 0], #[0, 0], #[0, 1], #[(false, 0), (false, 0)]⟩ = true ∧
+    checkVgrsFixpointLinear evenCycleProg #[true, false] #[true, false]
+      ⟨#[1, 0], #[0, 0], #[0, 0], #[0, 0], #[0, 0], #[(false, 0), (true, 0)]⟩ = false := by
+  decide +kernel
+
+-- Vector 3.5: Concrete Evidenced Ocap query guard acceptance, attenuation refusal, & Kleene fail-closed refusal.
+private def testKgPolicy : KgQueryPolicy where
+  query := ⟨[⟨10, [.const 1, .var 0]⟩]⟩
+  needRights := 0x05
+  caveat := .and (.atom 0) (.not (.atom 1))
+
+example :
+    let ρOk : Nat → Obend.Polis.KleenePred3 := fun i => if i == 0 then .true3 else .false3
+    let ρUnk : Nat → Obend.Polis.KleenePred3 := fun i => if i == 0 then .true3 else .unbound3
+    checkKgQueryGuard testKgPolicy 0x07 0x05 ρOk = true ∧
+    checkKgQueryGuard testKgPolicy 0x07 0x01 ρOk = false ∧
+    checkKgQueryGuard testKgPolicy 0x07 0x05 ρUnk = false := by
+  decide +kernel
+
+-- Vector 3.6: Concrete `coreQuotientBcqHom` tracker `rfl` reduction & retraction check.
+private def coreQueryPos : Obend.SymbolicZk.SkolemChaseCore.ConjunctiveQuery :=
+  ⟨[⟨10, [.const 1, .var 0]⟩]⟩
+
+private def coreQueryNeg : Obend.SymbolicZk.SkolemChaseCore.ConjunctiveQuery :=
+  ⟨[⟨10, [.const 99, .var 0]⟩]⟩
+
+private def coreFactSetM : Obend.SymbolicZk.SkolemChaseCore.FactSet :=
+  [{ rel := 10, args := [.const 1, .const 2] },
+   { rel := 10, args := [.const 1, .skolem 1 1 [.const 1]] }]
+
+private def coreFactSetC : Obend.SymbolicZk.SkolemChaseCore.FactSet :=
+  [{ rel := 10, args := [.const 1, .const 2] }]
+
+private def coreRetractCert : Obend.SymbolicZk.SkolemChaseCore.RetractionCert :=
+  { termMap := [(.skolem 1 1 [.const 1], .const 2)] }
+
+example :
+    KgAsmCode.eval (coreQuotientBcqHom coreQueryPos).tracker (.factSet coreFactSetM) =
+      some (.boolVal true) := rfl
+
+example :
+    KgAsmCode.eval (coreQuotientBcqHom coreQueryPos).tracker (.factSet coreFactSetC) =
+      some (.boolVal true) := rfl
+
+example :
+    KgAsmCode.eval (coreQuotientBcqHom coreQueryNeg).tracker (.factSet coreFactSetM) =
+      some (.boolVal false) := rfl
+
+example :
+    Obend.SymbolicZk.SkolemChaseCore.checkRetractionCore coreRetractCert coreFactSetM coreFactSetC = true := by
+  decide +kernel
+
+
+/-! ## §5. Whole-Tree Axiom Guard & Closed-Theorem Census -/
 
 open Lean Elab Command in
 run_cmd do
