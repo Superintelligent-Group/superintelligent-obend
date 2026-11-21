@@ -683,7 +683,7 @@ theorem clifford_commutesWithParity_iff_even_blades (H : CliffordElem) :
   rw [decide_eq_true_iff, decide_eq_true_iff, decide_eq_true_iff, decide_eq_true_iff,
       decide_eq_true_iff, decide_eq_true_iff, decide_eq_true_iff, decide_eq_true_iff]
   rw [CliffordElem.ext_iff]
-  simp only [cliffordCommutator, cliffordSub, cliffordMul, cliffordZero,
+  simp only [cliffordMul,
     CliffordElem.ofFn, CliffordElem.coeff, sum16Blades, cliffordSign, signOfBit, koszulSwaps,
     bladeBit, Nat.reduceXor, Nat.reduceShiftRight, Nat.reduceAdd, Nat.reduceMul, Nat.reduceMod,
     Int.reduceNeg, Int.mul_zero, Int.zero_mul, Int.mul_one, Int.one_mul, Int.mul_neg, Int.neg_mul,
