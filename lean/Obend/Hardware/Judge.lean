@@ -153,233 +153,147 @@ private instance : Wire Int := wireIso
   (fun (sign,n) => if sign then Int.negSucc n else Int.ofNat n)
   (by intro x; cases x <;> rfl)
 private def rtlAluOpCbor : RtlAluOp → CborVal
-  | .add  => .array [.uint 0]
-  | .sub  => .array [.uint 1]
-  | .mul  => .array [.uint 2]
-  | .bitAnd  => .array [.uint 3]
-  | .bitOr  => .array [.uint 4]
-  | .bitXor  => .array [.uint 5]
-  | .shl  => .array [.uint 6]
-  | .lshr  => .array [.uint 7]
-  | .ashr  => .array [.uint 8]
-  | .eq  => .array [.uint 9]
-  | .ult  => .array [.uint 10]
-  | .slt  => .array [.uint 11]
-  | .qmul32  => .array [.uint 12]
+  | .add => .array [.uint 0] | .sub => .array [.uint 1] | .mul => .array [.uint 2]
+  | .bitAnd => .array [.uint 3] | .bitOr => .array [.uint 4] | .bitXor => .array [.uint 5]
+  | .shl => .array [.uint 6] | .lshr => .array [.uint 7] | .ashr => .array [.uint 8]
+  | .eq => .array [.uint 9] | .ult => .array [.uint 10] | .slt => .array [.uint 11] | .qmul32 => .array [.uint 12]
 private def cborRtlAluOp : CborVal → Option RtlAluOp
-  | .array [.uint 0] => do return .add
-  | .array [.uint 1] => do return .sub
-  | .array [.uint 2] => do return .mul
-  | .array [.uint 3] => do return .bitAnd
-  | .array [.uint 4] => do return .bitOr
-  | .array [.uint 5] => do return .bitXor
-  | .array [.uint 6] => do return .shl
-  | .array [.uint 7] => do return .lshr
-  | .array [.uint 8] => do return .ashr
-  | .array [.uint 9] => do return .eq
-  | .array [.uint 10] => do return .ult
-  | .array [.uint 11] => do return .slt
-  | .array [.uint 12] => do return .qmul32
-  | _ => none
+  | .array [.uint 0] => some .add | .array [.uint 1] => some .sub | .array [.uint 2] => some .mul
+  | .array [.uint 3] => some .bitAnd | .array [.uint 4] => some .bitOr | .array [.uint 5] => some .bitXor
+  | .array [.uint 6] => some .shl | .array [.uint 7] => some .lshr | .array [.uint 8] => some .ashr
+  | .array [.uint 9] => some .eq | .array [.uint 10] => some .ult | .array [.uint 11] => some .slt
+  | .array [.uint 12] => some .qmul32 | _ => none
 private instance : Wire RtlAluOp where
-  enc := rtlAluOpCbor
-  dec := cborRtlAluOp
-  canonical x := by
-    cases x <;> simp_all [rtlAluOpCbor, pack_wf, CanonicalCbor, wfVal, wfList]
-  inverse x := by
-    cases x <;> simp_all [rtlAluOpCbor,cborRtlAluOp,unpack_pack]
+  enc := rtlAluOpCbor; dec := cborRtlAluOp
+  canonical x := by cases x <;> simp_all [rtlAluOpCbor, pack_wf, CanonicalCbor, wfVal, wfList]
+  inverse x := by cases x <;> simp_all [rtlAluOpCbor, cborRtlAluOp, unpack_pack]
 private def clkDomainCbor : ClkDomain → CborVal
-  | .coreClk  => .array [.uint 0]
-  | .axiIoClk  => .array [.uint 1]
-  | .cfgJtagClk  => .array [.uint 2]
+  | .coreClk => .array [.uint 0] | .axiIoClk => .array [.uint 1] | .cfgJtagClk => .array [.uint 2]
 private def cborClkDomain : CborVal → Option ClkDomain
-  | .array [.uint 0] => do return .coreClk
-  | .array [.uint 1] => do return .axiIoClk
-  | .array [.uint 2] => do return .cfgJtagClk
-  | _ => none
+  | .array [.uint 0] => some .coreClk | .array [.uint 1] => some .axiIoClk | .array [.uint 2] => some .cfgJtagClk | _ => none
 private instance : Wire ClkDomain where
-  enc := clkDomainCbor
-  dec := cborClkDomain
-  canonical x := by
-    cases x <;> simp_all [clkDomainCbor, pack_wf, CanonicalCbor, wfVal, wfList]
-  inverse x := by
-    cases x <;> simp_all [clkDomainCbor,cborClkDomain,unpack_pack]
+  enc := clkDomainCbor; dec := cborClkDomain
+  canonical x := by cases x <;> simp_all [clkDomainCbor, pack_wf, CanonicalCbor, wfVal, wfList]
+  inverse x := by cases x <;> simp_all [clkDomainCbor, cborClkDomain, unpack_pack]
 private def resetKindCbor : ResetKind → CborVal
-  | .resetFree  => .array [.uint 0]
-  | .syncReset x0 => .array [.uint 1,pack x0]
+  | .resetFree => .array [.uint 0] | .syncReset x0 => .array [.uint 1, pack x0]
 private def cborResetKind : CborVal → Option ResetKind
-  | .array [.uint 0] => do return .resetFree
-  | .array [.uint 1 ,x0] => do return .syncReset (← unpack x0)
-  | _ => none
+  | .array [.uint 0] => some .resetFree | .array [.uint 1, x0] => do return .syncReset (← unpack x0) | _ => none
 private instance : Wire ResetKind where
-  enc := resetKindCbor
-  dec := cborResetKind
-  canonical x := by
-    cases x <;> simp_all [resetKindCbor, pack_wf, CanonicalCbor, wfVal, wfList]
-  inverse x := by
-    cases x <;> simp_all [resetKindCbor,cborResetKind,unpack_pack]
+  enc := resetKindCbor; dec := cborResetKind
+  canonical x := by cases x <;> simp_all [resetKindCbor, pack_wf, CanonicalCbor, wfVal, wfList]
+  inverse x := by cases x <;> simp_all [resetKindCbor, cborResetKind, unpack_pack]
 private def rtlWidthOpCbor : RtlWidthOp → CborVal
-  | .slice x0 x1 => .array [.uint 0,pack x0,pack x1]
-  | .zext x0 => .array [.uint 1,pack x0]
-  | .sext x0 x1 => .array [.uint 2,pack x0,pack x1]
-  | .trunc x0 => .array [.uint 3,pack x0]
+  | .slice x0 x1 => .array [.uint 0, pack x0, pack x1] | .zext x0 => .array [.uint 1, pack x0]
+  | .sext x0 x1 => .array [.uint 2, pack x0, pack x1] | .trunc x0 => .array [.uint 3, pack x0]
 private def cborRtlWidthOp : CborVal → Option RtlWidthOp
-  | .array [.uint 0 ,x0,x1] => do return .slice (← unpack x0) (← unpack x1)
-  | .array [.uint 1 ,x0] => do return .zext (← unpack x0)
-  | .array [.uint 2 ,x0,x1] => do return .sext (← unpack x0) (← unpack x1)
-  | .array [.uint 3 ,x0] => do return .trunc (← unpack x0)
+  | .array [.uint 0, x0, x1] => do return .slice (← unpack x0) (← unpack x1)
+  | .array [.uint 1, x0] => do return .zext (← unpack x0)
+  | .array [.uint 2, x0, x1] => do return .sext (← unpack x0) (← unpack x1)
+  | .array [.uint 3, x0] => do return .trunc (← unpack x0)
   | _ => none
 private instance : Wire RtlWidthOp where
-  enc := rtlWidthOpCbor
-  dec := cborRtlWidthOp
-  canonical x := by
-    cases x <;> simp_all [rtlWidthOpCbor, pack_wf, CanonicalCbor, wfVal, wfList]
-  inverse x := by
-    cases x <;> simp_all [rtlWidthOpCbor,cborRtlWidthOp,unpack_pack]
+  enc := rtlWidthOpCbor; dec := cborRtlWidthOp
+  canonical x := by cases x <;> simp_all [rtlWidthOpCbor, pack_wf, CanonicalCbor, wfVal, wfList]
+  inverse x := by cases x <;> simp_all [rtlWidthOpCbor, cborRtlWidthOp, unpack_pack]
 private def rtlExprCbor : RtlExpr → CborVal
-  | .const x0 => .array [.uint 0,pack x0]
-  | .inputPort x0 => .array [.uint 1,pack x0]
-  | .wireRef x0 => .array [.uint 2,pack x0]
-  | .regRead x0 => .array [.uint 3,pack x0]
-  | .alu x0 x1 x2 => .array [.uint 4,pack x0,rtlExprCbor x1,rtlExprCbor x2]
-  | .mux x0 x1 x2 => .array [.uint 5,rtlExprCbor x0,rtlExprCbor x1,rtlExprCbor x2]
-  | .bitNot x0 => .array [.uint 6,rtlExprCbor x0]
-  | .resize x0 x1 => .array [.uint 7,pack x0,rtlExprCbor x1]
+  | .const x0 => .array [.uint 0, pack x0] | .inputPort x0 => .array [.uint 1, pack x0]
+  | .wireRef x0 => .array [.uint 2, pack x0] | .regRead x0 => .array [.uint 3, pack x0]
+  | .alu x0 x1 x2 => .array [.uint 4, pack x0, rtlExprCbor x1, rtlExprCbor x2]
+  | .mux x0 x1 x2 => .array [.uint 5, rtlExprCbor x0, rtlExprCbor x1, rtlExprCbor x2]
+  | .bitNot x0 => .array [.uint 6, rtlExprCbor x0] | .resize x0 x1 => .array [.uint 7, pack x0, rtlExprCbor x1]
 termination_by structural x => x
 private def cborRtlExpr : CborVal → Option RtlExpr
-  | .array [.uint 0 ,x0] => do return .const (← unpack x0)
-  | .array [.uint 1 ,x0] => do return .inputPort (← unpack x0)
-  | .array [.uint 2 ,x0] => do return .wireRef (← unpack x0)
-  | .array [.uint 3 ,x0] => do return .regRead (← unpack x0)
-  | .array [.uint 4 ,x0,x1,x2] => do return .alu (← unpack x0) (← cborRtlExpr x1) (← cborRtlExpr x2)
-  | .array [.uint 5 ,x0,x1,x2] => do return .mux (← cborRtlExpr x0) (← cborRtlExpr x1) (← cborRtlExpr x2)
-  | .array [.uint 6 ,x0] => do return .bitNot (← cborRtlExpr x0)
-  | .array [.uint 7 ,x0,x1] => do return .resize (← unpack x0) (← cborRtlExpr x1)
+  | .array [.uint 0, x0] => do return .const (← unpack x0)
+  | .array [.uint 1, x0] => do return .inputPort (← unpack x0)
+  | .array [.uint 2, x0] => do return .wireRef (← unpack x0)
+  | .array [.uint 3, x0] => do return .regRead (← unpack x0)
+  | .array [.uint 4, x0, x1, x2] => do return .alu (← unpack x0) (← cborRtlExpr x1) (← cborRtlExpr x2)
+  | .array [.uint 5, x0, x1, x2] => do return .mux (← cborRtlExpr x0) (← cborRtlExpr x1) (← cborRtlExpr x2)
+  | .array [.uint 6, x0] => do return .bitNot (← cborRtlExpr x0)
+  | .array [.uint 7, x0, x1] => do return .resize (← unpack x0) (← cborRtlExpr x1)
   | _ => none
 termination_by structural x => x
 private instance : Wire RtlExpr where
-  enc := rtlExprCbor
-  dec := cborRtlExpr
-  canonical x := by
-    induction x <;> simp_all [rtlExprCbor, pack_wf, CanonicalCbor, wfVal, wfList]
-  inverse x := by
-    induction x <;> simp_all [rtlExprCbor,cborRtlExpr,unpack_pack]
+  enc := rtlExprCbor; dec := cborRtlExpr
+  canonical x := by induction x <;> simp_all [rtlExprCbor, pack_wf, CanonicalCbor, wfVal, wfList]
+  inverse x := by induction x <;> simp_all [rtlExprCbor, cborRtlExpr, unpack_pack]
 private instance : Wire WireAssign := wireIso
-  (fun x => (x.wireIdx,x.name,x.expr,x.width))
-  (fun (wireIdx,name,expr,width) => ⟨wireIdx,name,expr,width⟩)
+  (fun x => (x.wireIdx,x.name,x.expr,x.width)) (fun (wireIdx,name,expr,width) => ⟨wireIdx,name,expr,width⟩)
   (by intro x; cases x; rfl)
 private instance : Wire RegSpec := wireIso
   (fun x => (x.regIdx,x.name,x.domain,x.resetKind,x.isSynchronizer,x.nextExpr,x.width))
   (fun (regIdx,name,domain,resetKind,isSynchronizer,nextExpr,width) => ⟨regIdx,name,domain,resetKind,isSynchronizer,nextExpr,width⟩)
   (by intro x; cases x; rfl)
 private instance : Wire OutputPort := wireIso
-  (fun x => (x.name,x.expr,x.width))
-  (fun (name,expr,width) => ⟨name,expr,width⟩)
-  (by intro x; cases x; rfl)
+  (fun x => (x.name,x.expr,x.width)) (fun (name,expr,width) => ⟨name,expr,width⟩) (by intro x; cases x; rfl)
 private instance : Wire RtlModule := wireIso
   (fun x => (x.name,x.inputNames,x.wires,x.regs,x.outputs,x.inputWidths))
   (fun (name,inputNames,wires,regs,outputs,inputWidths) => ⟨name,inputNames,wires,regs,outputs,inputWidths⟩)
   (by intro x; cases x; rfl)
 private instance : Wire SyncEdge := wireIso
-  (fun x => (x.src,x.dst,x.origRegs,x.combDelayPs))
-  (fun (src,dst,origRegs,combDelayPs) => ⟨src,dst,origRegs,combDelayPs⟩)
+  (fun x => (x.src,x.dst,x.origRegs,x.combDelayPs)) (fun (src,dst,origRegs,combDelayPs) => ⟨src,dst,origRegs,combDelayPs⟩)
   (by intro x; cases x; rfl)
 private instance : Wire SyncGraph := wireIso
   (fun x => (x.name,x.primaryInputs,x.primaryOutputs,x.edges))
   (fun (name,primaryInputs,primaryOutputs,edges) => ⟨name,primaryInputs,primaryOutputs,edges⟩)
   (by intro x; cases x; rfl)
 private instance : Wire RetimingCert := wireIso
-  (fun x => (x.vertexLags,x.ioLatencyShift))
-  (fun (vertexLags,ioLatencyShift) => ⟨vertexLags,ioLatencyShift⟩)
+  (fun x => (x.vertexLags,x.ioLatencyShift)) (fun (vertexLags,ioLatencyShift) => ⟨vertexLags,ioLatencyShift⟩)
   (by intro x; cases x; rfl)
 private def carryModeCbor : CarryMode → CborVal
-  | .add  => .array [.uint 0]
-  | .sub  => .array [.uint 1]
-  | .ultCmp  => .array [.uint 2]
-  | .sltCmp  => .array [.uint 3]
+  | .add => .array [.uint 0] | .sub => .array [.uint 1] | .ultCmp => .array [.uint 2] | .sltCmp => .array [.uint 3]
 private def cborCarryMode : CborVal → Option CarryMode
-  | .array [.uint 0] => do return .add
-  | .array [.uint 1] => do return .sub
-  | .array [.uint 2] => do return .ultCmp
-  | .array [.uint 3] => do return .sltCmp
-  | _ => none
+  | .array [.uint 0] => some .add | .array [.uint 1] => some .sub
+  | .array [.uint 2] => some .ultCmp | .array [.uint 3] => some .sltCmp | _ => none
 private instance : Wire CarryMode where
-  enc := carryModeCbor
-  dec := cborCarryMode
-  canonical x := by
-    cases x <;> simp_all [carryModeCbor, pack_wf, CanonicalCbor, wfVal, wfList]
-  inverse x := by
-    cases x <;> simp_all [carryModeCbor,cborCarryMode,unpack_pack]
+  enc := carryModeCbor; dec := cborCarryMode
+  canonical x := by cases x <;> simp_all [carryModeCbor, pack_wf, CanonicalCbor, wfVal, wfList]
+  inverse x := by cases x <;> simp_all [carryModeCbor, cborCarryMode, unpack_pack]
 private def dspMulModeCbor : DspMulMode → CborVal
-  | .mul64  => .array [.uint 0]
-  | .qmul32  => .array [.uint 1]
+  | .mul64 => .array [.uint 0] | .qmul32 => .array [.uint 1]
 private def cborDspMulMode : CborVal → Option DspMulMode
-  | .array [.uint 0] => do return .mul64
-  | .array [.uint 1] => do return .qmul32
-  | _ => none
+  | .array [.uint 0] => some .mul64 | .array [.uint 1] => some .qmul32 | _ => none
 private instance : Wire DspMulMode where
-  enc := dspMulModeCbor
-  dec := cborDspMulMode
-  canonical x := by
-    cases x <;> simp_all [dspMulModeCbor, pack_wf, CanonicalCbor, wfVal, wfList]
-  inverse x := by
-    cases x <;> simp_all [dspMulModeCbor,cborDspMulMode,unpack_pack]
+  enc := dspMulModeCbor; dec := cborDspMulMode
+  canonical x := by cases x <;> simp_all [dspMulModeCbor, pack_wf, CanonicalCbor, wfVal, wfList]
+  inverse x := by cases x <;> simp_all [dspMulModeCbor, cborDspMulMode, unpack_pack]
 private def shiftDirCbor : ShiftDir → CborVal
-  | .shl  => .array [.uint 0]
-  | .lshr  => .array [.uint 1]
-  | .ashr  => .array [.uint 2]
+  | .shl => .array [.uint 0] | .lshr => .array [.uint 1] | .ashr => .array [.uint 2]
 private def cborShiftDir : CborVal → Option ShiftDir
-  | .array [.uint 0] => do return .shl
-  | .array [.uint 1] => do return .lshr
-  | .array [.uint 2] => do return .ashr
-  | _ => none
+  | .array [.uint 0] => some .shl | .array [.uint 1] => some .lshr | .array [.uint 2] => some .ashr | _ => none
 private instance : Wire ShiftDir where
-  enc := shiftDirCbor
-  dec := cborShiftDir
-  canonical x := by
-    cases x <;> simp_all [shiftDirCbor, pack_wf, CanonicalCbor, wfVal, wfList]
-  inverse x := by
-    cases x <;> simp_all [shiftDirCbor,cborShiftDir,unpack_pack]
+  enc := shiftDirCbor; dec := cborShiftDir
+  canonical x := by cases x <;> simp_all [shiftDirCbor, pack_wf, CanonicalCbor, wfVal, wfList]
+  inverse x := by cases x <;> simp_all [shiftDirCbor, cborShiftDir, unpack_pack]
 private def belKindCbor : BelKind → CborVal
-  | .constBel x0 => .array [.uint 0,pack x0]
-  | .portIn x0 => .array [.uint 1,pack x0]
-  | .wireTap x0 => .array [.uint 2,pack x0]
-  | .regTap x0 => .array [.uint 3,pack x0]
-  | .lut1 x0 => .array [.uint 4,pack x0]
-  | .lut2 x0 => .array [.uint 5,pack x0]
-  | .lut3 x0 => .array [.uint 6,pack x0]
-  | .orReduce  => .array [.uint 7]
-  | .zeroDetect  => .array [.uint 8]
-  | .shiftRoute x0 x1 => .array [.uint 9,pack x0,pack x1]
-  | .bitBroadcast x0 => .array [.uint 10,pack x0]
-  | .carry4 x0 => .array [.uint 11,pack x0]
-  | .dspMul x0 => .array [.uint 12,pack x0]
-  | .ff x0 x1 => .array [.uint 13,pack x0,pack x1]
-  | .route x0 => .array [.uint 14,pack x0]
+  | .constBel x0 => .array [.uint 0, pack x0] | .portIn x0 => .array [.uint 1, pack x0]
+  | .wireTap x0 => .array [.uint 2, pack x0] | .regTap x0 => .array [.uint 3, pack x0]
+  | .lut1 x0 => .array [.uint 4, pack x0] | .lut2 x0 => .array [.uint 5, pack x0]
+  | .lut3 x0 => .array [.uint 6, pack x0] | .orReduce => .array [.uint 7] | .zeroDetect => .array [.uint 8]
+  | .shiftRoute x0 x1 => .array [.uint 9, pack x0, pack x1] | .bitBroadcast x0 => .array [.uint 10, pack x0]
+  | .carry4 x0 => .array [.uint 11, pack x0] | .dspMul x0 => .array [.uint 12, pack x0]
+  | .ff x0 x1 => .array [.uint 13, pack x0, pack x1] | .route x0 => .array [.uint 14, pack x0]
 private def cborBelKind : CborVal → Option BelKind
-  | .array [.uint 0 ,x0] => do return .constBel (← unpack x0)
-  | .array [.uint 1 ,x0] => do return .portIn (← unpack x0)
-  | .array [.uint 2 ,x0] => do return .wireTap (← unpack x0)
-  | .array [.uint 3 ,x0] => do return .regTap (← unpack x0)
-  | .array [.uint 4 ,x0] => do return .lut1 (← unpack x0)
-  | .array [.uint 5 ,x0] => do return .lut2 (← unpack x0)
-  | .array [.uint 6 ,x0] => do return .lut3 (← unpack x0)
-  | .array [.uint 7] => do return .orReduce
-  | .array [.uint 8] => do return .zeroDetect
-  | .array [.uint 9 ,x0,x1] => do return .shiftRoute (← unpack x0) (← unpack x1)
-  | .array [.uint 10 ,x0] => do return .bitBroadcast (← unpack x0)
-  | .array [.uint 11 ,x0] => do return .carry4 (← unpack x0)
-  | .array [.uint 12 ,x0] => do return .dspMul (← unpack x0)
-  | .array [.uint 13 ,x0,x1] => do return .ff (← unpack x0) (← unpack x1)
-  | .array [.uint 14 ,x0] => do return .route (← unpack x0)
+  | .array [.uint 0, x0] => do return .constBel (← unpack x0)
+  | .array [.uint 1, x0] => do return .portIn (← unpack x0)
+  | .array [.uint 2, x0] => do return .wireTap (← unpack x0)
+  | .array [.uint 3, x0] => do return .regTap (← unpack x0)
+  | .array [.uint 4, x0] => do return .lut1 (← unpack x0)
+  | .array [.uint 5, x0] => do return .lut2 (← unpack x0)
+  | .array [.uint 6, x0] => do return .lut3 (← unpack x0)
+  | .array [.uint 7] => some .orReduce | .array [.uint 8] => some .zeroDetect
+  | .array [.uint 9, x0, x1] => do return .shiftRoute (← unpack x0) (← unpack x1)
+  | .array [.uint 10, x0] => do return .bitBroadcast (← unpack x0)
+  | .array [.uint 11, x0] => do return .carry4 (← unpack x0)
+  | .array [.uint 12, x0] => do return .dspMul (← unpack x0)
+  | .array [.uint 13, x0, x1] => do return .ff (← unpack x0) (← unpack x1)
+  | .array [.uint 14, x0] => do return .route (← unpack x0)
   | _ => none
 private instance : Wire BelKind where
-  enc := belKindCbor
-  dec := cborBelKind
-  canonical x := by
-    cases x <;> simp_all [belKindCbor, pack_wf, CanonicalCbor, wfVal, wfList]
-  inverse x := by
-    cases x <;> simp_all [belKindCbor,cborBelKind,unpack_pack]
+  enc := belKindCbor; dec := cborBelKind
+  canonical x := by cases x <;> simp_all [belKindCbor, pack_wf, CanonicalCbor, wfVal, wfList]
+  inverse x := by cases x <;> simp_all [belKindCbor, cborBelKind, unpack_pack]
 private instance : Wire BelCell := wireIso
   (fun x => (x.dstName,x.kind,x.inputs))
   (fun (dstName,kind,inputs) => ⟨dstName,kind,inputs⟩)
@@ -468,6 +382,8 @@ inductive HwClause where
   | emptyRtlTopName
   | unsatRetimeTarget
   | invalidPnrProblem
+  | emptyDatasheetSuiteName
+  | unsatAgenticMarginTarget
   | rtlInvalidDagOrCdc (modName : String)
   | retimeInvalidLagOrTiming (graphName : String)
   | pnrCollisionShortOrTiming (designName : String)
@@ -996,47 +912,59 @@ theorem hwPnrFormat_sound {r : Nat} {obj cert : String}
     (h : hwPnrFormat.checkBytes r obj cert = .ok) :
     ∃ o c, decodePnrProblem obj = .ok o ∧ decodePnrWireCert cert = .ok c ∧ PnrBitstreamMeaning o c :=
   hwPnrFormat.checkBytes_sound h
-
 /-! ## 5. Format 4: `datasheet-fit@1` (Automated Datasheet Calibration, `74LS00` + `74HCT00` + INA + Buck Judge) -/
-
-/-- Judge check function for `datasheet-fit@1`. -/
+/-- Declarative physical/electrical specification for `datasheet-fit@1`: suite identity, DC noise
+margins, `74LS00` saturated totem-pole fanout swing, empirical $L_\infty$ curve fit, laser-trimmed INA
+common-mode balance, and synchronous Buck CCM & inductor core-saturation bounds. -/
+def DatasheetFitMeaning (expectedSuite : String) (c : DatasheetFitCert) : Prop :=
+  expectedSuite ≠ "" ∧ c.suiteName = expectedSuite ∧
+  c.minMarginMv ≤ noiseMarginHigh c.driverSpec c.receiverSpec c.pullupBoostMv ∧
+  c.minMarginMv ≤ noiseMarginLow c.driverSpec c.receiverSpec ∧
+  c.driverSpec.volMaxMv < c.receiverSpec.vihMinMv ∧
+  c.fanout ≤ c.ttlParams.maxFanout ∧
+  evalTtlNandMv c.ttlParams 2000 2000 c.fanout ≤ 400 ∧
+  c.modelPreds.length = c.datasheetPoints.length ∧
+  0 ≤ c.maxCalErrMv ∧
+  maxCurveErrorLInf c.modelPreds c.datasheetPoints ≤ c.maxCalErrMv ∧
+  c.inaSpec.gainCmRaw = c.inaSpec.trimCmCancel ∧
+  c.buckStage.dutyPermille ≤ 1000 ∧
+  0 < c.buckStage.inductanceUh ∧
+  0 < c.buckStage.fswKhz ∧
+  evalBuckRippleMa c.buckStage ≤ 2 * c.buckStage.iLoadMa ∧
+  evalBuckPeakInductorMa c.buckStage ≤ c.buckStage.iSatMaxMa
 def checkDatasheetFitJudge (_grade : Nat) (expectedSuite : String) (cert : DatasheetFitCert) : Verdict HwClause :=
-  if (cert.suiteName == expectedSuite) && checkDatasheetFitSignoff cert then
-    .ok
-  else
-    .refused (.datasheetCalibrationOrMarginViolation cert.suiteName) []
-
+  if expectedSuite == "" then .refused .emptyDatasheetSuiteName []
+  else if (cert.suiteName == expectedSuite) && checkDatasheetFitSignoff cert then .ok
+  else .refused (.datasheetCalibrationOrMarginViolation cert.suiteName) []
+theorem checkDatasheetFitJudge_ok_iff (r : Nat) (expectedSuite : String) (c : DatasheetFitCert) :
+    checkDatasheetFitJudge r expectedSuite c = .ok ↔ DatasheetFitMeaning expectedSuite c := by
+  unfold checkDatasheetFitJudge
+  by_cases hEmpty : expectedSuite = ""
+  · subst hEmpty; simp [DatasheetFitMeaning]
+  · have hB : (expectedSuite == "") = false := beq_eq_false_iff_ne.mpr hEmpty
+    simp [hB, hEmpty, DatasheetFitMeaning, checkDatasheetFitSignoff, checkLogicInterface,
+      checkTtlFanout, checkModelCalibration, checkBuckCcmSafe, Bool.and_eq_true, beq_iff_eq,
+      decide_eq_true_eq, and_assoc]
 instance datasheetFitJudge : Obend.Judge String DatasheetFitCert where
   Clause := HwClause
-  Meaning expectedSuite cert := ((cert.suiteName == expectedSuite) && checkDatasheetFitSignoff cert) = true
+  Meaning := DatasheetFitMeaning
   check := checkDatasheetFitJudge
-  sound := by
-    intro _ o c h
-    unfold checkDatasheetFitJudge at h
-    by_cases hOk : ((c.suiteName == o) && checkDatasheetFitSignoff c) = true
-    · exact hOk
-    · simp [hOk] at h
-  refutes _ := false
+  sound := by intro r o c h; exact (checkDatasheetFitJudge_ok_iff r o c).mp h
+  refutes | .emptyDatasheetSuiteName => true | _ => false
   refuted := by
-    intro _ _ _ _ _ _ hRef
-    cases hRef
+    intro r o c k cs hc hk c' hm
+    unfold checkDatasheetFitJudge at hc
+    split at hc
+    · rename_i ho; exact hm.1 (beq_iff_eq.mp ho)
+    · split at hc <;> cases hc; cases hk
   Fragment _ := True
-  complete := by
-    intro o _ ⟨c, hc⟩
-    exact ⟨c, 0, by simp [checkDatasheetFitJudge, hc]⟩
-  mono := by
-    intro _ _ _ _ _ _
-    rfl
-
+  complete := by intro o _ ⟨c, hc⟩; exact ⟨c, 0, (checkDatasheetFitJudge_ok_iff 0 o c).mpr hc⟩
+  mono := by intro _ _ _ _ _ _; rfl
 theorem badDatasheetFitCert_refused :
     checkDatasheetFitJudge 0 "obend_74ls_hct_ina_calibrated" badDirect74HcFitCert =
-      .refused (.datasheetCalibrationOrMarginViolation "obend_74ls_hct_ina_calibrated") [] := by
-  rfl
-
+      .refused (.datasheetCalibrationOrMarginViolation "obend_74ls_hct_ina_calibrated") [] := by decide +kernel
 def decodeDatasheetFitObj (s : String) : Except String String := do
-  ensureWireFrame s
-  requireStringField s "suite"
-
+  ensureWireFrame s; requireStringField s "suite"
 def decodeDatasheetFitCert (s : String) : Except String DatasheetFitCert := do
   ensureWireFrame s
   let suiteName   ← requireStringField s "suiteName"
@@ -1048,200 +976,241 @@ def decodeDatasheetFitCert (s : String) : Except String DatasheetFitCert := do
   let maxCalErr   ← requireIntField s "maxCalErrMv"
   let buckLoadMa  ← requireNatField s "buckLoadMa"
   return {
-    suiteName       := suiteName
-    driverSpec      := sn74ls00Datasheet.logic
-    receiverSpec    := { cd74hct00Datasheet.logic with vihMinMv := rcvVihMinMv, vilMaxMv := rcvVilMaxMv }
-    pullupBoostMv   := pullup
-    minMarginMv     := minMargin
-    ttlParams       := sn74ls00TotemParams
-    fanout          := fanout
-    modelPreds      := calibrated74ls00ModelPreds
-    datasheetPoints := sn74ls00Datasheet.transferCurve
-    maxCalErrMv     := maxCalErr
-    inaSpec         := precisionMatchedIna
-    buckStage       := { golden5vBuckSpec with iLoadMa := buckLoadMa }
-  }
-
-/-- Registered `Obend.Judge.Format` for `datasheet-fit@1`. -/
+    suiteName := suiteName, driverSpec := sn74ls00Datasheet.logic
+    receiverSpec := { cd74hct00Datasheet.logic with vihMinMv := rcvVihMinMv, vilMaxMv := rcvVilMaxMv }
+    pullupBoostMv := pullup, minMarginMv := minMargin, ttlParams := sn74ls00TotemParams
+    fanout := fanout, modelPreds := calibrated74ls00ModelPreds
+    datasheetPoints := sn74ls00Datasheet.transferCurve, maxCalErrMv := maxCalErr
+    inaSpec := precisionMatchedIna, buckStage := { golden5vBuckSpec with iLoadMa := buckLoadMa } }
 def datasheetFitFormat : Format where
-  name        := "datasheet-fit"
-  version     := "1"
-  Obj         := String
-  Cert        := DatasheetFitCert
-  judge       := datasheetFitJudge
-  decodeObj   := decodeDatasheetFitObj
-  decodeCert  := decodeDatasheetFitCert
-  trust       := .kernel
-  regime      := .decidable
-  bad         := ("obend_74ls_hct_ina_calibrated", badDirect74HcFitCert)
-  badGrade    := 0
+  name := "datasheet-fit"; version := "1"; Obj := String; Cert := DatasheetFitCert
+  judge := datasheetFitJudge; decodeObj := decodeDatasheetFitObj; decodeCert := decodeDatasheetFitCert
+  trust := .kernel; regime := .decidable
+  bad := ("obend_74ls_hct_ina_calibrated", badDirect74HcFitCert); badGrade := 0
   bad_refused := ⟨_, _, badDatasheetFitCert_refused⟩
-
 theorem datasheetFitFormat_sound {r : Nat} {obj cert : String}
     (h : datasheetFitFormat.checkBytes r obj cert = .ok) :
     ∃ o c, decodeDatasheetFitObj obj = .ok o ∧ decodeDatasheetFitCert cert = .ok c ∧
-      ((c.suiteName == o) && checkDatasheetFitSignoff c) = true :=
+      DatasheetFitMeaning o c :=
   datasheetFitFormat.checkBytes_sound h
-
-theorem datasheetFitFormat_complete {o : String}
-    (h : ∃ c : DatasheetFitCert, ((c.suiteName == o) && checkDatasheetFitSignoff c) = true) :
+theorem datasheetFitFormat_complete {o : String} (h : ∃ c : DatasheetFitCert, DatasheetFitMeaning o c) :
     ∃ c r, datasheetFitJudge.check r o c = .ok :=
   datasheetFitJudge.complete trivial h
-
 /-! ## 6. Format 5: `agentic-eda-swap@1` (Smart-Contract Markdown Vault BOM Swap Judge) -/
-
-/-- Boolean wrapper checking whether `judgeAgenticEdaProposal` admits `candidatePart` at `minMarginMv`. -/
+/-- Declarative semantic specification for `agentic-eda-swap@1`: vault `.obend` law admission plus
+denotational law satisfaction and physical 3.3V LVCMOS static noise-margin inequalities. -/
+def AgenticEdaSwapMeaning (minMarginMv : Int) (c : EdaVaultPart) : Prop :=
+  let oldData := Obend.Vault.stateOf edaStateKeys goldenBaselinePart.toScalarFields
+  let newData := Obend.Vault.stateOf edaStateKeys c.toScalarFields
+  let reqData := Obend.Vault.requestOf "procurement_scout" .write defaultEdaFacts
+  Obend.Vault.judge (Obend.Vault.stateTy edaStateKeys) c.pageName goldenEdaLaws oldData newData reqData = .admitted ∧
+  (∀ p ∈ goldenEdaLaws, p.2.denote defaultEdaFacts (some oldData) newData = true) ∧
+  minMarginMv ≤ noiseMarginHigh c.toLogicFamilySpec lvcmos33ReceiverSpec 0 ∧
+  minMarginMv ≤ noiseMarginLow c.toLogicFamilySpec lvcmos33ReceiverSpec ∧
+  c.toLogicFamilySpec.volMaxMv < lvcmos33ReceiverSpec.vihMinMv
 def checkAgenticEdaSwapBool (minMarginMv : Int) (candidatePart : EdaVaultPart) : Bool :=
-  judgeAgenticEdaProposal
-    goldenEdaLaws
-    goldenBaselinePart
-    candidatePart
-    lvcmos33ReceiverSpec
-    minMarginMv
-    goldenFreshDatasheetCite
-    "procurement_scout"
-    defaultEdaFacts == .admitted
-
-/-- Judge check function for `agentic-eda-swap@1`. -/
+  judgeAgenticEdaProposal goldenEdaLaws goldenBaselinePart candidatePart lvcmos33ReceiverSpec
+    minMarginMv goldenFreshDatasheetCite "procurement_scout" defaultEdaFacts == .admitted
 def checkAgenticEdaJudge (_grade : Nat) (minMarginMv : Int) (candidatePart : EdaVaultPart) : Verdict HwClause :=
-  if checkAgenticEdaSwapBool minMarginMv candidatePart then
-    .ok
-  else
-    .refused (.agenticEdaSwapViolation candidatePart.pageName) []
-
+  if decide (800 < minMarginMv) then .refused .unsatAgenticMarginTarget []
+  else if checkAgenticEdaSwapBool minMarginMv candidatePart then .ok
+  else .refused (.agenticEdaSwapViolation candidatePart.pageName) []
+theorem checkAgenticEdaSwapBool_iff (minMarginMv : Int) (c : EdaVaultPart) :
+    checkAgenticEdaSwapBool minMarginMv c = true ↔ AgenticEdaSwapMeaning minMarginMv c := by
+  have hCite : checkDatasheetCiteFresh goldenFreshDatasheetCite = true := rfl
+  unfold checkAgenticEdaSwapBool judgeAgenticEdaProposal AgenticEdaSwapMeaning
+  dsimp only
+  cases hj : Obend.Vault.judge (Obend.Vault.stateTy edaStateKeys) c.pageName goldenEdaLaws
+      (Obend.Vault.stateOf edaStateKeys goldenBaselinePart.toScalarFields)
+      (Obend.Vault.stateOf edaStateKeys c.toScalarFields)
+      (Obend.Vault.requestOf "procurement_scout" .write defaultEdaFacts) with
+  | refused _ _ => simp
+  | undecided _ => simp
+  | admitted =>
+    have hDenote := Obend.Vault.judge_admits (k := .write) hj
+    rw [hCite]; dsimp only
+    cases hIf : checkLogicInterface c.toLogicFamilySpec lvcmos33ReceiverSpec 0 minMarginMv
+    · simp only [checkLogicInterface, Bool.and_eq_true, Bool.and_eq_false_imp, decide_eq_true_eq,
+        decide_eq_false_iff_not] at hIf
+      exact ⟨fun h => (by cases h), fun ⟨_, _, h1, h2, h3⟩ => False.elim (hIf ⟨h1, h2⟩ h3)⟩
+    · simp only [checkLogicInterface, Bool.and_eq_true, decide_eq_true_eq] at hIf
+      exact ⟨fun _ => ⟨rfl, hDenote, hIf.1.1, hIf.1.2, hIf.2⟩, fun _ => rfl⟩
+theorem checkAgenticEdaJudge_ok_iff (r : Nat) (minMarginMv : Int) (c : EdaVaultPart) :
+    checkAgenticEdaJudge r minMarginMv c = .ok ↔ AgenticEdaSwapMeaning minMarginMv c := by
+  unfold checkAgenticEdaJudge
+  by_cases hGt : 800 < minMarginMv
+  · simp only [decide_eq_true hGt, ↓reduceIte, reduceCtorEq, false_iff]
+    intro hm
+    have hLow := hm.2.2.2.1
+    dsimp only [noiseMarginLow, lvcmos33ReceiverSpec, EdaVaultPart.toLogicFamilySpec] at hLow
+    omega
+  · simp only [decide_eq_false hGt, Bool.false_eq_true, ↓reduceIte]
+    cases hb : checkAgenticEdaSwapBool minMarginMv c <;>
+      simpa [hb] using (checkAgenticEdaSwapBool_iff minMarginMv c)
 instance agenticEdaJudge : Obend.Judge Int EdaVaultPart where
   Clause := HwClause
-  Meaning minMarginMv candidatePart := checkAgenticEdaSwapBool minMarginMv candidatePart = true
+  Meaning := AgenticEdaSwapMeaning
   check := checkAgenticEdaJudge
-  sound := by
-    intro _ o c h
-    unfold checkAgenticEdaJudge at h
-    by_cases hOk : checkAgenticEdaSwapBool o c = true
-    · exact hOk
-    · simp [hOk] at h
-  refutes _ := false
+  sound := by intro r o c h; exact (checkAgenticEdaJudge_ok_iff r o c).mp h
+  refutes | .unsatAgenticMarginTarget => true | _ => false
   refuted := by
-    intro _ _ _ _ _ _ hRef
-    cases hRef
+    intro r o c k cs hc hk c' hm
+    unfold checkAgenticEdaJudge at hc
+    split at hc
+    · rename_i hGt
+      have hGt' : 800 < o := of_decide_eq_true hGt
+      have hLow := hm.2.2.2.1
+      dsimp only [noiseMarginLow, lvcmos33ReceiverSpec, EdaVaultPart.toLogicFamilySpec] at hLow
+      omega
+    · split at hc <;> cases hc; cases hk
   Fragment _ := True
-  complete := by
-    intro o _ ⟨c, hc⟩
-    exact ⟨c, 0, by simp [checkAgenticEdaJudge, hc]⟩
-  mono := by
-    intro _ _ _ _ _ _
-    rfl
-
+  complete := by intro o _ ⟨c, hc⟩; exact ⟨c, 0, (checkAgenticEdaJudge_ok_iff 0 o c).mpr hc⟩
+  mono := by intro _ _ _ _ _ _; rfl
 -- fixture kept (2026-11-04): consumed by a proof in this file
 theorem badAgenticEdaSwap_refused :
     checkAgenticEdaJudge 0 400 overbudgetSecondSourcePart =
-      .refused (.agenticEdaSwapViolation "U4_LDO") [] := by
-  decide +kernel
-
+      .refused (.agenticEdaSwapViolation "U4_LDO") [] := by decide +kernel
 def decodeAgenticEdaObj (s : String) : Except String Int := do
-  ensureWireFrame s
-  requireIntField s "minMarginMv"
-
+  ensureWireFrame s; requireIntField s "minMarginMv"
 def decodeAgenticEdaCert (s : String) : Except String EdaVaultPart := do
   ensureWireFrame s
   let pageName ← requireStringField s "pageName"
-  let voh      ← requireNatField s "vohMinMv"
-  let vih      ← requireNatField s "vihMinMv"
-  let vol      ← requireNatField s "volMaxMv"
-  let vil      ← requireNatField s "vilMaxMv"
-  let pkgW     ← requireNatField s "pkgWidthUm"
-  let pkgL     ← requireNatField s "pkgLengthUm"
-  let pins     ← requireNatField s "pinCount"
-  let pitch    ← requireNatField s "pinPitchUm"
-  let tempMc   ← requireNatField s "maxTempMc"
-  let vswr     ← requireNatField s "vswrMilli"
-  let drcErr   ← requireNatField s "drcErrors"
-  let cost     ← requireNatField s "costCents"
-  return {
-    pageName     := pageName
-    vohMinMv     := voh
-    vihMinMv     := vih
-    volMaxMv     := vol
-    vilMaxMv     := vil
-    pkgWidthUm   := pkgW
-    pkgLengthUm  := pkgL
-    pinCount     := pins
-    pinPitchUm   := pitch
-    maxTempMc    := tempMc
-    vswrMilli    := vswr
-    drcErrors    := drcErr
-    costCents    := cost }
-
-/-- Registered `Obend.Judge.Format` for `agentic-eda-swap@1`. -/
+  let voh ← requireNatField s "vohMinMv"; let vih ← requireNatField s "vihMinMv"
+  let vol ← requireNatField s "volMaxMv"; let vil ← requireNatField s "vilMaxMv"
+  let pkgW ← requireNatField s "pkgWidthUm"; let pkgL ← requireNatField s "pkgLengthUm"
+  let pins ← requireNatField s "pinCount"; let pitch ← requireNatField s "pinPitchUm"
+  let tempMc ← requireNatField s "maxTempMc"; let vswr ← requireNatField s "vswrMilli"
+  let drcErr ← requireNatField s "drcErrors"; let cost ← requireNatField s "costCents"
+  return { pageName := pageName, vohMinMv := voh, vihMinMv := vih, volMaxMv := vol, vilMaxMv := vil
+           pkgWidthUm := pkgW, pkgLengthUm := pkgL, pinCount := pins, pinPitchUm := pitch
+           maxTempMc := tempMc, vswrMilli := vswr, drcErrors := drcErr, costCents := cost }
 def agenticEdaFormat : Format where
-  name        := "agentic-eda-swap"
-  version     := "1"
-  Obj         := Int
-  Cert        := EdaVaultPart
-  judge       := agenticEdaJudge
-  decodeObj   := decodeAgenticEdaObj
-  decodeCert  := decodeAgenticEdaCert
-  trust       := .kernel
-  regime      := .decidable
-  bad         := (400, overbudgetSecondSourcePart)
-  badGrade    := 0
+  name := "agentic-eda-swap"; version := "1"; Obj := Int; Cert := EdaVaultPart
+  judge := agenticEdaJudge; decodeObj := decodeAgenticEdaObj; decodeCert := decodeAgenticEdaCert
+  trust := .kernel; regime := .decidable
+  bad := (400, overbudgetSecondSourcePart); badGrade := 0
   bad_refused := ⟨_, _, badAgenticEdaSwap_refused⟩
-
 theorem agenticEdaFormat_sound {r : Nat} {obj cert : String}
     (h : agenticEdaFormat.checkBytes r obj cert = .ok) :
     ∃ o c, decodeAgenticEdaObj obj = .ok o ∧ decodeAgenticEdaCert cert = .ok c ∧
-      checkAgenticEdaSwapBool o c = true :=
+      AgenticEdaSwapMeaning o c :=
   agenticEdaFormat.checkBytes_sound h
-
-/-! ## 12. Format 11: `hw-binary-cbor@1` (RFC 8949 Binary CBOR Hardware Certificate Judge via `BinaryCodec`) -/
-
-/-- Judge check function for `hw-binary-cbor@1`: checks domain match and runs `verifyBinaryHwCert`
-    on the decoded binary CBOR parameters `(p0 .. p5)`. -/
+/-! ## 12. Format 11: `hw-binary-cbor@1` & `hw-binary-tape-cbor@1` (RFC 8949 Binary CBOR Hardware Judges) -/
+/-- Per-domain declarative mathematical specification over decoded `BinaryHwCert` parameters. -/
+def BinaryHwCertDomainMeaning (c : BinaryHwCert) : Prop :=
+  match c.domain with
+  | .pnr =>
+    let cfg0 : TileFrameConfig := { tileX := c.p0.toNat, tileY := c.p1.toNat, belSlot := 0, lutInit := 0x6, pipMask := 0x3 }
+    let cfg1 : TileFrameConfig := { tileX := c.p2.toNat, tileY := c.p3.toNat, belSlot := 0, lutInit := 0x6, pipMask := 0x1 }
+    checkPnrCertificate validAdderBelNetlist corner7nm_SS c.p5.toNat
+      { validAdderPnrCert with
+        placedCells := [ { cellId := 0, tileX := c.p0.toNat, tileY := c.p1.toNat, belSlot := 0, lutInit := 0x6 }
+                       , { cellId := 1, tileX := c.p2.toNat, tileY := c.p3.toNat, belSlot := 0, lutInit := 0x6 } ]
+        expectedConfigs := [cfg0, cfg1]
+        bitstreamFrames := [encodeBitstreamFrame cfg0, encodeBitstreamFrame cfg1]
+        sinkCapFf := c.p4.toNat } = true
+  | .retiming =>
+    checkRetimingCert macUnretimedGraph
+      { vertexLags := [(0, c.p0), (1, c.p1), (2, c.p2)], ioLatencyShift := c.p3 }
+      corner7nm_SS c.p5.toNat = true
+  | .photonics =>
+    let e1 : Obend.Hardware.Photonics.ComplexField := ⟨c.p2, c.p3⟩
+    let e2 : Obend.Hardware.Photonics.ComplexField := ⟨c.p4, c.p5⟩
+    let (o1, o2) := Obend.Hardware.Photonics.evalDirectionalCoupler2x2 c.p0 c.p1 e1 e2
+    let (barCross, _) := Obend.Hardware.Photonics.evalCascadedMzi2x2 c.p0 c.p0 ⟨1, 0⟩ e1 ⟨0, 0⟩
+    o1.normSq + o2.normSq = (c.p0 * c.p0 + c.p1 * c.p1) * (e1.normSq + e2.normSq) ∧
+      0 < c.p0 * c.p0 + c.p1 * c.p1 ∧ barCross = ⟨0, 0⟩
+  | .pcb =>
+    Obend.Hardware.PCB.checkSingleEndedZ0 c.p0.toNat c.p1.toNat c.p2.toNat c.p3.toNat c.p4.toNat c.p5.toNat 3000 = true
+  | .dpr =>
+    ∃ opK rOp decTile,
+      decodeTileOpKindBits c.p1.toNat = some opK ∧ decodeRuleOpcodeBits c.p2.toNat = some rOp ∧
+      let tile := mkIcapRuleTile c.p0.toNat opK rOp c.p3.toNat
+      decodeTileIcapWords (encodeTileIcapWords tile) = some decTile ∧ decTile = tile ∧
+      evalRtlExpr (fun _ => BitVec.ofNat 64 c.p4.toNat) (fun _ => 0#64) (fun _ => 0#64) decTile.datapath =
+        BitVec.ofNat 64 c.p5.toNat
+  | .edaBomSwap =>
+    AgenticEdaSwapMeaning c.p5 { goldenBaselinePart with
+      vohMinMv := c.p0.toNat, volMaxMv := c.p1.toNat, maxTempMc := c.p2.toNat,
+      vswrMilli := c.p3.toNat, costCents := c.p4.toNat }
+  | .multiphysics =>
+    let edges : List Obend.Hardware.ThermalPassivity.ThermalEdge :=
+      [ { nodeU := 0, nodeV := 1, conductanceMwPerK := c.p0 }
+      , { nodeU := 1, nodeV := 2, conductanceMwPerK := c.p1 } ]
+    0 ≤ c.p0 ∧ 0 ≤ c.p1 ∧ 0 ≤ Obend.Hardware.ThermalPassivity.evalLaplacianQuadratic [c.p2, c.p3, c.p4] edges
+  | .analog2d =>
+    chiralityBalanced2DMismatch c.p0 c.p1 c.p2 c.p3 c.p4 c.p5 10 10 = 0 ∧
+      prouhetThueMorseMismatch1D c.p0 c.p1 c.p3 10 = 0
+  | .dspBeamformer =>
+    let sig : IqPhasor := ⟨c.p0, c.p1⟩
+    let matched := iqConjMul sig sig
+    matched.q = 0 ∧ matched.i = c.p0 * c.p0 + c.p1 * c.p1 ∧ 0 ≤ matched.i
+  | .magnetics =>
+    let tri := Obend.Hardware.Magnetics.goldenStatorToothTriangle
+    let e := Obend.Hardware.Magnetics.evalElementMagneticEnergyAreaScaled 1000000 tri c.p0 c.p1 c.p2
+    let nuNext := Obend.Hardware.Magnetics.stepBhPicardReluctivity c.p3 c.p4 500 c.p3 c.p5
+    0 ≤ e ∧ 0 < c.p3 ∧ c.p3 ≤ nuNext ∧ 0 < nuNext
+def BinaryHwCertMeaning (expectedDom : HwCertDomain) (c : BinaryHwCert) : Prop :=
+  c.domain = expectedDom ∧ BinaryHwCertDomainMeaning c
+theorem verifyBinaryHwCert_iff (c : BinaryHwCert) :
+    verifyBinaryHwCert c = true ↔ BinaryHwCertDomainMeaning c := by
+  rcases c with ⟨dom, p0, p1, p2, p3, p4, p5⟩
+  cases dom
+  · rfl
+  · rfl
+  · simp [verifyBinaryHwCert, BinaryHwCertDomainMeaning, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, and_assoc]
+  · rfl
+  · unfold verifyBinaryHwCert BinaryHwCertDomainMeaning; dsimp only
+    cases h1 : decodeTileOpKindBits p1.toNat <;> cases h2 : decodeRuleOpcodeBits p2.toNat
+    · simp
+    · simp
+    · simp
+    · rename_i opK rOp
+      dsimp only
+      cases h3 : decodeTileIcapWords (encodeTileIcapWords (mkIcapRuleTile p0.toNat opK rOp p3.toNat))
+      · simp [h1, h2, h3]
+      · simp [h1, h2, h3, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq]
+  · simpa [verifyBinaryHwCert, BinaryHwCertDomainMeaning, checkAgenticEdaSwapBool] using
+      (checkAgenticEdaSwapBool_iff p5 { goldenBaselinePart with
+        vohMinMv := p0.toNat, volMaxMv := p1.toNat, maxTempMc := p2.toNat,
+        vswrMilli := p3.toNat, costCents := p4.toNat })
+  · simp [verifyBinaryHwCert, BinaryHwCertDomainMeaning, decide_eq_true_eq]
+  · simp [verifyBinaryHwCert, BinaryHwCertDomainMeaning, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq]
+  · simp [verifyBinaryHwCert, BinaryHwCertDomainMeaning, decide_eq_true_eq, beq_iff_eq]
+  · simp [verifyBinaryHwCert, BinaryHwCertDomainMeaning, decide_eq_true_eq]
 def checkBinaryCborJudge (_grade : Nat) (expectedDom : HwCertDomain) (cert : BinaryHwCert) : Verdict HwClause :=
-  if (cert.domain == expectedDom) && verifyBinaryHwCert cert then
-    .ok
-  else
-    .refused (.binaryCborCertViolation cert.domain.toCode) []
-
+  if (cert.domain == expectedDom) && verifyBinaryHwCert cert then .ok
+  else .refused (.binaryCborCertViolation cert.domain.toCode) []
+theorem checkBinaryCborJudge_ok_iff (r : Nat) (expectedDom : HwCertDomain) (c : BinaryHwCert) :
+    checkBinaryCborJudge r expectedDom c = .ok ↔ BinaryHwCertMeaning expectedDom c := by
+  unfold checkBinaryCborJudge BinaryHwCertMeaning
+  by_cases hOk : ((c.domain == expectedDom) && verifyBinaryHwCert c) = true
+  · simp only [hOk, ↓reduceIte]
+    simp only [Bool.and_eq_true, beq_iff_eq, verifyBinaryHwCert_iff] at hOk
+    exact ⟨fun _ => hOk, fun _ => trivial⟩
+  · simp only [hOk, ↓reduceIte, reduceCtorEq, false_iff]
+    simp only [Bool.and_eq_true, beq_iff_eq, verifyBinaryHwCert_iff] at hOk
+    exact hOk
 instance binaryCborJudge : Obend.Judge HwCertDomain BinaryHwCert where
   Clause := HwClause
-  Meaning expectedDom cert := ((cert.domain == expectedDom) && verifyBinaryHwCert cert) = true
+  Meaning := BinaryHwCertMeaning
   check := checkBinaryCborJudge
-  sound := by
-    intro _ o c h
-    unfold checkBinaryCborJudge at h
-    by_cases hOk : ((c.domain == o) && verifyBinaryHwCert c) = true
-    · exact hOk
-    · simp [hOk] at h
+  sound := by intro r o c h; exact (checkBinaryCborJudge_ok_iff r o c).mp h
   refutes _ := false
-  refuted := by
-    intro _ _ _ _ _ _ hRef
-    cases hRef
+  refuted := by intro _ _ _ _ _ _ hRef; cases hRef
   Fragment _ := True
-  complete := by
-    intro o _ ⟨c, hc⟩
-    exact ⟨c, 0, by simp [checkBinaryCborJudge, hc]⟩
-  mono := by
-    intro _ _ _ _ _ _
-    rfl
-
-/-- Planted bad binary CBOR certificate: PnR with 100ps clock period (fails STA slack). -/
-def badBinaryPnrCert : BinaryHwCert :=
-  { goldenBinaryPnrCert with p5 := 100 }
-
+  complete := by intro o _ ⟨c, hc⟩; exact ⟨c, 0, (checkBinaryCborJudge_ok_iff 0 o c).mpr hc⟩
+  mono := by intro _ _ _ _ _ _; rfl
+def badBinaryPnrCert : BinaryHwCert := { goldenBinaryPnrCert with p5 := 100 }
 -- fixture kept (2026-11-04): consumed by a proof in this file
 theorem badBinaryCborCert_refused :
     checkBinaryCborJudge 0 .pnr badBinaryPnrCert =
-      .refused (.binaryCborCertViolation 1) [] := by
-  decide +kernel
-
-/-- Decode hex-encoded byte string (`"d90bed87..."`) into `List UInt8` for text-bridged Format tests,
-    while `verifyBinaryCborBytes` operates directly on raw `ByteArray` / `List UInt8`. -/
+      .refused (.binaryCborCertViolation 1) [] := by decide +kernel
 def hexCharVal (c : Char) : Option Nat :=
   if '0' ≤ c && c ≤ '9' then some (c.toNat - '0'.toNat)
   else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 'a'.toNat + 10)
   else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 'A'.toNat + 10)
   else none
-
 def decodeHexChars : List Char → Option (List UInt8)
   | [] => some []
   | hi :: lo :: rest =>
@@ -1249,13 +1218,11 @@ def decodeHexChars : List Char → Option (List UInt8)
     | some h, some l, some tail => some (UInt8.ofNat (h * 16 + l) :: tail)
     | _, _, _ => none
   | [_] => none
-
 def encodeHexBytes (bytes : List UInt8) : String :=
   let hexDigits : Array Char := #['0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f']
   String.ofList (bytes.flatMap fun b =>
     let n := b.toNat
     [hexDigits.getD (n / 16) '0', hexDigits.getD (n % 16) '0'])
-
 def decodeBinaryCborObj (s : String) : Except String HwCertDomain :=
   match s.trimAscii.toString.toNat? with
   | some n =>
@@ -1269,7 +1236,6 @@ def decodeBinaryCborObj (s : String) : Except String HwCertDomain :=
       | some d => .ok d
       | none => .error s!"unknown binary CBOR domain id: {n}"
     | none => .error s!"missing required binary CBOR domain id in '{s}'"
-
 def decodeBinaryCborCert (s : String) : Except String BinaryHwCert := do
   let trimmed := s.trimAscii.toString
   match decodeHexChars trimmed.toList with
@@ -1278,50 +1244,87 @@ def decodeBinaryCborCert (s : String) : Except String BinaryHwCert := do
     | some cert => .ok cert
     | none => .error "invalid RFC 8949 CBOR BinaryHwCert frame"
   | none => .error "invalid hex-encoded CBOR byte stream"
-
-/-- Judge check function for variable-length RFC 8949 CBOR tape/mesh certificates (`BinaryTapeCert`). -/
+/-- Declarative specification for variable-length RFC 8949 CBOR tape/mesh certificates:
+restricted strictly to `.magnetics` and `.multiphysics` domains with ≥4 positive mesh words summing
+to `metric0` and bounded peak metric `metric1 ≤ 5_000_000`. -/
+def BinaryTapeCertMeaning (expectedDom : HwCertDomain) (c : BinaryTapeCert) : Prop :=
+  c.domain = expectedDom ∧ (expectedDom = .magnetics ∨ expectedDom = .multiphysics) ∧
+  4 ≤ c.words.length ∧ 0 < c.metric0.toNat ∧ 0 < c.metric1.toNat ∧ c.metric1.toNat ≤ 5000000 ∧
+  (∀ w ∈ c.words, 0 < w.toNat) ∧ c.words.foldl (fun acc w => acc + w.toNat) 0 = c.metric0.toNat
 def checkBinaryTapeCert (_grade : Nat) (expectedDom : HwCertDomain) (cert : BinaryTapeCert) : Verdict HwClause :=
-  if (cert.domain == expectedDom) && verifyBinaryTapeCert cert then
-    .ok
-  else
-    .refused (.binaryCborCertViolation cert.domain.toCode) []
-
+  if expectedDom != .magnetics && expectedDom != .multiphysics then
+    .refused (.binaryCborCertViolation expectedDom.toCode) []
+  else if (cert.domain == expectedDom) && verifyBinaryTapeCert cert then .ok
+  else .refused (.binaryCborCertViolation expectedDom.toCode) []
+theorem verifyBinaryTapeCert_iff (c : BinaryTapeCert) :
+    verifyBinaryTapeCert c = true ↔
+      (c.domain = .magnetics ∨ c.domain = .multiphysics) ∧
+      4 ≤ c.words.length ∧ 0 < c.metric0.toNat ∧ 0 < c.metric1.toNat ∧ c.metric1.toNat ≤ 5000000 ∧
+      (∀ w ∈ c.words, 0 < w.toNat) ∧ c.words.foldl (fun acc w => acc + w.toNat) 0 = c.metric0.toNat := by
+  unfold verifyBinaryTapeCert
+  rcases c with ⟨dom, m0, m1, ws⟩
+  cases dom <;>
+    simp only [Bool.and_eq_true, Bool.not_eq_true', List.isEmpty_eq_false_iff, decide_eq_true_eq,
+      beq_iff_eq, List.all_eq_true, Bool.and_false, Bool.false_eq_true, reduceCtorEq, or_self,
+      true_or, or_true, true_and, false_and, false_iff]
+  · constructor
+    · rintro ⟨⟨⟨⟨_, hm0⟩, hm1⟩, hws⟩, ⟨hlen, hm1b⟩, hsum⟩
+      exact ⟨hlen, hm0, hm1, hm1b, hws, hsum⟩
+    · rintro ⟨hlen, hm0, hm1, hm1b, hws, hsum⟩
+      have hne : ws ≠ [] := by intro h; subst h; simp at hlen
+      exact ⟨⟨⟨⟨hne, hm0⟩, hm1⟩, hws⟩, ⟨hlen, hm1b⟩, hsum⟩
+  · constructor
+    · rintro ⟨⟨⟨⟨_, hm0⟩, hm1⟩, hws⟩, ⟨hlen, hm1b⟩, hsum⟩
+      exact ⟨hlen, hm0, hm1, hm1b, hws, hsum⟩
+    · rintro ⟨hlen, hm0, hm1, hm1b, hws, hsum⟩
+      have hne : ws ≠ [] := by intro h; subst h; simp at hlen
+      exact ⟨⟨⟨⟨hne, hm0⟩, hm1⟩, hws⟩, ⟨hlen, hm1b⟩, hsum⟩
 theorem checkBinaryTapeCert_sound {grade : Nat} {expectedDom : HwCertDomain} {cert : BinaryTapeCert}
     (h : checkBinaryTapeCert grade expectedDom cert = .ok) :
-    ((cert.domain == expectedDom) && verifyBinaryTapeCert cert) = true := by
+    BinaryTapeCertMeaning expectedDom cert := by
   unfold checkBinaryTapeCert at h
-  by_cases hOk : ((cert.domain == expectedDom) && verifyBinaryTapeCert cert) = true
-  · exact hOk
-  · simp [hOk] at h
-
+  split at h
+  · cases h
+  · split at h
+    · rename_i _ hOk
+      simp only [Bool.and_eq_true, beq_iff_eq, verifyBinaryTapeCert_iff] at hOk
+      obtain ⟨hDomEq, hDomOr, hRest⟩ := hOk
+      exact ⟨hDomEq, hDomEq ▸ hDomOr, hRest⟩
+    · cases h
+theorem checkBinaryTapeCert_ok_iff (r : Nat) (expectedDom : HwCertDomain) (c : BinaryTapeCert) :
+    checkBinaryTapeCert r expectedDom c = .ok ↔ BinaryTapeCertMeaning expectedDom c := by
+  refine ⟨checkBinaryTapeCert_sound, fun hm => ?_⟩
+  rcases hm with ⟨hEq, hOr, hRest⟩
+  have hDomOk : (expectedDom != .magnetics && expectedDom != .multiphysics) = false := by
+    rcases hOr with rfl | rfl <;> rfl
+  have hVer : verifyBinaryTapeCert c = true :=
+    (verifyBinaryTapeCert_iff c).mpr ⟨hEq ▸ hOr, hRest⟩
+  simp [checkBinaryTapeCert, hDomOk, hEq, hVer]
 instance binaryTapeJudge : Obend.Judge HwCertDomain BinaryTapeCert where
   Clause := HwClause
-  Meaning expectedDom cert := ((cert.domain == expectedDom) && verifyBinaryTapeCert cert) = true
+  Meaning := BinaryTapeCertMeaning
   check := checkBinaryTapeCert
-  sound := by
-    intro _ _ _ h
-    exact checkBinaryTapeCert_sound h
-  refutes _ := false
+  sound := by intro _ _ _ h; exact checkBinaryTapeCert_sound h
+  refutes | .binaryCborCertViolation d => d != 7 && d != 10 | _ => false
   refuted := by
-    intro _ _ _ _ _ _ hRef
-    cases hRef
+    intro r o c k cs hc hk c' hm
+    have hCode : k = .binaryCborCertViolation o.toCode := by
+      unfold checkBinaryTapeCert at hc
+      split at hc
+      · cases hc; rfl
+      · split at hc
+        · cases hc
+        · cases hc; rfl
+    subst hCode
+    rcases hm.2.1 with rfl | rfl <;> simp [HwCertDomain.toCode] at hk
   Fragment _ := True
-  complete := by
-    intro o _ ⟨c, hc⟩
-    exact ⟨c, 0, by simp [checkBinaryTapeCert, hc]⟩
-  mono := by
-    intro _ _ _ _ _ _
-    rfl
-
-def badBinaryTapeCert : BinaryTapeCert :=
-  { goldenBinaryFemmTapeCert with metric0 := 999 }
-
+  complete := by intro o _ ⟨c, hc⟩; exact ⟨c, 0, (checkBinaryTapeCert_ok_iff 0 o c).mpr hc⟩
+  mono := by intro _ _ _ _ _ _; rfl
+def badBinaryTapeCert : BinaryTapeCert := { goldenBinaryFemmTapeCert with metric0 := 999 }
 -- fixture kept (2026-11-04): consumed by a proof in this file
 theorem badBinaryTapeCert_refused :
     checkBinaryTapeCert 0 .magnetics badBinaryTapeCert =
-      .refused (.binaryCborCertViolation 10) [] := by
-  decide +kernel
-
+      .refused (.binaryCborCertViolation 10) [] := by decide +kernel
 def decodeBinaryTapeCertHex (s : String) : Except String BinaryTapeCert := do
   let trimmed := s.trimAscii.toString
   match decodeHexChars trimmed.toList with
@@ -1330,29 +1333,17 @@ def decodeBinaryTapeCertHex (s : String) : Except String BinaryTapeCert := do
     | some cert => .ok cert
     | none => .error "invalid RFC 8949 CBOR BinaryTapeCert frame"
   | none => .error "invalid hex-encoded CBOR byte stream"
-
 def binaryTapeFormat : Format where
-  name        := "hw-binary-tape-cbor"
-  version     := "1"
-  Obj         := HwCertDomain
-  Cert        := BinaryTapeCert
-  judge       := binaryTapeJudge
-  decodeObj   := decodeBinaryCborObj
-  decodeCert  := decodeBinaryTapeCertHex
-  trust       := .kernel
-  regime      := .decidable
-  bad         := (.magnetics, badBinaryTapeCert)
-  badGrade    := 0
+  name := "hw-binary-tape-cbor"; version := "1"; Obj := HwCertDomain; Cert := BinaryTapeCert
+  judge := binaryTapeJudge; decodeObj := decodeBinaryCborObj; decodeCert := decodeBinaryTapeCertHex
+  trust := .kernel; regime := .decidable
+  bad := (.magnetics, badBinaryTapeCert); badGrade := 0
   bad_refused := ⟨_, _, badBinaryTapeCert_refused⟩
-
 theorem binaryTapeFormat_sound {r : Nat} {obj cert : String}
     (h : binaryTapeFormat.checkBytes r obj cert = .ok) :
     ∃ o c, decodeBinaryCborObj obj = .ok o ∧ decodeBinaryTapeCertHex cert = .ok c ∧
-      ((c.domain == o) && verifyBinaryTapeCert c) = true :=
+      BinaryTapeCertMeaning o c :=
   binaryTapeFormat.checkBytes_sound h
-
-/-- Direct raw-byte binary CBOR judge entry point (supports both 39-byte `BinaryHwCert` `0x87`
-    and variable-length `BinaryTapeCert` `0x9A` frames, with zero JSON). -/
 def verifyRawBinaryCborCert (expectedDom : HwCertDomain) (raw : ByteArray) : Verdict HwClause :=
   match decodeFromByteArray (α := BinaryHwCert) raw with
   | some cert => checkBinaryCborJudge 0 expectedDom cert
@@ -1360,57 +1351,34 @@ def verifyRawBinaryCborCert (expectedDom : HwCertDomain) (raw : ByteArray) : Ver
     match decodeFromByteArray (α := BinaryTapeCert) raw with
     | some tapeCert => checkBinaryTapeCert 0 expectedDom tapeCert
     | none => .refused (.binaryCborCertViolation expectedDom.toCode) []
-
-/-- Registered `Obend.Judge.Format` for `hw-binary-cbor@1`. -/
 def binaryCborFormat : Format where
-  name        := "hw-binary-cbor"
-  version     := "1"
-  Obj         := HwCertDomain
-  Cert        := BinaryHwCert
-  judge       := binaryCborJudge
-  decodeObj   := decodeBinaryCborObj
-  decodeCert  := decodeBinaryCborCert
-  trust       := .kernel
-  regime      := .decidable
-  bad         := (.pnr, badBinaryPnrCert)
-  badGrade    := 0
+  name := "hw-binary-cbor"; version := "1"; Obj := HwCertDomain; Cert := BinaryHwCert
+  judge := binaryCborJudge; decodeObj := decodeBinaryCborObj; decodeCert := decodeBinaryCborCert
+  trust := .kernel; regime := .decidable
+  bad := (.pnr, badBinaryPnrCert); badGrade := 0
   bad_refused := ⟨_, _, badBinaryCborCert_refused⟩
-
 theorem binaryCborFormat_sound {r : Nat} {obj cert : String}
     (h : binaryCborFormat.checkBytes r obj cert = .ok) :
     ∃ o c, decodeBinaryCborObj obj = .ok o ∧ decodeBinaryCborCert cert = .ok c ∧
-      ((c.domain == o) && verifyBinaryHwCert c) = true :=
+      BinaryHwCertMeaning o c :=
   binaryCborFormat.checkBytes_sound h
-
-/-- Complete list of registered hardware, datasheet-fit, agentic EDA, and binary CBOR formats. -/
 def hardwareFormats : List Format :=
-  [ hwSynthFormat
-  , rtlSynthFormat
-  , hwRetimeFormat
-  , hwPnrFormat
-  , datasheetFitFormat
-  , agenticEdaFormat
-  , binaryCborFormat
-  , binaryTapeFormat ]
-
-/-- Look up a hardware certificate format by `name@version` string (e.g. `"hw-pnr-bitstream@1"`). -/
+  [ hwSynthFormat, rtlSynthFormat, hwRetimeFormat, hwPnrFormat
+  , datasheetFitFormat, agenticEdaFormat, binaryCborFormat, binaryTapeFormat ]
 def findHardwareFormat? (tag : String) : Option Format :=
   hardwareFormats.find? (fun f => s!"{f.name}@{f.version}" == tag)
-
-/-- **No-Bypass Verification for `verifyRawBinaryCborCert` on Fixed-Arity `.pnr` (`verifyRawBinaryCborCert_refuses_pnr_tape_bypass`)**:
-Submitting a 1-word variable-length `BinaryTapeCert` claiming `.pnr` to `verifyRawBinaryCborCert .pnr`
-is strictly refused (`.refused (.binaryCborCertViolation 1) []`). -/
 theorem verifyRawBinaryCborCert_refuses_pnr_tape_bypass :
     let fakePnrTape : BinaryTapeCert := { domain := .pnr, metric0 := 100, metric1 := 100, words := [1] }
     let rawBytes := ByteArray.mk (encodeBinaryTapeCert fakePnrTape).toArray
     verifyRawBinaryCborCert .pnr rawBytes = .refused (.binaryCborCertViolation 1) [] := by
   decide +kernel
-
+private theorem checkPnrJudge_grade_irrel (g o : Nat) (c : PnrCertificate) :
+    checkPnrJudge g o c = checkPnrJudge 0 o c := rfl
+private theorem checkAgenticEdaJudge_grade_irrel (g : Nat) (o : Int) (c : EdaVaultPart) :
+    checkAgenticEdaJudge g o c = checkAgenticEdaJudge 0 o c := rfl
 /-- **Kernel Verification of Numeric Wire Field Extraction (`extractNatField_and_extractIntField_verified`)**:
-Verifies that `extractNatField` and `extractIntField` extract unsigned and signed numeric parameters
-from JSON and key-value wire strings, and that overriding numeric fields in `decodePnrCert` and
-`decodeAgenticEdaCert` triggers judge refusal on out-of-spec numeric values! -/
-theorem extractNatField_and_extractIntField_verified :
+universally quantified over judge `grade : Nat` (`{grade : Nat}` so downstream callers specialize cleanly). -/
+theorem extractNatField_and_extractIntField_verified {grade : Nat} :
     extractNatField "{\"mode\": \"golden\", \"costCents\": 320}" "costCents" = some 320 ∧
     extractIntField "{\"mode\": \"golden\", \"minMarginMv\": -150}" "minMarginMv" = some (-150) ∧
     extractNatField "cell1TileY=0,sinkCapFf=5" "cell1TileY" = some 0 ∧
@@ -1421,20 +1389,16 @@ theorem extractNatField_and_extractIntField_verified :
            , { cellId := 1, tileX := 0,
                tileY := (extractNatField "{\"cell1TileY\": 0}" "cell1TileY").getD 1,
                belSlot := 0, lutInit := 0x6 } ] }
-     checkPnrJudge 0 2000 pnr = .refused (.pnrCollisionShortOrTiming "obend_routed_adder2") []) ∧
+     checkPnrJudge grade 2000 pnr = .refused (.pnrCollisionShortOrTiming "obend_routed_adder2") []) ∧
     (let cand : EdaVaultPart :=
        { goldenBaselinePart with
          costCents := (extractNatField "{\"costCents\": 320}" "costCents").getD 120 }
-     checkAgenticEdaJudge 0 400 cand = .refused (.agenticEdaSwapViolation "U4_LDO") []) := by
+     checkAgenticEdaJudge grade 400 cand = .refused (.agenticEdaSwapViolation "U4_LDO") []) := by
+  simp only [checkPnrJudge_grade_irrel, checkAgenticEdaJudge_grade_irrel]
   decide +kernel
-
-/-- **Identifier-Boundary Non-Collision & End-to-End Strict Decoder Verification
-(`extractNatField_token_boundary_and_decoders_verified`)**:
-1. `"fanout"` does *not* match the suffix of `"max_fanout"` in JSON or key-value wire strings,
-2. `decodeDatasheetFitCert`, `decodeAgenticEdaCert`, `decodeRtlSynthCert`, and `decodePnrCert`
-   require all explicit fields (returning `.error` when fields are omitted) and reject out-of-spec
-   numeric parameters in the Lean 4 kernel (`decide +kernel`). -/
-theorem extractNatField_token_boundary_and_decoders_verified :
+/-- **Identifier-Boundary Non-Collision & Strict Decoder Verification (`extractNatField_token_boundary_and_decoders_verified`)**:
+universally quantified over `grade : Nat`. -/
+theorem extractNatField_token_boundary_and_decoders_verified (grade : Nat) :
     extractNatField "{\"max_fanout\": 99, \"mode\": \"calibrated\"}" "fanout" = none ∧
     extractNatField "max_fanout=99,mode=calibrated" "fanout" = none ∧
     extractIntField "{\"extra_minMarginMv\": -500}" "minMarginMv" = none ∧
@@ -1444,8 +1408,8 @@ theorem extractNatField_token_boundary_and_decoders_verified :
     (decodePnrCert "{\"mode\": \"valid\"}").isOk = false ∧
     (match decodePnrCert "designName=obend_routed_adder2,sinkCapFf=5,cell1TileY=0,cell0BelSlot=0,cell1BelSlot=0,net0DstWire=12,net1DstWire=21" with
      | .ok c => c.sinkCapFf == 5 &&
-       checkPnrJudge 0 2000 c == .refused (.pnrCollisionShortOrTiming "obend_routed_adder2") []
+       checkPnrJudge grade 2000 c == .refused (.pnrCollisionShortOrTiming "obend_routed_adder2") []
      | .error _ => false) = true := by
+  simp only [checkPnrJudge_grade_irrel]
   decide +kernel
-
 end Obend.Hardware.Judge

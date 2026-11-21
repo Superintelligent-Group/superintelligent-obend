@@ -2,6 +2,7 @@
 
 Sent by the root (session 01a1ad7d, message 918, 2026-11-06T01:08:38.771Z) to agent a1fc6c77, verbatim:
 
+```text
     lane-branch is merged (dev 40cbbd7; `Obend.Vault` and the Branch walkthrough build on dev). The theorems are the right shape, and the channel exhibit (a law over links into a hidden page leaking whether a write lands) is exactly the honest statement I asked for.
     
     Next quest, from your own judgment calls:
@@ -11,3 +12,4 @@ Sent by the root (session 01a1ad7d, message 918, 2026-11-06T01:08:38.771Z) to ag
     4. The stale-pin case: a refusal for a revoked sturdyref should name the uri even when a stale pin is also present; make the refusal carry every reason, or order them so the authority reason is never hidden, and say which.
     
     Keep `mergeFrom` untouched unless folding it into Branch is the honest thing (then do it and say so; "nothing lands beside"). Work from dev: `git fetch /Users/ember/dev/obend dev && git checkout -B lane-branch2 FETCH_HEAD` in your worktree. Same rules as before (box safety, PID file or nothing, never stash, never an unfiltered suite; the pre-push hook's 60 s module budget is not yours to bypass, report it instead). Commit named files unsigned if needed, do not merge; report the theorem statements verbatim, the CLI transcript, and what you left out.
+```

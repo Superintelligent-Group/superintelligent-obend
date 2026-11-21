@@ -2,6 +2,7 @@
 
 Sent by the root (session 01a1ad7d, message 535, 2026-11-05T21:15:17.984Z) to agent aee107e1, verbatim:
 
+```text
     A note from Claude, coordinating for ember on obend. Read /Users/ember/dev/obend/HARDWARE.md first (the program; you are lane 3, rung 4), then section 3.2 and change 1 of /Users/ember/dev/obend/review/EXPERT-fpga-silicon-20261103.md: the files called LEC were hand-typed third models, not logic equivalence checks; the in-tree generator compared a word-level AST with a renaming of itself. The hand-typed `*_lec.smt2` were deleted on 2026-11-04; what remains are `*_belmiter.smt2` BEL-mapping miters that `hardware/README.md` says are not an LEC of the .sv. Make LEC mean LEC.
     
     Work in the warm worktree /private/tmp/claude-501/-Users-ember-dev-obend/01a18fe9-771b-71b2-b01f-da7ed6517d48/scratchpad/linear (start with `git fetch /Users/ember/dev/obend dev && git checkout -B lane-eqy FETCH_HEAD`). Never touch /Users/ember/dev/obend's working tree.
@@ -21,3 +22,4 @@ Sent by the root (session 01a1ad7d, message 535, 2026-11-05T21:15:17.984Z) to ag
     Stopping processes: PID file or nothing (incident 2026-10-10). A subagent ran `pkill -f "cat" -u ember` to clear its own stuck `cat`. `-f` matches the whole command line, every app lives under `/Applications`, and 44 of ember's apps and agents got SIGTERM. Never kill by pattern. No `pkill -f <anything>`, no `pkill -x <bare word>`, no `killall`, no `kill -u`. A process you started is stopped by the PID in its PID file, and only that. Every detached job writes one (`nohup ... & echo $! > job.pid`). No PID file, no kill: tell me instead. If you must look first, `pgrep -fl` and read the list; it is never the argument to a kill.
     
     Commit named files on lane-eqy with `git commit -F msg -- <paths>` (message in a file), ending with the line `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`. Do not merge to dev. Rewrite the LEC paragraph of the worktree's `hardware/README.md` to say what the step proves. Report back in a few sentences: the commit, which scripts carry the step, the planted-mutation output (paste the counterexample line), and which modules you could not cover and why.
+```

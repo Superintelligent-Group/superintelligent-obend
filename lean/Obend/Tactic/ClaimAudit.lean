@@ -369,9 +369,10 @@ meta partial def checkNonDegenerateCarrier (declName : Name) (info : ConstantInf
       Meta.withLetDecl bName t v fun x => walkTelescope (body.instantiate1 x)
     | concl =>
       let mut errs : List ClaimViolation := []
-      if concl.isConstOf ``True then
+      let conclWhnf := stripMData (← whnf concl)
+      if concl.isConstOf ``True || conclWhnf.isConstOf ``True then
         errs := errs ++ [⟨.nonDegenerateCarrier, declName,
-          "trivial conclusion `True` carries zero semantic constraint"⟩]
+          "trivial conclusion `True` (or definitional wrapper unfolding in WHNF to `True`) carries zero semantic constraint"⟩]
       for arg in concl.getAppArgs do
         let isTypeArg ← try pure (← inferType arg).isSort catch _ => pure false
         if isTypeArg && isDegenerateCarrierTypeExpr arg then
@@ -475,6 +476,33 @@ meta def isDegenerateModelValue (e : Expr) : Bool :=
   let fn := (stripMData e).getAppFn
   fn.isConstOf ``Unit.unit || fn.isConstOf ``PUnit.unit
 
+/-- Inspect a proposition `p` in full WHNF to reject definitional wrappers around `False` or trivial `True`. -/
+meta def isTrivialOrFalsePropInWhnf (p : Expr) : MetaM (Option String) := do
+  let pRaw := stripMData p
+  let pWhnf := stripMData (← whnf p)
+  if pRaw.isConstOf ``False || pWhnf.isConstOf ``False ||
+     pWhnf.isConstOf ``Empty || pWhnf.isConstOf ``PEmpty then
+    return some "reduces in WHNF to uninhabited `False` / `Empty`"
+  if pRaw.isConstOf ``True || pWhnf.isConstOf ``True then
+    return some "reduces in WHNF to trivial `True` (definitional wrapper carries zero constraint)"
+  return none
+
+/-- Extract all model witness arguments from nested `Exists.intro` terms. -/
+meta partial def collectExistsModelArgs (e : Expr) : List Expr :=
+  let e := stripMData e
+  if (stripMData e.getAppFn).isConstOf ``Exists.intro && e.getAppArgs.size >= 4 then
+    let args := e.getAppArgs
+    args[2]! :: collectExistsModelArgs args[3]!
+  else
+    []
+
+/-- Check whether an `n`-ary predicate `hypExpr : hypTy` unfolds under full WHNF after binder introduction
+    to constant `False` or constant trivial `True`. -/
+meta def checkPredBodyWhnfNonTrivial (hypExpr hypTy : Expr) : MetaM (Option String) :=
+  forallTelescopeReducing hypTy fun xs _ => do
+    let applied := mkAppN hypExpr xs
+    isTrivialOrFalsePropInWhnf applied
+
 /-- Audit that `hypStx` is non-vacuously inhabited via `witStx` (Law 4: `modelInhabited`). -/
 meta def verifyNonVacuousAudit (hypStx witStx : Syntax) : TermElabM AuditVerdict := do
   let hypExpr ← Term.elabTermAndSynthesize hypStx none
@@ -494,10 +522,9 @@ meta def verifyNonVacuousAudit (hypStx witStx : Syntax) : TermElabM AuditVerdict
             s!"hypothesis `{cName}` unfolds directly to uninhabited `False` / `fun _ => False`"⟩]
   -- Case 1: `hypExpr` is already a `Prop` (`hypTy` is `Prop`)
   if ← Meta.isProp hypExpr then
-    let redHyp ← whnf hypExpr
-    if (stripMData redHyp).isConstOf ``False then
+    if let some whnfBad ← isTrivialOrFalsePropInWhnf hypExpr then
       return .refused targetLabel [⟨.modelInhabited, targetLabel,
-        s!"hypothesis `{hypExpr}` reduces in WHNF to `False`"⟩]
+        s!"hypothesis `{hypExpr}` {whnfBad}"⟩]
     let witExpr ← try
       Term.withoutErrToSorry do
         let w ← Term.elabTermEnsuringType witStx (some hypExpr)
@@ -511,6 +538,9 @@ meta def verifyNonVacuousAudit (hypStx witStx : Syntax) : TermElabM AuditVerdict
     return mkAuditVerdictMeta targetLabel
       s!"hypothesis `{hypExpr}` is kernel-verified non-vacuous" kErrs
   -- Case 2: `hypExpr` is an `n`-ary predicate `A₁ → ... → Aₙ → Prop`
+  if let some bodyBad ← checkPredBodyWhnfNonTrivial hypExpr hypTy then
+    return .refused targetLabel [⟨.modelInhabited, targetLabel,
+      s!"predicate `{hypExpr}` {bodyBad}"⟩]
   let existsTy ← mkNestedExistsForPred hypExpr hypTy
   -- Support Style A (`⟨modelParam, hProof⟩ : ∃ x, H x`) OR Style B (`hProof : H modelParam`)
   let saved ← saveState
@@ -519,8 +549,8 @@ meta def verifyNonVacuousAudit (hypStx witStx : Syntax) : TermElabM AuditVerdict
       let w ← Term.elabTermEnsuringType witStx (some existsTy)
       Term.synthesizeSyntheticMVarsNoPostponing
       let w ← instantiateMVars w
-      if (stripMData w.getAppFn).isConstOf ``Exists.intro && w.getAppArgs.size >= 4 then
-        let modelArg := w.getAppArgs[2]!
+      let mArgs := collectExistsModelArgs w
+      for modelArg in mArgs do
         if isDegenerateModelValue modelArg then
           throwError "degenerate Unit model witness"
       pure (some (existsTy, w))
@@ -528,29 +558,44 @@ meta def verifyNonVacuousAudit (hypStx witStx : Syntax) : TermElabM AuditVerdict
     restoreState saved
     pure none
   if let some (chkTy, chkVal) := styleA? then
+    let mArgs := collectExistsModelArgs chkVal
+    let (mvars, _, _) ← forallMetaTelescopeReducing hypTy
+    if mArgs.length == mvars.size then
+      let instProp := mkAppN hypExpr mArgs.toArray
+      if let some instBad ← isTrivialOrFalsePropInWhnf instProp then
+        return .refused targetLabel [⟨.modelInhabited, targetLabel,
+          s!"instantiated hypothesis `{instProp}` {instBad}"⟩]
     let kErrs ← kernelCheckScratchTheorem targetLabel .modelInhabited chkTy chkVal
     return mkAuditVerdictMeta targetLabel
       s!"predicate `{hypExpr}` is kernel-verified inhabited (`{chkTy}`)" kErrs
-  -- Style B: direct proof `w : H m₁ ... mₙ`
+  -- Style B: direct proof `w : H m₁ ... mₙ` checked by full telescope `isDefEq` + `whnf`
   try
     Term.withoutErrToSorry do
       let w ← Term.elabTermAndSynthesize witStx none
       Term.synthesizeSyntheticMVarsNoPostponing
       let w ← instantiateMVars w
       let wTy ← instantiateMVars (← inferType w)
-      let wHead := stripMData wTy.getAppFn
-      let hHead := stripMData hypExpr.getAppFn
-      let matchesPred ← withoutModifyingState (isDefEq wHead hHead)
-      if !matchesPred then
+      let (mvars, _, _) ← forallMetaTelescopeReducing hypTy
+      let targetProp := mkAppN hypExpr mvars
+      let matchesFull ← isDefEq wTy targetProp
+      if !matchesFull then
         return .refused targetLabel [⟨.modelInhabited, targetLabel,
-          s!"witness has type `{wTy}`, which neither inhabits `{existsTy}` nor applies `{hypExpr}`"⟩]
-      for mArg in wTy.getAppArgs do
+          s!"witness has type `{wTy}`, which is not definitionally equal to an instantiation of `{hypExpr}`"⟩]
+      let targetProp ← instantiateMVars targetProp
+      if targetProp.hasExprMVar then
+        return .refused targetLabel [⟨.modelInhabited, targetLabel,
+          s!"witness `{wTy}` leaves unsolved parameters in `{targetProp}`"⟩]
+      if let some instBad ← isTrivialOrFalsePropInWhnf targetProp then
+        return .refused targetLabel [⟨.modelInhabited, targetLabel,
+          s!"instantiated hypothesis `{targetProp}` {instBad}"⟩]
+      for mv in mvars do
+        let mArg ← instantiateMVars mv
         if isDegenerateModelValue mArg then
           return .refused targetLabel [⟨.modelInhabited, targetLabel,
             s!"model parameter `{mArg}` is degenerate (`Unit`)"⟩]
-      let kErrs ← kernelCheckScratchTheorem targetLabel .modelInhabited wTy w
+      let kErrs ← kernelCheckScratchTheorem targetLabel .modelInhabited targetProp w
       return mkAuditVerdictMeta targetLabel
-        s!"predicate `{hypExpr}` is kernel-verified inhabited via `{wTy}`" kErrs
+        s!"predicate `{hypExpr}` is kernel-verified inhabited via `{targetProp}`" kErrs
   catch ex =>
     let msg ← ex.toMessageData.toString
     return .refused targetLabel [⟨.modelInhabited, targetLabel,

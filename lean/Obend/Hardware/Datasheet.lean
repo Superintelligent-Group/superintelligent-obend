@@ -30,7 +30,7 @@ window verification, and $L_\infty$ model-to-datasheet calibration certificates*
 4. **Timing Diagram Setup/Hold & Propagation Delay Window Verifier (`WaveformTransition`, `checkTimingWindow`)**:
    - Proves `timing_diagram_window_sound` and `setup_hold_violation_refused`.
 -/
-@[expose] public section
+public section
 
 namespace Obend.Hardware.Datasheet
 set_option autoImplicit false
@@ -92,7 +92,7 @@ structure ComponentDatasheet where
 * $V_{OH,\min} = 2700\,\text{mV}$ (at $I_{OH} = -400\,\mu\text{A}$), $V_{OL,\max} = 400\,\text{mV}$ (at $I_{OL} = 8000\,\mu\text{A}$),
 * $t_{pLH,\max} = 15000\,\text{ps}$ ($15\,\text{ns}$), $t_{pHL,\max} = 15000\,\text{ps}$ ($15\,\text{ns}$),
 * 7-point digitized $V_{\text{in}} \mapsto V_{\text{out}}$ totem-pole transfer curve across $[0, 5000]\,\text{mV}$. -/
-def sn74ls00Datasheet : ComponentDatasheet where
+@[expose] def sn74ls00Datasheet : ComponentDatasheet where
   partNumber := "SN74LS00"
   logic :=
     { familyName := "74LS_Schottky_TTL"
@@ -127,7 +127,7 @@ def sn74ls00Datasheet : ComponentDatasheet where
 /-- Canonical datasheet for the `CD74HC00` High-Speed 5V CMOS Quad 2-Input NAND:
 * Symmetric CMOS input thresholds ($V_{IH,\min} = 3500\,\text{mV}$, $V_{IL,\max} = 1000\,\text{mV}$),
 * Rail-to-rail CMOS output swing ($V_{OH,\min} = 4400\,\text{mV}$ under load, $V_{OL,\max} = 100\,\text{mV}$). -/
-def cd74hc00Datasheet : ComponentDatasheet where
+@[expose] def cd74hc00Datasheet : ComponentDatasheet where
   partNumber := "CD74HC00"
   logic :=
     { familyName := "74HC_5V_CMOS"
@@ -160,7 +160,7 @@ def cd74hc00Datasheet : ComponentDatasheet where
 /-- Canonical datasheet for the `CD74HCT00` TTL-Compatible High-Speed 5V CMOS Quad 2-Input NAND:
 * Asymmetric PFET/NFET input stage shifted to TTL thresholds ($V_{IH,\min} = 2000\,\text{mV}$, $V_{IL,\max} = 800\,\text{mV}$),
 * Full CMOS output swing ($V_{OH,\min} = 4400\,\text{mV}$, $V_{OL,\max} = 100\,\text{mV}$). -/
-def cd74hct00Datasheet : ComponentDatasheet where
+@[expose] def cd74hct00Datasheet : ComponentDatasheet where
   partNumber := "CD74HCT00"
   logic :=
     { familyName := "74HCT_TTL_Compatible_CMOS"
@@ -195,12 +195,12 @@ def cd74hct00Datasheet : ComponentDatasheet where
 /-- High-state DC noise margin $\text{NM}_H = (V_{OH,\min}^{\text{drv}} + \Delta V_{\text{pullup}}) - V_{IH,\min}^{\text{rcv}}$
 (in millivolts $\text{mV}$), where `pullupBoostMv` is `0` for a direct totem-pole connection or positive
 when an external pull-up resistor to $V_{CC}$ is attached. -/
-def noiseMarginHigh (drv rcv : LogicFamilySpec) (pullupBoostMv : Int) : Int :=
+@[expose] def noiseMarginHigh (drv rcv : LogicFamilySpec) (pullupBoostMv : Int) : Int :=
   (drv.vohMinMv + pullupBoostMv) - rcv.vihMinMv
 
 /-- Low-state DC noise margin $\text{NM}_L = V_{IL,\max}^{\text{rcv}} - V_{OL,\max}^{\text{drv}}$
 (in millivolts $\text{mV}$). -/
-def noiseMarginLow (drv rcv : LogicFamilySpec) : Int :=
+@[expose] def noiseMarginLow (drv rcv : LogicFamilySpec) : Int :=
   rcv.vilMaxMv - drv.volMaxMv
 
 /-- Verify that a driver logic family `drv` can safely drive a receiver logic family `rcv` with
@@ -208,7 +208,7 @@ pull-up boost `pullupBoostMv` and minimum required noise immunity `minMarginMv` 
 1. $\text{NM}_H \ge \text{minMarginMv}$,
 2. $\text{NM}_L \ge \text{minMarginMv}$, and
 3. Strict logic threshold separation ($V_{OL,\max}^{\text{drv}} < V_{IH,\min}^{\text{rcv}}$). -/
-def checkLogicInterface (drv rcv : LogicFamilySpec) (pullupBoostMv minMarginMv : Int) : Bool :=
+@[expose] def checkLogicInterface (drv rcv : LogicFamilySpec) (pullupBoostMv minMarginMv : Int) : Bool :=
   decide (minMarginMv ≤ noiseMarginHigh drv rcv pullupBoostMv) &&
   decide (minMarginMv ≤ noiseMarginLow drv rcv) &&
   decide (drv.volMaxMv < rcv.vihMinMv)
@@ -224,13 +224,20 @@ theorem ttl_to_hc_direct_interface_refused :
 
 /-- Theorem (`ttl_to_hct_interface_verified`):
 Replacing the receiver with a TTL-compatible `CD74HCT00` ($V_{IH,\min} = 2000\,\text{mV}, V_{IL,\max} = 800\,\text{mV}$)
-achieves $\text{NM}_H = +700\,\text{mV} \ge 400\,\text{mV}$ and $\text{NM}_L = +400\,\text{mV} \ge 400\,\text{mV}$,
-and is accepted by `checkLogicInterface`! -/
-theorem ttl_to_hct_interface_verified :
+achieves $\text{NM}_H = +700\,\text{mV}$ and $\text{NM}_L = +400\,\text{mV}$, and is accepted by
+`checkLogicInterface` for every noise-margin requirement `minMarginMv ≤ 400`! -/
+theorem ttl_to_hct_interface_verified (minMarginMv : Int) (hMargin : minMarginMv ≤ 400) :
     noiseMarginHigh sn74ls00Datasheet.logic cd74hct00Datasheet.logic 0 = 700 ∧
     noiseMarginLow sn74ls00Datasheet.logic cd74hct00Datasheet.logic = 400 ∧
-    checkLogicInterface sn74ls00Datasheet.logic cd74hct00Datasheet.logic 0 400 = true :=
-  ⟨rfl, rfl, rfl⟩
+    checkLogicInterface sn74ls00Datasheet.logic cd74hct00Datasheet.logic 0 minMarginMv = true := by
+  have hHi : noiseMarginHigh sn74ls00Datasheet.logic cd74hct00Datasheet.logic 0 = 700 := by decide
+  have hLo : noiseMarginLow sn74ls00Datasheet.logic cd74hct00Datasheet.logic = 400 := by decide
+  have hSep : decide (sn74ls00Datasheet.logic.volMaxMv < cd74hct00Datasheet.logic.vihMinMv) = true := by decide
+  refine ⟨hHi, hLo, ?_⟩
+  unfold checkLogicInterface
+  rw [hHi, hLo, hSep]
+  simp only [Bool.and_true, Bool.and_eq_true, decide_eq_true_eq]
+  exact ⟨by omega, hMargin⟩
 
 /-- Theorem (`pullup_restores_ttl_to_hc_margin`):
 Adding a $2.2\,\text{k}\Omega$ external pull-up resistor to the `5.0V` rail (`pullupBoostMv = 2100`,
@@ -264,7 +271,7 @@ theorem checkLogicInterface_guarantees_valid_thresholds
 
 /-- Absolute point-wise residual $|\hat{y} - y|$ between a circuit model prediction `predY` and an
 empirical datasheet curve point `actualY`. -/
-def pointAbsError (predY actualY : Int) : Int :=
+@[expose] def pointAbsError (predY actualY : Int) : Int :=
   if predY ≥ actualY then predY - actualY else actualY - predY
 
 /-- Theorem (`pointAbsError_nonneg_and_symm`):
@@ -283,7 +290,7 @@ theorem pointAbsError_nonneg_and_symm (a b : Int) :
 
 /-- Compute the worst-case $L_\infty$ error $\varepsilon_{\max} = \max_i |\hat{y}_i - y_i|$ across a list
 of model predictions and captured `DatasheetCurvePoint`s. -/
-def maxCurveErrorLInf : List Int → List DatasheetCurvePoint → Int
+@[expose] def maxCurveErrorLInf : List Int → List DatasheetCurvePoint → Int
   | [], [] => 0
   | p :: ps, pt :: pts =>
     let eCur := pointAbsError p pt.measuredY
@@ -293,30 +300,40 @@ def maxCurveErrorLInf : List Int → List DatasheetCurvePoint → Int
 
 /-- Check that a circuit model's predictions `preds` match the captured datasheet curve `pts`
 within worst-case $L_\infty$ tolerance `tolMv` ($\text{mV}$). -/
-def checkModelCalibration (preds : List Int) (pts : List DatasheetCurvePoint) (tolMv : Int) : Bool :=
+@[expose] def checkModelCalibration (preds : List Int) (pts : List DatasheetCurvePoint) (tolMv : Int) : Bool :=
   decide (preds.length = pts.length) &&
   decide (0 ≤ tolMv) &&
   decide (maxCurveErrorLInf preds pts ≤ tolMv)
 
 /-- Calibrated Ebers–Moll / Schottky macro-model predictions for the 7 points of `sn74ls00Datasheet.transferCurve`:
 achieves worst-case residual $\varepsilon_{\max} = 14\,\text{mV} \le 25\,\text{mV}$! -/
-def calibrated74ls00ModelPreds : List Int :=
+@[expose] def calibrated74ls00ModelPreds : List Int :=
   [3476, 3476, 3472, 2136, 992, 322, 322]
 
 /-- Uncalibrated drifted model predictions (e.g., ignoring Schottky Baker clamp & Darlington drop):
 suffers worst-case residual $\varepsilon_{\max} = 620\,\text{mV} > 25\,\text{mV}$! -/
-def uncalibratedDrifted74ls00Preds : List Int :=
+@[expose] def uncalibratedDrifted74ls00Preds : List Int :=
   [4100, 4100, 4050, 2500, 1200, 580, 550]
 
 /-- Theorem (`sn74ls00_calibration_certificate_verified`):
-`calibrated74ls00ModelPreds` has exact $L_\infty$ error $14\,\text{mV} \le 25\,\text{mV}$ against
-`sn74ls00Datasheet.transferCurve` and is accepted by `checkModelCalibration`, whereas
-`uncalibratedDrifted74ls00Preds` ($620\,\text{mV}$ error) is refused! -/
-theorem sn74ls00_calibration_certificate_verified :
+`calibrated74ls00ModelPreds` has exact $L_\infty$ error $14\,\text{mV}$ against
+`sn74ls00Datasheet.transferCurve` and is accepted by `checkModelCalibration` for every tolerance
+`tolMv ≥ 14`, whereas `uncalibratedDrifted74ls00Preds` ($620\,\text{mV}$ error) is refused for every
+`tolMv < 620`! -/
+theorem sn74ls00_calibration_certificate_verified (tolMv : Int)
+    (hLo : 14 ≤ tolMv) (hHi : tolMv < 630) :
     maxCurveErrorLInf calibrated74ls00ModelPreds sn74ls00Datasheet.transferCurve = 14 ∧
-    checkModelCalibration calibrated74ls00ModelPreds sn74ls00Datasheet.transferCurve 25 = true ∧
-    checkModelCalibration uncalibratedDrifted74ls00Preds sn74ls00Datasheet.transferCurve 25 = false :=
-  ⟨rfl, rfl, rfl⟩
+    checkModelCalibration calibrated74ls00ModelPreds sn74ls00Datasheet.transferCurve tolMv = true ∧
+    checkModelCalibration uncalibratedDrifted74ls00Preds sn74ls00Datasheet.transferCurve tolMv = false := by
+  have hCalErr : maxCurveErrorLInf calibrated74ls00ModelPreds sn74ls00Datasheet.transferCurve = 14 := by decide
+  have hDriftErr : maxCurveErrorLInf uncalibratedDrifted74ls00Preds sn74ls00Datasheet.transferCurve = 630 := by decide
+  have hLen1 : calibrated74ls00ModelPreds.length = sn74ls00Datasheet.transferCurve.length := by decide
+  have hFalse : decide (630 ≤ tolMv) = false := decide_eq_false (by omega)
+  refine ⟨hCalErr, ?_, ?_⟩
+  · simp only [checkModelCalibration, hCalErr, hLen1, Bool.and_eq_true, decide_eq_true_eq]
+    exact ⟨⟨trivial, by omega⟩, hLo⟩
+  · unfold checkModelCalibration
+    rw [hDriftErr, hFalse, Bool.and_false]
 
 /-- Theorem (`calibrated_model_preserves_voltage_swing`):
 If a circuit model has bounded point-wise calibration error `pointAbsError predMv actualMv ≤ errBound`:
@@ -385,8 +402,7 @@ setup margin is refused by `checkTimingWindow`. -/
 theorem setup_hold_violation_refused :
     checkTimingWindow sn74ls00Datasheet.timing
       { signalName := "D_meta", dataStableBeforePs := 8000, dataStableAfterPs := 6000
-      , outputValidAfterPs := 9200, measuredOvershootMv := 180 } = false :=
-  rfl
+      , outputValidAfterPs := 9200, measuredOvershootMv := 180 } = false := by decide
 
 /-! ## 5. High-Speed Differential LVDS (`ANSI/TIA/EIA-644A`) & 3.3V ASIC Pad-Ring I/O Specifications -/
 
@@ -492,5 +508,12 @@ theorem lvdsIoCompatibility_commonMode_enclosure
   have hLow : spec.vicmMinMv ≤ spec.vocmMinMv - gndShiftMv := hOk.1.2
   have hHigh : spec.vocmMaxMv + gndShiftMv ≤ spec.vicmMaxMv := hOk.2
   refine ⟨hNonneg, by omega, by omega⟩
+
+-- Inhabitedness witnesses for `checkTimingWindow` and `checkLvdsIoCompatibility`.
+example : checkTimingWindow sn74ls00Datasheet.timing
+    { signalName := "D_valid", dataStableBeforePs := 25000, dataStableAfterPs := 8000
+    , outputValidAfterPs := 12000, measuredOvershootMv := 200 } = true := by decide
+
+example : checkLvdsIoCompatibility lvdsAnsi644Spec 220 500 50 = true := by decide
 
 end Obend.Hardware.Datasheet

@@ -68,7 +68,7 @@ shape annotations; shape inference starts at `inputTypes`. A nonempty quotient
 must be resolved upstream before import. Only topological single-assignment terms
 with explicit Copy and one-use wires are admitted.
 
-Supported core operations are `Copy`, rank-2 `Tensor.MatMul`, and
+Supported core operations are `Copy`, rank-2 `TensorOp::MatMul` (`"MatMul"`), and
 `Tensor.Map.{Add,Sub,Mul,LT,Where}`. All tensors must be U32, all pointwise operand
 shapes must agree, and matrix inner dimensions must agree. Other operations,
 control flow, definitions, dtype conversions, higher-rank matmuls and implicit

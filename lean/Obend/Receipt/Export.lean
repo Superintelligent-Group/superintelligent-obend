@@ -107,7 +107,7 @@ def outcomeOf {Clause : Type} (clauseOf : String → Except String Clause) (j : 
     pure (.refused k (← j.getObjValAs? (List Nat) "path"))
 
 /-- The genesis of a producer's chain. -/
-def genesis : Digest := String.mk (List.replicate 64 '0')
+def genesis : Digest := String.ofList (List.replicate 64 '0')
 
 /-- A receipt's digest: of its canonical JSON. -/
 def receiptDigest (j : Json) : Digest := digestJson j
@@ -172,10 +172,15 @@ def certGrade : Judge.Lrat.Cert → Nat
   | .refutation steps => steps.length
   | .model _ => 0
 
-/-- Produce the identity receipt from the statement and the solver's certificate text. -/
+/-- Produce the identity receipt from the statement and the solver's certificate text.
+    Fails closed if the certificate does not establish the identity (`v ≠ .ok`). -/
 def identityReceipt (d : Identity) (certText : String) (prev : Digest) : Except String Json := do
   let cert ← Judge.Lrat.parseCert certText
   let v := Judge.Lrat.check (certGrade cert) (encode d) cert
+  match v with
+  | .ok => pure ()
+  | .refused k p => throw s!"refused: certificate did not establish identity ({refusalName k} at {p})"
+  | .uncovered => throw "refused: certificate uncovered"
   return Json.mkObj [
     ("schema", "obend.receipt.v1"), ("kind", "identity"),
     ("law", toJson (digest identityLaw)), ("pre", toJson genesis), ("post", toJson genesis),
@@ -219,8 +224,12 @@ def verifyIdentity (j : Json) : Except String String := do
     throw s!"verdict: the receipt says {if claimed.isOk then "ok" else "not ok"}, the checker says {said}"
   let trust ← trustLine identitySupports j
   match v with
-  | .ok => return s!"identity {d.name}: holds (lrat@1, {certGrade cert} steps, trust {trust}, base compiled)"
-  | _ => return s!"identity {d.name}: a refusal, as recorded ({said}); the statement is not established"
+  | .ok =>
+    unless claimed.isOk do
+      throw "verdict: refused identity receipt is not an established identity"
+    return s!"identity {d.name}: holds (lrat@1, {certGrade cert} steps, trust {trust}, base compiled)"
+  | _ =>
+    throw s!"identity {d.name}: refused ({said}); a refusal receipt is not an established identity"
 
 /-! ## The world-transition receipt -/
 
@@ -342,6 +351,8 @@ def verifyWorld (j : Json) (root : Option Nat) : Except String String := do
       unless pinCode ((R.pins.lookup f).getD none) == p.value do
         throw s!"dated: the pin of {factName f} is not the pin the dated view committed"
     | .inr _ => pure ()
+  unless R.verdict.isOk do
+    throw "verdict: world-transition receipt records a refusal, not an admitted transition"
   let overall ← trustLine worldSupports j
   return s!"world-transition ({dial}): {repr R.verdict.isOk} at the expected view {(hex (Obend.Digest.Cshake256.natBytesBE R.dated)).take 16}…; trust {overall}"
 
@@ -354,7 +365,9 @@ def verify (j : Json) (prev : Option Json) (root : Option Nat) : Except String (
   let schema ← j.getObjValAs? String "schema"
   unless schema == "obend.receipt.v1" do throw s!"schema {schema}"
   let line ← match ← j.getObjValAs? String "kind" with
-    | "identity" => verifyIdentity j
+    | "identity" =>
+      if root.isSome then throw "root: --root is unsupported for identity receipts"
+      verifyIdentity j
     | "world-transition" => verifyWorld j root
     | k => throw s!"unknown kind {k}"
   let p ← j.getObjValAs? String "prev"
@@ -367,6 +380,15 @@ def verify (j : Json) (prev : Option Json) (root : Option Nat) : Except String (
       | "world-transition" => verifyWorld pj none
       | k => throw s!"predecessor: unknown kind {k}"
     return [line, s!"prev: {earlier}", "chain: linked"]
+
+/-- Passing `--root` to an `"identity"` receipt fails closed (`isOk = false`). -/
+theorem verify_identity_rejects_root (j : Json) (prev : Option Json) (r : Nat)
+    (hSchema : j.getObjValAs? String "schema" = .ok "obend.receipt.v1")
+    (hKind : j.getObjValAs? String "kind" = .ok "identity") :
+    (verify j prev (some r)).isOk = false := by
+  unfold verify
+  simp only [hSchema, hKind, Bind.bind, Except.bind]
+  rfl
 
 end Obend.Receipt.Export
 end

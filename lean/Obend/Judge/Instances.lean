@@ -270,16 +270,17 @@ def PrecedenceList (g : Obend.Spec.C4.Graph) (head : String) (parents : List (Li
   lin.head? = some head ∧ lin.Nodup ∧ (∀ chain ∈ parents, chain.Sublist lin) ∧
     ∀ chain ∈ parents, ∀ p ∈ chain, (g.precedence p).Sublist lin
 
-/-- **C4's validated linearization**: `ok` means the computed list is a precedence list. -/
+/-- **C4's validated linearization**: `ok` means there exists a topological, duplicate-free,
+local-order- and parent-monotonicity-preserving C4 precedence list starting at `head`. -/
 instance c4 : Judge (Obend.Spec.C4.Graph × String × List (List String)) Unit where
   Clause := InheritRefusal
-  Meaning o _ := ∃ lin, precedence o.1 o.2.1 o.2.2 = .ok lin ∧ PrecedenceList o.1 o.2.1 o.2.2 lin
+  Meaning o _ := ∃ lin, PrecedenceList o.1 o.2.1 o.2.2 lin
   check := c4Check
   sound := by
     rintro r ⟨g, head, parents⟩ _ h
     simp only [c4Check] at h
     split at h
-    · rename_i lin hl; exact ⟨lin, hl, precedence_ok hl⟩
+    · rename_i lin hl; exact ⟨lin, precedence_ok hl⟩
     · cases h
   refutes _ := false
   refuted := by intro _ _ _ _ _ _ h; cases h

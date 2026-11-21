@@ -99,8 +99,8 @@ its bytes and its poster), and to the request, a hole too (who signs, the turn, 
 capture and each abstraction check every such term once, and the checks the checker accepts are part
 of the vault's world: made by the turn that captured or abstracted the form, so made the same way by
 every replay of its log. A judgment of a fill runs exactly such a term, filled with the values its
-write holds there and with its request (`Obend.Vault.Form.judge_runs_checked`), and is typed by the
-derivation that one check returned (`Obend.Vault.Form.kept_typed`, through
+write holds there and with its request (`judge_runs_checked` in `Obend/Vault/FormCheck.lean`), and is typed by the
+derivation that one check returned (`kept_typed` in `Obend/Vault/FormCheck.lean`, through
 `Obend.Core.Proofs.FillTyping.fill_typed`); it is not checked again.
 
 ```sh
@@ -117,7 +117,7 @@ pay: 3 law(s) over its holed states, checked once with amount open:
 No file stands for a check. A vault that kept them in `.obend/checked/` (as this one once did) would
 take a planted file for the checker's word; here a planted one is never read. The world keeps each
 check's record, and a command that uses a form's checks makes them again from those records with the
-checker (`Obend.Vault.Form.checksOf`; made again they are the capture's, `checksOf_records`):
+checker (`checksOf` in `Obend/Vault/FormCheck.lean`; made again they are the capture's, `checksOf_records`):
 
 ```sh
 cd alice && mkdir -p .obend/checked && echo '[]' > .obend/checked/pay.json && obend checked pay | head -1

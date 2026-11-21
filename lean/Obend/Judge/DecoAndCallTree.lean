@@ -52,7 +52,6 @@ import all Obend.Judge.SymbolicRegexBisim
 import all Obend.Judge.VpaComplementAndJson
 import all Obend.Judge.TranscriptPolicy
 import all Obend.Vault.Lsafe
-
 public section
 namespace Obend.Judge.DecoAndCallTree
 open Obend.Crypto Obend.Crypto.BinaryTower256
@@ -62,7 +61,6 @@ open Obend.Judge.VpaJson (JState JMode StrSub stepJson specRunJson specRunJson_a
 open Obend.Judge.Commit (cshakeHasher HashCollision hexOf unhex)
 open Obend.Judge (spanConfined spanConfined_run)
 set_option autoImplicit false
-
 instance byteArrayLawfulBEq : LawfulBEq ByteArray where
   eq_of_beq := by
     intro a b h
@@ -72,11 +70,9 @@ instance byteArrayLawfulBEq : LawfulBEq ByteArray where
     intro a
     change (a.data == a.data) = true
     exact beq_self_eq_true a.data
-
 /-! Canonical framing: unbounded LEB128 lengths, followed by exact byte fields. -/
 def encInt (n : Nat) : List UInt8 := leb128 n
 def encBytes (xs : List UInt8) : List UInt8 := encodeListField xs
-
 def decInt : List UInt8 → Option (Nat × List UInt8)
   | [] => none
   | b :: bs =>
@@ -84,7 +80,6 @@ def decInt : List UInt8 → Option (Nat × List UInt8)
     else match decInt bs with
       | none => none
       | some (n, rest) => some (b.toNat - 128 + 128 * n, rest)
-
 theorem decInt_leb128Aux (fuel n : Nat) (rest : List UInt8) (hn : n ≤ fuel) :
     decInt (leb128Aux fuel n ++ rest) = some (n, rest) := by
   induction fuel generalizing n with
@@ -107,16 +102,12 @@ theorem decInt_leb128Aux (fuel n : Nat) (rest : List UInt8) (hn : n ≤ fuel) :
       congr 1
       congr 1
       omega
-
 theorem decInt_encInt (n : Nat) (rest : List UInt8) :
     decInt (encInt n ++ rest) = some (n, rest) := decInt_leb128Aux n n rest (Nat.le_refl _)
-
 def encFields : List (List UInt8) → List UInt8
   | [] => []
   | x :: xs => encBytes x ++ encFields xs
-
 def encList (xs : List (List UInt8)) : List UInt8 := encInt xs.length ++ encFields xs
-
 def decFields : Nat → List UInt8 → Option (List (List UInt8) × List UInt8)
   | 0, bs => some ([], bs)
   | n + 1, bs =>
@@ -128,14 +119,12 @@ def decFields : Nat → List UInt8 → Option (List (List UInt8) × List UInt8)
         | none => none
         | some (fields, rest) => some (tail.take len :: fields, rest)
       else none
-
 def decList (bs : List UInt8) : Option (List (List UInt8)) :=
   match decInt bs with
   | none => none
   | some (n, tail) => match decFields n tail with
     | none => none
     | some (fields, rest) => if rest.isEmpty then some fields else none
-
 theorem decFields_encFields (xs : List (List UInt8)) (rest : List UInt8) :
     decFields xs.length (encFields xs ++ rest) = some (xs, rest) := by
   induction xs with
@@ -146,7 +135,6 @@ theorem decFields_encFields (xs : List (List UInt8)) (rest : List UInt8) :
     simp only [List.length_append]
     rw [ite_eq_left (by omega)]
     simp only [List.drop_left, List.take_left, ih]
-
 theorem decList_encList (xs : List (List UInt8)) : decList (encList xs) = some xs := by
   unfold decList encList
   rw [decInt_encInt]
@@ -155,24 +143,19 @@ theorem decList_encList (xs : List (List UInt8)) : decList (encList xs) = some x
   rw [List.append_nil] at h
   rw [h]
   rfl
-
 theorem encList_injective (xs ys : List (List UInt8)) (h : encList xs = encList ys) : xs = ys := by
   have he := congrArg decList h
   rw [decList_encList, decList_encList] at he
   exact Option.some.inj he
-
 theorem encInt_injective (n m : Nat) (h : encInt n = encInt m) : n = m := by
   have h1 := decInt_encInt n []
   have h2 := decInt_encInt m []
   simp only [List.append_nil] at h1 h2
   rw [h, h2] at h1
   exact (Prod.mk.inj (Option.some.inj h1)).1.symm
-
 abbrev Hash256 := { b : ByteArray // b.size = 32 }
-
 def hash256 (domain : String) (input : List UInt8) : Hash256 :=
   ⟨cshakeHasher.hash domain ⟨input.toArray⟩, cshakeHasher.size_eq _ _⟩
-
 theorem map_injective_of_injective {α β : Type} (f : α → β)
     (hf : ∀ a b, f a = f b → a = b) (as bs : List α) (h : as.map f = bs.map f) : as = bs := by
   induction as generalizing bs with
@@ -183,9 +166,7 @@ theorem map_injective_of_injective {α β : Type} (f : α → β)
     | cons b bs =>
       obtain ⟨hab, ht⟩ := List.cons.inj h
       rw [hf a b hab, ih bs ht]
-
 /-! ## Transcript views: committed spans, opened or masked -/
-
 /-- The public metadata of a session. -/
 structure SessionHeader where
   host : ByteArray
@@ -193,20 +174,17 @@ structure SessionHeader where
   time : Nat
   verifierNonce : ByteArray
   paymentIntentId : ByteArray
-
 /-- One span of a committed transcript as the verifier sees it. -/
 inductive SpanSlot where
   | opened (bytes : ByteArray) (siblings : List ByteArray)
   | masked (mask : ByteArray)
   deriving DecidableEq
-
 /-- The verifier's view of a transcript: the span root and one slot per span. Slot 0 is the HTTP
 head; the rest partition the JSON body. -/
 structure TranscriptView where
   root : SpanRoot
   slots : List SpanSlot
   deriving DecidableEq
-
 /-- The bytes a slot shows: the span, or its mask. -/
 def SpanSlot.shown : SpanSlot → List UInt8
   | .opened b _ => b.data.toList
@@ -1372,5 +1350,90 @@ theorem plantedCallTree_refused :
   bad := (plantedClaim, [])
   badGrade := 0
   bad_refused := plantedCallTree_refused
+
+/-! ## Public Transcript Scrubbing & Pinned Trusted Notary Set (`SB-P1-03`) -/
+
+def scrubDecoPolicy (dp : DecoPolicy) : DecoPolicy := { dp with sessionKeys := [] }
+def scrubCallTreePolicy (p : CallTreePolicy) : CallTreePolicy := { p with deco := scrubDecoPolicy p.deco }
+def scrubCallTreeClaim (q : CallTreeClaim) : CallTreeClaim := { q with policy := scrubCallTreePolicy q.policy }
+
+/-- Export a `CallTreeClaim` for public distribution after scrubbing secret `sessionKeys`. -/
+def exportPublicCallTreeTranscript (q : CallTreeClaim) : String :=
+  encodeCallTreeClaim (scrubCallTreeClaim q)
+
+/-- Decode a public transcript, failing closed if the wire payload carries any `sessionKeys`, if
+`pinnedNotaries` is empty, or if any wire notary falls outside `pinnedNotaries`. -/
+def decodePublicCallTreeTranscript (pinnedKeys : List (ByteArray × Tower128))
+    (pinnedNotaries : List ByteArray) (s : String) : Except String CallTreeClaim := do
+  if pinnedNotaries.isEmpty then
+    throw "deco-calltree@1: pinned trusted notary set must be non-empty"
+  let c ← decodeCallTreeClaim s
+  unless c.policy.deco.sessionKeys.isEmpty do
+    throw "deco-calltree@1: public transcript leaked non-empty sessionKeys"
+  unless c.policy.deco.notaries.all (fun n => decide (n ∈ pinnedNotaries)) do
+    throw "deco-calltree@1: claim policy cites notary outside pinned trusted set"
+  return { c with policy := { c.policy with deco :=
+    { c.policy.deco with sessionKeys := pinnedKeys, notaries := pinnedNotaries } } }
+
+/-- Verify a call tree against a non-empty pinned trusted notary set, refusing untrusted wire policies. -/
+def verifyPinnedCallTree (pinnedNotaries : List ByteArray) (p : CallTreePolicy) (tree : HttpsCallTree)
+    (expected : Hash256) (edges : List DataflowEdge) : Bool :=
+  !pinnedNotaries.isEmpty &&
+  p.deco.notaries.all (fun n => decide (n ∈ pinnedNotaries)) &&
+  callTreeVerify { p with deco := { p.deco with notaries := pinnedNotaries } } tree expected edges
+
+/-- **Session-Key Non-Interference on Public Export (`exportPublicCallTreeTranscript_scrubs_sessionKeys`)**:
+`scrubCallTreeClaim` clears `sessionKeys` to `[]` and produces identical public transcript bytes
+regardless of the verifier's secret GHASH key table. -/
+theorem exportPublicCallTreeTranscript_scrubs_sessionKeys (q : CallTreeClaim)
+    (ks₁ ks₂ : List (ByteArray × Tower128)) :
+    (scrubCallTreeClaim q).policy.deco.sessionKeys = [] ∧
+    exportPublicCallTreeTranscript
+      { q with policy := { q.policy with deco := { q.policy.deco with sessionKeys := ks₁ } } } =
+    exportPublicCallTreeTranscript
+      { q with policy := { q.policy with deco := { q.policy.deco with sessionKeys := ks₂ } } } :=
+  ⟨rfl, rfl⟩
+
+/-- **Fail-Closed Rejection of Key-Leaking Public Transcripts (`decodePublicCallTreeTranscript_rejects_keys`)**. -/
+theorem decodePublicCallTreeTranscript_rejects_keys
+    (pinnedKeys : List (ByteArray × Tower128)) (pinnedNotaries : List ByteArray)
+    (s : String) (c : CallTreeClaim)
+    (hDec : decodeCallTreeClaim s = .ok c) (hLeak : c.policy.deco.sessionKeys ≠ []) :
+    (decodePublicCallTreeTranscript pinnedKeys pinnedNotaries s).isOk = false := by
+  unfold decodePublicCallTreeTranscript
+  cases pinnedNotaries with
+  | nil => rfl
+  | cons _ _ =>
+    have hNe : c.policy.deco.sessionKeys.isEmpty = false := List.isEmpty_eq_false_iff.mpr hLeak
+    simp only [Bind.bind, Except.bind, hDec, hNe]
+    rfl
+
+private theorem checkDecoTrace_notaries (dp : DecoPolicy) :
+    ∀ (s : SessionLedger) (as : List DecoAttestation),
+      checkDecoTrace dp s as = true → ∀ a ∈ as, a.header.notary ∈ dp.notaries
+  | _, [], _, _, ha => by cases ha
+  | s, a :: as, h, x, hx => by
+    simp only [checkDecoTrace, Bool.and_eq_true, checkDecoAttestation, checkPolicy_iff] at h
+    rcases List.mem_cons.1 hx with rfl | hrest
+    · exact h.1.1.1.2.2.1
+    · exact checkDecoTrace_notaries dp (consume s a) as h.2 x hrest
+
+/-- **Pinned Trusted Notary Enforcement (`verifyPinnedCallTree_enforces_pinned_notaries`)**:
+every accepted pinned call tree has a non-empty `pinnedNotaries` set, restricts policy notaries to
+`pinnedNotaries`, and authenticates every attested HTTPS hop under a notary in `pinnedNotaries`. -/
+theorem verifyPinnedCallTree_enforces_pinned_notaries
+    (pinnedNotaries : List ByteArray) (p : CallTreePolicy) (tree : HttpsCallTree)
+    (expected : Hash256) (edges : List DataflowEdge)
+    (hv : verifyPinnedCallTree pinnedNotaries p tree expected edges = true) :
+    pinnedNotaries ≠ [] ∧
+    treeRoot tree = expected ∧
+    (∀ n ∈ p.deco.notaries, n ∈ pinnedNotaries) ∧
+    (∀ a ∈ treeAttestations tree, a.header.notary ∈ pinnedNotaries) ∧
+    (∀ e ∈ edges, DataflowMeaning (treeHops tree).toArray e) := by
+  simp only [verifyPinnedCallTree, callTreeVerify, Bool.and_eq_true, Bool.not_eq_true',
+    List.isEmpty_eq_false_iff, List.all_eq_true, decide_eq_true_eq] at hv
+  obtain ⟨⟨hNonEmpty, hSub⟩, ⟨⟨hRoot, _⟩, hTrace⟩, hEdges⟩ := hv
+  exact ⟨hNonEmpty, hRoot, hSub, checkDecoTrace_notaries _ p.ledger (treeAttestations tree) hTrace,
+    fun e he => (checkDataflowEdge_iff _ _).1 (hEdges e he)⟩
 
 end Obend.Judge.DecoAndCallTree
