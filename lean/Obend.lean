@@ -49,6 +49,7 @@ public import Obend.Law.AmendCli
 public import Obend.Doc
 public import Obend.Doc.ReactiveNotebook
 public import Obend.Doc.WorkbookEngine
+public import Obend.Doc.SemanticKG
 public import Obend.Elab.Work
 public import Obend.Elab.Prepare
 public import Obend.Elab.Coerce
@@ -154,8 +155,8 @@ public import Obend.Hardware.Compiler
 public import Obend.Hardware.Synth
 public import Obend.Hardware.Retiming
 public import Obend.Hardware.PlaceRoute
-public import Obend.Hardware.DRC
-public import Obend.Hardware.Analog
+public import Obend.Hardware.PlaneSweepDrcLvs
+public import Obend.Hardware.SmallSignalMna
 public import Obend.Hardware.Datasheet
 public import Obend.Hardware.Circuits
 public import Obend.Hardware.ThermalPassivity
@@ -167,8 +168,9 @@ public import Obend.Hardware.Photonics
 public import Obend.Hardware.PCB
 public import Obend.Hardware.ReductionMachine
 public import Obend.Hardware.Hvm
-public import Obend.Hardware.DSP
-public import Obend.Hardware.AgenticEDA
+public import Obend.Hardware.DigitalFilterAndArray
+public import Obend.Hardware.PinoutEquiv
+public import Obend.Hardware.OspcProver
 public import Obend.Hardware.Magnetics
 public import Obend.Hardware.CurrentLoop
 public import Obend.Hardware.Accelerators
@@ -218,6 +220,10 @@ public import Obend.Hardware.Gpu.Rdna2.DppShuffle
 public import Obend.Hardware.Gpu.SoacOptimize
 public import Obend.Hardware.Gpu.StencilTile
 public import Obend.Hardware.MultiDStencilTile
+public import Obend.Hardware.MultiDStencilGpuSource
+public import Obend.Hardware.MultiDStencilCorrect
+public import Obend.Hardware.BalanceLawLowering
+public import Obend.Hardware.PdeSolvers
 public import Obend.Hardware.Device.DriftDiffusion
 public import Obend.Leaf.Flatten
 public import Obend.Leaf.Emit
@@ -230,6 +236,7 @@ public import Obend.Leaf.BytecodeRegisterJit
 public import Obend.Logic.GuardedLob
 public import Obend.Logic.MultiTurnHoare
 public import Obend.Logic.SeparationFrame
+public import Obend.Logic.EnvHarness
 public import Obend.Equiv.ClairvoyantBook
 public import Obend.Paco.GPaco
 public import Obend.Lower.Transport
@@ -253,6 +260,9 @@ public import Obend.Analysis.Hybrid
 public import Obend.Analysis.HyperbolicPdeCert
 public import Obend.Analysis.PdeSexprAndApprox
 public import Obend.Analysis.NonlinearMultiDPde
+public import Obend.Analysis.HyperbolicBalanceLaws
+public import Obend.Analysis.NonlinearErrorTube
+public import Obend.Analysis.NonlinearPdeCli
 public import Obend.Analysis.SimplicialFeecFem
 public import Obend.Geometry.CochainAndGauge
 public import Obend.Geometry.DiracDoubleCat
@@ -305,7 +315,15 @@ public import Obend.Polis.VerifiableCredentials
 public import Obend.Polis.PrivatePredicate
 public import Obend.Polis.JointCoReceipt
 public import Obend.Polis.GrainCustodyHost
+public import Obend.Polis.HermesEnv
+public import Obend.Polis.DecentralizedRulesMesh
+public import Obend.Core.GradedCoreWeldDefs
+public import Obend.Core.GradedCoreWeld
 public import Obend.Core.GradedSessionMetatheory
+public import Obend.SemanticKG.Databank
+public import Obend.SemanticKG.SpanParse
+public import Obend.SemanticKG.HypergraphChase
+public import Obend.SemanticKG.SemanticCert
 public import Obend.OS.Sel4MicrokitKernelCore
 public import Obend.OS.Sel4MicrokitKernel
 public import Obend.SymbolicZk.SemiringDatalog
