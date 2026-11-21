@@ -22,7 +22,7 @@ spec OuterJacketStator for PhysicalStator:
     50n + copperLossKw * self.thermalResistance
   def camSurfaceErrorUm(feedMmPerSec: Nat) -> Nat:
     feedMmPerSec * 4n
-  claim peak_temp_open_recursion(copperLossKw: Nat): self.peakWindingTemp(copperLossKw) == 50n + copperLossKw * self.thermalResistance
+  claim peak_temp_open_recursion(copperLossKw: Nat): self.peakWindingTemp(copperLossKw + 1n) == self.peakWindingTemp(copperLossKw) + self.thermalResistance
 
 spec LcDrivesInSlotUpgrade for PhysicalStator:
   requires sdfMargin(radialClearanceMm: Nat) -> Nat

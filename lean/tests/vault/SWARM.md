@@ -386,13 +386,14 @@ obend open | grep 'machines/hbox' | python3 "$OBEND_ROOT/lean/tests/vault/swarm/
 machines/hbox: refused by lanes/_kind: reachable (a law over lanes/lane-certcheap's links, of which machines/hbox is one): `linked.unreachable == 0` does not hold; the line `unreachable: 0` would pass (the page has `unreachable: 1`)
 ```
 
-Pages that link each other under laws over links are born together. At 18:39Z bb2 held a live job of
-lane-holetyping and two of lane-cost, each with its PID file (`observations/bb2-jobs.txt`); in the
-vault each lane page says `job: running` and builds on `[[machines/bb2]]`, and bb2 lists both lanes
-under its `pidfile` law. Written at once, as a fresh copy of that vault is, the lanes kind's laws over
-links need bb2's version and bb2's law needs the lanes'. Each birth alone is refused; the births an
-open refused are judged again as one turn, each by its laws on the tip of all of them, and land at
-once. (Until 2026-11-06 none was born, and the refusal named no law.)
+At 18:39Z bb2 ran one job for lane-holetyping and two for lane-cost, each with a PID file
+(`observations/bb2-jobs.txt`). Both lane pages say `job: running` and link to `[[machines/bb2]]`.
+The machine page links back to both lanes under its `pidfile` law.
+
+In a fresh vault, each lane needs a version of the machine page to check its links, and the
+machine needs a version of each lane to check its own. Each page fails that check on its own.
+When `obend open` retries the three births as one turn, each law can read the proposed
+versions of its linked pages. All three pages land together.
 
 ```sh
 cp -R "$OBEND_ROOT/lean/tests/vault/swarm" jobs && cd jobs && cp lanes/lane-cost.md ../cost.md && cp lanes/lane-holetyping.md ../holetyping.md
