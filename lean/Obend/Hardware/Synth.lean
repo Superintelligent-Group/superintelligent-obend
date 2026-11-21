@@ -801,7 +801,7 @@ theorem barrelStage_step (dir : ShiftDir) (acc bitIdx dist : Nat) (a b : BitVec 
     simp only [↓reduceIte]
     exact evalShiftRoute_compose dir acc dist a
 
-private theorem getLsbD_val (b : BitVec 64) (k d : Nat) (_hk : k < 64) :
+private theorem getLsbD_val (b : BitVec 64) (k d : Nat) :
     (if b.getLsbD k then d else 0) = ((b.toNat / 2 ^ k) % 2) * d := by
   simp only [BitVec.getLsbD, Nat.testBit, Nat.shiftRight_eq_div_pow]
   rw [Nat.and_comm 1 _, Nat.and_one_is_mod]
@@ -817,12 +817,12 @@ theorem bitVec_low6_sum (b : BitVec 64) :
     (if b.getLsbD 3 then 8 else 0) +
     (if b.getLsbD 4 then 16 else 0) +
     (if b.getLsbD 5 then 32 else 0) = b.toNat % 64 := by
-  rw [getLsbD_val b 0 1 (by decide),
-      getLsbD_val b 1 2 (by decide),
-      getLsbD_val b 2 4 (by decide),
-      getLsbD_val b 3 8 (by decide),
-      getLsbD_val b 4 16 (by decide),
-      getLsbD_val b 5 32 (by decide)]
+  rw [getLsbD_val b 0 1,
+      getLsbD_val b 1 2,
+      getLsbD_val b 2 4,
+      getLsbD_val b 3 8,
+      getLsbD_val b 4 16,
+      getLsbD_val b 5 32]
   omega
 
 /-- **Universal 6-Stage Barrel-Shifter Equivalence (`barrelShift6_eq_shift_mod64`)**:

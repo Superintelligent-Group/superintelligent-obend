@@ -109,15 +109,11 @@ def lowerConstZero (_ : LExpr) : Term := .nat 0
 -- 2. The same broken `lowerT` is also caught by converse simulation (`lower_complete_nat`).
 #tooth Obend.Lower.lower_complete_nat by mutation Obend.Lower.lowerT := lowerConstZero
 
-/-- 3. Broken bidirectional checker `checkL` that accepts every `(Γ, e, T)`. -/
-def checkLAlwaysTrue (_ : List Ty) (_ : LExpr) (_ : Ty) : Bool := true
+-- 3. Broken bidirectional checker `checkL` that accepts every `(Γ, e, T)`.
+#tooth Obend.Lower.checkL_sound by mutation Obend.Lower.checkL := fun _ _ _ => true
 
-#tooth Obend.Lower.checkL_sound by mutation Obend.Lower.checkL := checkLAlwaysTrue
-
-/-- 4. Broken `lower@1` judge that accepts every certificate without checking `termEq` or `digest`. -/
-def checkLowerAcceptAll (_ : Nat) (_ : LExpr) (_ : Cert) : Obend.Judge.Verdict Clause := .ok
-
-#tooth Obend.Lower.bad_refused by mutation Obend.Lower.check := checkLowerAcceptAll
+-- 4. Broken `lower@1` judge that accepts every certificate without checking `termEq` or `digest`.
+#tooth Obend.Lower.bad_refused by mutation Obend.Lower.check := fun _ _ _ => .ok
 
 /-- 5. Broken `transport@1` judge that accepts every certificate. -/
 def transportCheckAcceptAll (_ : Nat) (_ : TransportObj) (_ : TransportCert) :
@@ -168,10 +164,8 @@ def compileTermSatRefuseBox
 
 #tooth Obend.Lower.saturating_accepts_erased by mutation Obend.Hardware.Compiler.compileTermSat := compileTermSatRefuseBox
 
-/-- 10. Broken `checkL` that refuses every expression (`false`), caught by `checkL_complete`. -/
-def checkLAlwaysFalse (_ : List Ty) (_ : LExpr) (_ : Ty) : Bool := false
-
-#tooth Obend.Lower.checkL_complete by mutation Obend.Lower.checkL := checkLAlwaysFalse
+-- 10. Broken `checkL` that refuses every expression (`false`), caught by `checkL_complete`.
+#tooth Obend.Lower.checkL_complete by mutation Obend.Lower.checkL := fun _ _ _ => false
 
 /-- 11. Broken `betaRecordPass` that drops the term to `.nat 0`, caught by `ahead_betaRecordPass`. -/
 def betaRecordPassConstZero (_ : Term) : Term := .nat 0

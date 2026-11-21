@@ -1161,6 +1161,8 @@ theorem unlisted_unchanged (q : Question V) {ls : List (Line Fact)} (hm : Meanin
 
 /-- Why an affected list is refused. -/
 inductive Clause where
+  /-- the question lists two dependents with the same name -/
+  | duplicateDep (dep : String)
   /-- the line names no dependent of the question -/
   | notIndexed (dep : String)
   /-- the line's support is not one the dependent reads, or does not name the moved cell -/
@@ -1171,6 +1173,25 @@ inductive Clause where
   | missing (dep : String)
   deriving DecidableEq, Repr
 
+/-- Return the first duplicate dependent name in a list, or `none` if all names are distinct. -/
+def findDuplicateDepName? : List String → Option String
+  | [] => none
+  | x :: xs => if xs.contains x then some x else findDuplicateDepName? xs
+
+theorem findDuplicateDepName?_eq_none_iff_nodup (ns : List String) :
+    findDuplicateDepName? ns = none ↔ ns.Nodup := by
+  induction ns with
+  | nil => simp [findDuplicateDepName?]
+  | cons x xs ih =>
+    simp only [findDuplicateDepName?, List.nodup_cons]
+    by_cases hMem : xs.contains x = true
+    · simp only [hMem, ↓reduceIte, reduceCtorEq, false_iff, not_and]
+      intro hNotMem _
+      exact hNotMem (List.contains_iff_mem.mp hMem)
+    · simp only [hMem, Bool.false_eq_true, ↓reduceIte, ih]
+      have hNotMem : x ∉ xs := fun hx => hMem (List.contains_iff_mem.mpr hx)
+      exact ⟨fun h => ⟨hNotMem, h⟩, fun h => h.2⟩
+
 /-- The clause a failing line is refused by. -/
 def clauseOf (q : Question V) (l : Line Fact) : Clause :=
   if (q.deps.any fun d => d.name == l.dep) then
@@ -1178,64 +1199,123 @@ def clauseOf (q : Question V) (l : Line Fact) : Clause :=
     then .wrongOpening l.dep else .doesNotRead l.dep
   else .notIndexed l.dep
 
-/-- **The checker**: every line holds; then every dependent that changes is listed. -/
+/-- **The checker**: first verify dependent names are unique; then every line holds; then every
+dependent that changes is listed. -/
 def check (_ : Nat) (q : Question V) (ls : List (Line Fact)) : Judge.Verdict Clause :=
-  match ls.find? (fun l => !decide (LineHolds q l)) with
-  | some l => .refused (clauseOf q l) [ls.findIdx (fun l => !decide (LineHolds q l))]
+  match findDuplicateDepName? (q.deps.map Dep.name) with
+  | some dName => .refused (.duplicateDep dName) []
   | none =>
-    match q.deps.find? (fun d => decide (Changes q d) && !ls.any (·.dep == d.name)) with
-    | some d => .refused (.missing d.name) []
-    | none => .ok
+    match ls.find? (fun l => !decide (LineHolds q l)) with
+    | some l => .refused (clauseOf q l) [ls.findIdx (fun l => !decide (LineHolds q l))]
+    | none =>
+      match q.deps.find? (fun d => decide (Changes q d) && !ls.any (·.dep == d.name)) with
+      | some d => .refused (.missing d.name) []
+      | none => .ok
+
+theorem check_nodup {r : Nat} {q : Question V} {ls : List (Line Fact)} (h : check r q ls = .ok) :
+    (q.deps.map Dep.name).Nodup := by
+  unfold check at h
+  cases hDup : findDuplicateDepName? (q.deps.map Dep.name) with
+  | some _ => rw [hDup] at h; cases h
+  | none => exact (findDuplicateDepName?_eq_none_iff_nodup _).mp hDup
 
 theorem check_sound {r : Nat} {q : Question V} {ls : List (Line Fact)} (h : check r q ls = .ok) :
     Meaning q ls := by
   unfold check at h
-  cases h1 : ls.find? (fun l => !decide (LineHolds q l)) with
-  | some e => rw [h1] at h; cases h
+  cases hDup : findDuplicateDepName? (q.deps.map Dep.name) with
+  | some _ => rw [hDup] at h; cases h
   | none =>
-    rw [h1] at h
+    rw [hDup] at h
     simp only at h
-    cases h2 : q.deps.find? (fun d => decide (Changes q d) && !ls.any (·.dep == d.name)) with
-    | some d => rw [h2] at h; cases h
+    cases h1 : ls.find? (fun l => !decide (LineHolds q l)) with
+    | some e => rw [h1] at h; cases h
     | none =>
-      constructor
-      · intro l hl
-        have := List.find?_eq_none.1 h1 l hl
-        simpa using this
-      · intro d hd hc
-        have := List.find?_eq_none.1 h2 d hd
-        simp only [hc, decide_true, Bool.true_and, Bool.not_eq_eq_eq_not, Bool.not_true] at this
-        simpa [List.any_eq_true] using this
+      rw [h1] at h
+      simp only at h
+      cases h2 : q.deps.find? (fun d => decide (Changes q d) && !ls.any (·.dep == d.name)) with
+      | some d => rw [h2] at h; cases h
+      | none =>
+        constructor
+        · intro l hl
+          have := List.find?_eq_none.1 h1 l hl
+          simpa using this
+        · intro d hd hc
+          have := List.find?_eq_none.1 h2 d hd
+          simp only [hc, decide_true, Bool.true_and, Bool.not_eq_eq_eq_not, Bool.not_true] at this
+          simpa [List.any_eq_true] using this
 
-theorem check_complete {r : Nat} {q : Question V} {ls : List (Line Fact)} (h : Meaning q ls) :
+/-- **Judge-level meaning**: dependent names in `q.deps` are unique and `Meaning q ls` holds. -/
+def ImpactJudgeMeaning (q : Question V) (ls : List (Line Fact)) : Prop :=
+  (q.deps.map Dep.name).Nodup ∧ Meaning q ls
+
+/-- Refuting clauses of `impactJudge`: a duplicate dependent name refutes the question itself. -/
+def impactRefutes : Clause → Bool
+  | .duplicateDep _ => true
+  | _ => false
+
+theorem check_complete {r : Nat} {q : Question V} {ls : List (Line Fact)} (h : ImpactJudgeMeaning q ls) :
     check r q ls = .ok := by
   unfold check
+  have hDup : findDuplicateDepName? (q.deps.map Dep.name) = none :=
+    (findDuplicateDepName?_eq_none_iff_nodup _).mpr h.1
   have h1 : ls.find? (fun l => !decide (LineHolds q l)) = none := by
     apply List.find?_eq_none.2
     intro l hl
-    simp [h.1 _ hl]
+    simp [h.2.1 _ hl]
   have h2 : q.deps.find? (fun d => decide (Changes q d) && !ls.any (·.dep == d.name)) = none := by
     apply List.find?_eq_none.2
     intro d hd
     by_cases hc : Changes q d
-    · obtain ⟨l, hl, he⟩ := h.2 d hd hc
+    · obtain ⟨l, hl, he⟩ := h.2.2 d hd hc
       have hany : ls.any (·.dep == d.name) = true := List.any_eq_true.2 ⟨l, hl, by simp [he]⟩
       simp [hc, hany]
     · simp [hc]
-  rw [h1, h2]
+  rw [hDup, h1, h2]
+
+theorem check_refuted {r : Nat} {q : Question V} {ls : List (Line Fact)}
+    {k : Clause} {p : List Nat}
+    (hRef : check r q ls = .refused k p)
+    (hRefutes : impactRefutes k = true) :
+    ∀ ls', ¬ ImpactJudgeMeaning q ls' := by
+  intro ls' hm
+  have hDupNone : findDuplicateDepName? (q.deps.map Dep.name) = none :=
+    (findDuplicateDepName?_eq_none_iff_nodup _).mpr hm.1
+  unfold check at hRef
+  rw [hDupNone] at hRef
+  cases h1 : ls.find? (fun l => !decide (LineHolds q l)) with
+  | some l =>
+    rw [h1] at hRef
+    cases hRef
+    unfold clauseOf at hRefutes
+    split at hRefutes
+    · split at hRefutes <;> simp [impactRefutes] at hRefutes
+    · simp [impactRefutes] at hRefutes
+  | none =>
+    rw [h1] at hRef
+    cases h2 : q.deps.find? (fun d => decide (Changes q d) && !ls.any (·.dep == d.name)) with
+    | some d =>
+      rw [h2] at hRef
+      cases hRef
+      simp [impactRefutes] at hRefutes
+    | none =>
+      rw [h2] at hRef
+      cases hRef
 
 /-- **The impact analysis as a judge**: the certificate is the affected list with its openings;
-decidable, complete everywhere (the producer's list is accepted, `affected_exact`); it never
-refutes the question (a bad list says nothing of the move). -/
+decidable, complete on all questions with unique dependent names (`affected_exact`), and refuting
+duplicate-dependent questions via `.duplicateDep`. -/
 instance impactJudge : Judge (Question V) (List (Line Fact)) where
   Clause := Clause
-  Meaning := Meaning
+  Meaning := ImpactJudgeMeaning
   check := check
-  sound := check_sound
-  refutes _ := false
-  refuted := by intro _ _ _ _ _ _ hk; cases hk
+  sound := by intro _ _ _ h; exact And.intro (check_nodup h) (check_sound h)
+  refutes := impactRefutes
+  refuted := check_refuted
   Fragment _ := True
-  complete := fun {q} _ _ => ⟨affected q, 0, check_complete (affected_exact q)⟩
+  complete := by
+    intro q _ ⟨_, hm⟩
+    unfold ImpactJudgeMeaning at hm
+    exact ⟨affected q, 0, check_complete (And.intro hm.1 (affected_exact q))⟩
   mono := by intro r r' o c _ _; rfl
 
 end

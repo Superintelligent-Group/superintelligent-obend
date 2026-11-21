@@ -193,7 +193,7 @@ def tutorial():
 
 # ---------------------------------------------------------------- preview cohort (check-preview.ts)
 
-LIMITS = {"ticks": "100000", "heap": "100000", "stack": "10000", "checkWork": "57755"}
+LIMITS = {"ticks": "100000", "heap": "100000", "stack": "10000", "checkWork": "61047"}
 
 
 def sha256_file(path):

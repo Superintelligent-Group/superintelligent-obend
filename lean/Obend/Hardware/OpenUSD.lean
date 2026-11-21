@@ -464,10 +464,10 @@ theorem affine3d_fromInterval_enclosesAt (iv : FloatInterval) (ex ey ez v : Int)
     Int.toNat_of_nonneg (by omega)
   omega
 
-/-- Symmetric product bound: if `-r1 ≤ x ≤ r1` and `-r2 ≤ y ≤ r2` with `0 ≤ r1, 0 ≤ r2`,
+/-- Symmetric product bound: if `-r1 ≤ x ≤ r1` and `-r2 ≤ y ≤ r2` with `0 ≤ r2`,
 then `-(r1 * r2) ≤ x * y ∧ x * y ≤ r1 * r2`. -/
 theorem int_abs_mul_bound (x y r1 r2 : Int)
-    (_hr1 : 0 ≤ r1) (hr2 : 0 ≤ r2)
+    (hr2 : 0 ≤ r2)
     (hx : -r1 ≤ x ∧ x ≤ r1) (hy : -r2 ≤ y ∧ y ≤ r2) :
     -(r1 * r2) ≤ x * y ∧ x * y ≤ r1 * r2 := by
   by_cases hxPos : 0 ≤ x
@@ -545,11 +545,11 @@ theorem affine3d_mul_enclosesAt
   have hEb : -Int.ofNat b.err ≤ vb - b.linearEval ex ey ez ∧ vb - b.linearEval ex ey ez ≤ Int.ofNat b.err := by
     unfold AffineForm3D.enclosesAt at hb
     omega
-  have hProd1 := int_abs_mul_bound (va - a.c0) (vb - b.c0) a.radius b.radius hRadA hRadB hDa hDb
+  have hProd1 := int_abs_mul_bound (va - a.c0) (vb - b.c0) a.radius b.radius hRadB hDa hDb
   have hProd2 := int_abs_mul_bound b.c0 (va - a.linearEval ex ey ez) (intAbs b.c0) (Int.ofNat a.err)
-    hAbsB0.1 hErrA (by omega) hEa
+    hErrA (by omega) hEa
   have hProd3 := int_abs_mul_bound a.c0 (vb - b.linearEval ex ey ez) (intAbs a.c0) (Int.ofNat b.err)
-    hAbsA0.1 hErrB (by omega) hEb
+    hErrB (by omega) hEb
   have hNonneg1 := int_mul_nonneg a.radius b.radius hRadA hRadB
   have hNonneg2 := int_mul_nonneg (intAbs b.c0) (Int.ofNat a.err) hAbsB0.1 hErrA
   have hNonneg3 := int_mul_nonneg (intAbs a.c0) (Int.ofNat b.err) hAbsA0.1 hErrB

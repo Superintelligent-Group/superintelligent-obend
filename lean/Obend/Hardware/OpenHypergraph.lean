@@ -571,13 +571,13 @@ def goldenDiamondHypergraph : StrictOpenHypergraph :=
     , { opIdx := 3, op := .const 10, srcWires := [],     dstWire := 7 }
     , { opIdx := 4, op := .add,      srcWires := [6, 7], dstWire := 8 } ]
 
-/-- Theorem (`golden_diamond_hypergraph_wavefronts_verified`):
+/-- Example:
 Verifies that `goldenDiamondHypergraph` is well-formed (`wf = true`), that `layerHypergraph`
 packs the independent additions (`op 0` and `op 1`) plus constant load (`op 3`) into earlier parallel
 wavefronts across 3 synchronous pipeline stages (`[2, 2, 1]` ops per stage), and that
 `evalHypergraphLayered`, `evalHypergraphLayeredSync`, and `evalHypergraphComb` all evaluate
 $(3 + 4) \cdot (5 + 6) + 10 = 87$. -/
-theorem golden_diamond_hypergraph_wavefronts_verified :
+example :
     let initEnv : Nat → Int := fun w =>
       match w with | 0 => 3 | 1 => 4 | 2 => 5 | 3 => 6 | _ => 0
     goldenDiamondHypergraph.wf = true ∧
@@ -849,14 +849,14 @@ theorem optic_comp_chain_rule_sound (op1 op2 : OpticOp) (x y : Int) :
           rw [← Int.mul_assoc du_dy c y, Int.mul_comm du_dy c, Int.mul_assoc c du_dy y]
         rw [hComm]
 
-/-- **Theorem (`golden_optic_ad_and_empty_hypergraph_verified`)**:
+/-- **Example**:
 1. Verifies the empty-hypergraph boundary case (`ops = []`): `layerHypergraph` produces `[]` stages
    and `evalHypergraphLayered` passes open input wires straight to open output ports,
 2. Verifies `catgrad` 2-stage Optic AD on $L(x, y) = (3x + y) \cdot y$ at $(x, y) = (4, 5)$, confirming
    primal $L(4, 5) = 85$ and exact analytical partial derivatives
    $\left(\frac{\partial L}{\partial x}, \frac{\partial L}{\partial y}\right) = (3y,\; 3x + 2y) = (15, 22)$
    with zero dynamic tape allocation. -/
-theorem golden_optic_ad_and_empty_hypergraph_verified :
+example :
     let emptyG := mkStrictOpenHypergraph 2 [0, 1] [1, 0] []
     let initEnv : Nat → Int := fun w => if w == 0 then 11 else 29
     let (z, res) := evalOpticChain2Fwd (.linearMac 3) .mul 4 5

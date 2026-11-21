@@ -556,9 +556,18 @@ def customAnisotropicSosCert : SosLyapunovCert where
   cbfWitness      := goldenCbfWitness2D
   daeWitness      := goldenCircleDaeWitness
 
-theorem test_customAnisotropic_sos_semantic_sound :
-    customAnisotropicSosProblem.SemanticMeaning :=
+example : customAnisotropicSosProblem.SemanticMeaning :=
   checkSosLyapunovProblem_sound 0 customAnisotropicSosProblem customAnisotropicSosCert (by decide +kernel)
+
+#guard
+  let validCert : PositivstellensatzCert :=
+    { monoidIndices := []
+    , sigma0        := ⟨[]⟩
+    , coneTerms     := [(⟨[(1, Poly.one)]⟩, 0)]
+    , idealTerms    := [(Poly.one, 0)] }
+  (positivstellensatzCheck 0 { strictPos := [], nonneg := [], eqs := [] } validCert ==
+    .refused .feasibleAtOrigin []) &&
+  positivstellensatzRefutes .feasibleAtOrigin
 
 #guard
   let probJson := renderSosLyapunovProblemJson customAnisotropicSosProblem

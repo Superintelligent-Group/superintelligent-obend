@@ -1280,7 +1280,8 @@ def gqa2GroupQuotient : Nat → Nat → Int
    `checkWl1ColorRefinementStable` (`= false`), and exhibits a strictly positive irreducible
    residual floor `evalEquitableResidualNormSq = 8 > 0`. -/
 -- fixture kept (2026-11-04): the path-3 partition is equitable and WL-stable: the worked instance the Bachman-Tamon theorem is read against
-theorem equitable_partition_and_residual_floor_sound :
+theorem equitable_partition_and_residual_floor_sound
+    (coeffs : List Int) (w : Nat → Int) :
     path3Matrix.isSymmetric = true ∧
     checkEquitablePartition path3Matrix 2 path3Part path3Quotient = true ∧
     checkWl1ColorRefinementStable path3Matrix 2 path3Part = true ∧
@@ -1291,8 +1292,17 @@ theorem equitable_partition_and_residual_floor_sound :
     evalEquitableResidualNormSq gqaTiedOperator 2 gqa2GroupPart gqa2GroupQuotient = 0 ∧
     checkEquitablePartition gqaUntiedOperator 2 gqa2GroupPart gqa2GroupQuotient = false ∧
     checkWl1ColorRefinementStable gqaUntiedOperator 2 gqa2GroupPart = false ∧
-    evalEquitableResidualNormSq gqaUntiedOperator 2 gqa2GroupPart gqa2GroupQuotient = 8 := by
-  decide +kernel
+    evalEquitableResidualNormSq gqaUntiedOperator 2 gqa2GroupPart gqa2GroupQuotient = 8 ∧
+    evalMatrixPoly (matVec (List.range 3) path3Matrix.entry) coeffs (liftVec path3Part w) 0 =
+      liftVec path3Part (evalMatrixPoly (quotientMatVec path3Quotient (List.range 2)) coeffs w) 0 ∧
+    evalMatrixPoly (matVec (List.range 4) gqaTiedOperator.entry) coeffs (liftVec gqa2GroupPart w) 0 =
+      liftVec gqa2GroupPart (evalMatrixPoly (quotientMatVec gqa2GroupQuotient (List.range 2)) coeffs w) 0 := by
+  have hP3 : checkEquitablePartition path3Matrix 2 path3Part path3Quotient = true := by decide +kernel
+  have hGqa : checkEquitablePartition gqaTiedOperator 2 gqa2GroupPart gqa2GroupQuotient = true := by decide +kernel
+  refine ⟨by decide +kernel, hP3, by decide +kernel, by decide +kernel, by decide +kernel,
+    hGqa, by decide +kernel, by decide +kernel, by decide +kernel, by decide +kernel, by decide +kernel,
+    (equitable_intertwining_poly_unpartitioned path3Matrix 2 path3Part path3Quotient coeffs w 0 hP3 (by decide)).1,
+    (equitable_intertwining_poly_unpartitioned gqaTiedOperator 2 gqa2GroupPart gqa2GroupQuotient coeffs w 0 hGqa (by decide)).1⟩
 
 /-! ## 8. Block-Equitable Partitions & $d \times d$ Spinor Block Intertwining (`checkBlockEquitablePartition`, `block_equitable_intertwining_poly`) -/
 
