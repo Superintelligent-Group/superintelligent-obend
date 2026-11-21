@@ -23,8 +23,7 @@ import Obend.Polis.GrainCustodyHost
 import Obend.Crypto.DarkBazaar
 import Obend.Crypto.ThresholdHashMpc
 import Obend.Crypto.PqHashSignatures
-import Obend.Analysis.HyperbolicPdeCert
-import Obend.Analysis.PdeSexprAndApprox
+import Obend.Analysis.NonlinearPdeCli
 import Obend.FFI.Bridge
 import Obend.FFI.BridgeTypes
 import Obend.Doc.WorkbookEngine
@@ -934,43 +933,9 @@ open Obend.Law.AmendCli Obend.Law.PointwiseRevise in
     |>.setObjVal! "receipts" (.arr rows) |>.setObjVal! "generations" (toJson st.generations)
     |>.setObjVal! "transferred" (toJson st.transferred)
   finish args ok summary
-def rat (j : Json) : Except String Rat := do
-  if let .ok n := j.getInt? then return n
-  let n ← j.getObjValAs? Int "num"
-  let d ← nat j "den"
-  if d == 0 then throw "zero rational denominator"
-  return (n : Rat) / (d : Rat)
-def ratJson (q : Rat) : Json := Json.mkObj [("num", toJson q.num), ("den", toJson q.den)]
-def matrix (j : Json) : Except String (List (List Rat)) := do
-  (← j.getArr?).toList.mapM fun r => do (← r.getArr?).toList.mapM rat
-def matrixJson (m : List (List Rat)) : Json := .arr (m.toArray.map fun r => .arr (r.toArray.map ratJson))
-open Obend.Analysis.HyperbolicPde Obend.Analysis.PdeSexprAndApprox in
- def pde (solve : Bool) (j : Json) (args : List String) : IO UInt32 := do
-  let fmt ← decodeIO (text j "format")
-  if fmt != "hyperbolic-fvm@1" && fmt != "pde-approx-defect@1" then throw (IO.userError "unknown PDE format")
-  let o ← decodeIO (field j "system" >>= fun x => decodeHyperbolicFvmObj x.compress)
-  let c ← decodeIO (field j "certificate" >>= fun x => decodeHyperbolicFvmCert x.compress)
-  if check o c != .ok then return ← finish args false (verdict false "geometry/CFL/conservation")
-  let initial ← decodeIO (field j "initial" >>= matrix)
-  let steps ← decodeIO (nat j "steps")
-  if steps > 10000 || initial.isEmpty || initial.any (fun r => r.length != o.dim) then
-    return ← finish args false (verdict false "grid shape or step limit")
-  let exact := fun k => (List.range initial.length).map fun i => (List.range o.dim).map fun d =>
-    rusanovRun o.dim o.jacobian o.aMax o.cfl initial.length k (listGrid initial) i d
-  if solve then
-    let trajectory := (List.range (steps + 1)).map exact
-    let out := j.setObjVal! "trajectory" (.arr (trajectory.toArray.map matrixJson))
-    return ← finish args true (out.setObjVal! "status" (toJson "accepted"))
-  let trajectory ← decodeIO (do (← (← field j "trajectory").getArr?).toList.mapM matrix)
-  if fmt == "hyperbolic-fvm@1" then
-    let ok := trajectory == (List.range (steps + 1)).map exact
-    finish args ok (verdict ok "exact Rusanov trajectory residual")
-  else
-    let eta ← decodeIO (field j "eta" >>= rat)
-    let tolerance ← decodeIO (field j "tolerance" >>= rat)
-    let q : ApproxQuery := ⟨o, c, initial.length, steps, eta, tolerance, initial, trajectory⟩
-    let ok := checkApprox q == .ok
-    finish args ok ((verdict ok "a posteriori defect tube").setObjVal! "tube" (ratJson q.tube))
+def rat (j : Json) : Except String Rat := Obend.Analysis.NonlinearPdeCli.rat j
+def pde (solve : Bool) (j : Json) (args : List String) : IO UInt32 :=
+  Obend.Analysis.NonlinearPdeCli.runPdeCli solve j args
 open Obend.Crypto.PqHashSignatures
 instance : ToJson UInt8 := ⟨fun b => toJson b.toNat⟩
 instance : FromJson UInt8 := ⟨fun j => do
@@ -1335,7 +1300,7 @@ def subUsage (cmd : String) : String := "usage: obend " ++ cmd ++ " " ++ match c
   | "custody" => "init DIR [--grain-id N] [--epoch N] | prepare DIR [--next-epoch N] | reopen DIR | event DIR crash|restart|settle [PERIOD]"
   | "mpc" => "sign INPUT [--out FILE] | verify SIGNATURE"
   | "bazaar" => "clear INPUT [--zk-receipt RECEIPT.cbor --root-secret KEY.bin] [--out FILE] (replay state: INPUT.state.json)"
-  | "pde" => "check INPUT | solve INPUT [--out CERT]"
+  | "pde" => "check INPUT [--out CERT] | solve INPUT [--out CERT] [--emit-wgsl DIR] [--emit-sv FILE] [--emit-lec FILE]"
   | "notebook" => "eval INPUT [--out STATE] | project STATE --viewer N [--salt N] [--out REDACTED] | verify REDACTED [--out VERDICT]"
   | "run" | "run-core" => "FILE [ENTRY] [--jit|--jit=cc] [--emit-c99 FILE]"
   | _ => "(see obend --help)"
