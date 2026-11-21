@@ -19,6 +19,13 @@ faulty; certificate: the trace) and the registered format is `simplex-trace@1`, 
 (the witness wire every other format uses). `explain` renders the clause so the session's
 refusal says which message, which node and, for an equivocation, which receipt.
 
+That judge cannot refute: its claim is "some trace of `P` is reachable", and the empty trace always
+is (`protocol_always_admits_empty_trace`), so no clause of it is refuting (`simplexProtocolRefutes`,
+`simplexProtocolRefutes_exact`). The refusal still has content about the trace it was given:
+`traceVerdict_refutes_trace` (a refused trace is not reachable). The judge whose object is the
+run itself, `simplexRunJudge` over `(P, tr)`, states that as its `refuted` law: every clause
+refutes, and the check is complete on every run.
+
 Views and node ids are `Nat`. No signatures: the trace's sender field is taken as the signer,
 as in the relation.
 -/
@@ -175,7 +182,7 @@ theorem checkStep_sound {P : Protocol} {sent : Sent} {m : Msg}
   simp only at h
   by_cases hf : P.faulty n = true
   · exact Step.inject sent ⟨n, v, k, t⟩ hf
-  · rw [if_neg hf] at h
+  · rw [ite_eq_right hf] at h
     have hf' : P.faulty n = false := by cases hpf : P.faulty n <;> simp_all
     by_cases hc : P.committee.contains n = true
     · rw [hc] at h
@@ -275,10 +282,6 @@ theorem checkStep_equivocation_checks {P : Protocol} {sent : Sent} {m : Msg} {r 
     | .ok () => checkTraceAux P (m :: sent) rest
     | .error k => .error k
 
-/-- Check a trace, oldest message first. -/
-@[expose] def checkTrace (P : Protocol) (tr : List Msg) : Except TraceClause Unit :=
-  checkTraceAux P [] tr
-
 theorem checkTraceAux_sound (P : Protocol) :
     ∀ (tr : List Msg) (sent : Sent), Reach P sent → checkTraceAux P sent tr = .ok () →
       Reach P (tr.reverse ++ sent)
@@ -293,9 +296,255 @@ theorem checkTraceAux_sound (P : Protocol) :
       simpa [List.reverse_cons, List.append_assoc] using ih
     | error k => simp only [checkTraceAux, hc] at h; cases h
 
+open Obend.Receipt.Merkle (leb128 leb128_injective encodeFields encodeFields_injective)
+def encodeEntryBytes : Entry → List UInt8
+  | .dummy v => encodeFields [[0],leb128 v]
+  | .block v p => encodeFields [[1],leb128 v,leb128 p]
+private theorem encodeEntryBytes_injective {a b : Entry} (h : encodeEntryBytes a = encodeEntryBytes b) : a = b := by
+  cases a <;> cases b <;> simp only [encodeEntryBytes] at h <;>
+    have hh := encodeFields_injective _ _ h <;> simp only [List.cons.injEq] at hh
+  · rw [leb128_injective hh.2.1,leb128_injective hh.2.2.1]
+  · exact False.elim ((show (1 : UInt8) ≠ 0 from by decide) hh.1.1)
+  · exact False.elim ((show (0 : UInt8) ≠ 1 from by decide) hh.1.1)
+  · exact congrArg Entry.dummy (leb128_injective hh.2.1)
+private theorem encodeChainBytes_injective (a b : Chain)
+    (h : a.map encodeEntryBytes = b.map encodeEntryBytes) : a = b := by
+  induction a generalizing b with
+  | nil => cases b <;> simp_all
+  | cons e es ih =>
+    cases b with
+    | nil => simp at h
+    | cons f fs =>
+      simp only [List.map_cons,List.cons.injEq] at h
+      rw [encodeEntryBytes_injective h.1,ih fs h.2]
+def encodeTargetBytes : Target → List UInt8
+  | .dummy v => encodeFields [[0],leb128 v]
+  | .block c => encodeFields [[1],encodeFields (c.map encodeEntryBytes)]
+private theorem encodeTargetBytes_injective {a b : Target} (h : encodeTargetBytes a = encodeTargetBytes b) : a = b := by
+  cases a <;> cases b <;> simp only [encodeTargetBytes] at h <;>
+    have h := encodeFields_injective _ _ h <;> simp only [List.cons.injEq] at h
+  · congr 1
+    have hh := encodeFields_injective _ _ h.2.1
+    exact encodeChainBytes_injective _ _ hh
+  · exact False.elim ((show (1 : UInt8) ≠ 0 from by decide) h.1.1)
+  · exact False.elim ((show (0 : UInt8) ≠ 1 from by decide) h.1.1)
+  · exact congrArg Target.dummy (leb128_injective h.2.1)
+
+/-! ## Incremental voter and quorum indexing -/
+attribute [local instance] lexOrd
+abbrev VoteKey := Nat × Target
+abbrev VoterViewKey := Nat × Nat
+def cmpEntry (a b : Entry) : Ordering := compare (encodeEntryBytes a) (encodeEntryBytes b)
+def cmpTarget (a b : Target) : Ordering := compare (encodeTargetBytes a) (encodeTargetBytes b)
+def cmpVoteKey (a b : VoteKey) : Ordering := compare (a.1,encodeTargetBytes a.2) (b.1,encodeTargetBytes b.2)
+instance : Ord Target where compare := cmpTarget
+instance : Std.LawfulEqOrd Target where
+  compare_self := by intro a; exact Std.ReflCmp.compare_self (a := encodeTargetBytes a)
+  eq_of_compare := by
+    intro a b h
+    exact encodeTargetBytes_injective (Std.compare_eq_iff_eq.mp h)
+instance : Std.TransOrd Target :=
+  inferInstanceAs (Std.TransCmp (compareOn encodeTargetBytes))
+abbrev SenderVoteKey := Nat × Nat × Target
+private def voteKey (v : Nat) (t : Target) : VoteKey := (v,t)
+private def senderKey (n v : Nat) (t : Target) : SenderVoteKey := (n,v,t)
+private theorem voteKey_eq {v w : Nat} {t u : Target} : voteKey v t = voteKey w u ↔ v=w ∧ t=u := by simp only [voteKey,Prod.mk.injEq]
+private theorem senderKey_eq {n m v w : Nat} {t u : Target} :
+    senderKey n v t = senderKey m w u ↔ n=m ∧ v=w ∧ t=u := by
+  simp only [senderKey,Prod.mk.injEq]
+theorem cmpEntry_eq_iff (a b : Entry) : cmpEntry a b = .eq ↔ a=b := by
+  constructor
+  · intro h; exact encodeEntryBytes_injective (Std.compare_eq_iff_eq.mp h)
+  · intro h; subst b; exact Std.ReflCmp.compare_self (a := encodeEntryBytes a)
+theorem cmpTarget_eq_iff (a b : Target) : cmpTarget a b = .eq ↔ a=b := by
+  change compare a b = .eq ↔ a=b
+  exact Std.compare_eq_iff_eq
+theorem cmpVoteKey_eq_compare (a b : VoteKey) : cmpVoteKey a b = compare a b := by unfold cmpVoteKey; rfl
+instance : Std.TransCmp cmpEntry := inferInstanceAs (Std.TransCmp (compareOn encodeEntryBytes))
+instance : Std.TransCmp cmpTarget := inferInstanceAs (Std.TransCmp (compareOn encodeTargetBytes))
+instance : Std.TransCmp cmpVoteKey := inferInstanceAs (Std.TransCmp (compare : VoteKey → VoteKey → Ordering))
+/-- Persistent balanced indexes let each trace step share its predecessor's untouched branches.
+Distinct committee voters are stored in a set per vote key; duplicate votes never increase quorum. -/
+structure TraceIndex where
+  committee : Std.TreeSet Nat
+  voters : Std.TreeMap VoteKey (Std.TreeSet Nat)
+  votes : Std.TreeSet SenderVoteKey
+  prior : Std.TreeMap VoterViewKey Target
+  proposals : Std.TreeSet SenderVoteKey
+namespace TraceIndex
+def empty (P : Protocol) : TraceIndex := ⟨Std.TreeSet.ofList P.committee,∅,∅,∅,∅⟩
+def lookupVoters (idx : TraceIndex) (v : Nat) (t : Target) : Std.TreeSet Nat := idx.voters.getD (voteKey v t) ∅
+def lookupVotes (idx : TraceIndex) (v : Nat) (t : Target) : Nat := (idx.lookupVoters v t).size
+def lookupPriorVote? (idx : TraceIndex) (n v : Nat) : Option Target := idx.prior[(n,v)]?
+def add (idx : TraceIndex) (m : Msg) : TraceIndex :=
+  match m.kind with
+  | .propose => { idx with proposals := idx.proposals.insert (senderKey m.sender m.view m.target) }
+  | .finalize => idx
+  | .vote =>
+    { idx with
+      voters := if idx.committee.contains m.sender then
+        idx.voters.insert (voteKey m.view m.target) ((idx.lookupVoters m.view m.target).insert m.sender)
+        else idx.voters
+      votes := idx.votes.insert (senderKey m.sender m.view m.target)
+      prior := idx.prior.insert (m.sender,m.view) m.target }
+def ofSent (P : Protocol) : Sent → TraceIndex
+  | [] => empty P
+  | m::sent => (ofSent P sent).add m
+/-- Representation invariant: each query denotes exactly the corresponding historical fact. -/
+def Simulates (idx : TraceIndex) (P : Protocol) (sent : Sent) : Prop :=
+  (∀ n, idx.committee.contains n = P.committee.contains n) ∧
+  (∀ v t n, (idx.lookupVoters v t).contains n = (P.committee.contains n && voted sent n v t)) ∧
+  (∀ n v t, idx.votes.contains (senderKey n v t) = voted sent n v t) ∧
+  (∀ n v, idx.lookupPriorVote? n v = (sent.find? (isVoteOf n v)).map Msg.target) ∧
+  (∀ n v t, idx.proposals.contains (senderKey n v t) = sent.contains ⟨n,v,.propose,t⟩)
+theorem empty_simulates (P : Protocol) : (empty P).Simulates P [] := by
+  simp [Simulates,empty,lookupVoters,lookupPriorVote?,voted,Std.TreeSet.contains_ofList]
+private theorem compare_eq_decide {α : Type} [Ord α] [Std.LawfulEqOrd α] [DecidableEq α] (a b : α) :
+    (compare a b == .eq) = decide (a=b) := by
+  apply Bool.eq_iff_iff.mpr
+  simp
+set_option maxRecDepth 4096 in
+theorem add_simulates {idx : TraceIndex} {P : Protocol} {sent : Sent}
+    (h : idx.Simulates P sent) (m : Msg) : (idx.add m).Simulates P (m::sent) := by
+  rcases h with ⟨hc,hv,ha,hp,hr⟩
+  rcases m with ⟨mn,mv,mk,mt⟩
+  cases mk <;> simp only [Simulates,add]
+  all_goals refine ⟨hc,?_,?_,?_,?_⟩
+  all_goals intros
+  all_goals simp only [lookupVoters,lookupPriorVote?,
+    Std.TreeMap.getElem?_insert,Std.TreeSet.contains_insert,Std.compare_eq_iff_eq] at *
+  all_goals simp [hc,hv,ha,hp,hr,isVoteOf,List.find?_cons,Msg.mk.injEq,
+    Bool.and_assoc,compare_eq_decide,senderKey_eq]
+  all_goals repeat' split <;> simp_all [Std.TreeMap.getD_insert,Std.TreeSet.contains_insert,compare_eq_decide,
+    beq_iff_eq,voteKey_eq]
+  all_goals grind
+end TraceIndex
+namespace TraceIndex
+private theorem set_size_filter (xs : List Nat) (hn : xs.Nodup) (p : Nat → Bool) (set : Std.TreeSet Nat)
+    (h : ∀ n, set.contains n = (xs.contains n && p n)) : set.size = (xs.filter p).length := by
+  have hs : set.toList.Nodup := by simpa only [List.nodup_iff_pairwise_ne,Std.compare_eq_iff_eq] using (Std.TreeSet.distinct_toList (t := set))
+  have hf : (xs.filter p).Nodup := hn.filter p
+  have he : ∀ n, n ∈ set.toList ↔ n ∈ xs.filter p := by
+    intro n
+    rw [← List.contains_iff_mem,Std.TreeSet.contains_toList,h]
+    simp [List.mem_filter]
+  have hp := (List.perm_ext_iff_of_nodup hs hf).mpr he
+  simpa only [Std.TreeSet.length_toList] using hp.length_eq
+theorem lookupVotes_eq {idx : TraceIndex} {P : Protocol} {sent : Sent} (h : idx.Simulates P sent)
+    (v : Nat) (t : Target) : idx.lookupVotes v t = votesFor P sent v t :=
+  set_size_filter P.committee P.nodup (fun n => voted sent n v t) _ (h.2.1 v t)
+theorem ofSent_simulates (P : Protocol) (sent : Sent) : (ofSent P sent).Simulates P sent := by
+  induction sent with
+  | nil => exact empty_simulates P
+  | cons m sent ih => exact add_simulates ih m
+end TraceIndex
+def entryNotarizedExec (P : Protocol) (idx : TraceIndex) (k : Nat) (upto : Chain) : Entry → Bool
+  | .dummy v => v == k + 1 && decide (P.quorum ≤ idx.lookupVotes (k+1) (.dummy (k+1)))
+  | .block v _ => v == k + 1 && decide (P.quorum ≤ idx.lookupVotes (k+1) (.block upto))
+
+def chainNotarizedExec (P : Protocol) (idx : TraceIndex) (c : Chain) : Bool :=
+  (List.range c.length).all fun k =>
+    match c[k]? with
+    | some e => entryNotarizedExec P idx k (c.take (k + 1)) e
+    | none => false
+
+def voteRuleExec (P : Protocol) (idx : TraceIndex) (v : Nat) : Target → Bool
+  | .block c =>
+    decide (1 ≤ v) &&
+      (match c.getLast? with
+       | some (.block w _) =>
+         w == v && c.dropLast.length == v - 1 && chainNotarizedExec P idx c.dropLast &&
+           idx.proposals.contains (senderKey (P.leader v) v (.block c))
+       | _ => false)
+  | .dummy w => decide (1 ≤ v) && w == v
+
+def checkStepExec (P : Protocol) (idx : TraceIndex) (m : Msg) : Except TraceClause Unit :=
+  if P.faulty m.sender then .ok ()
+  else if !idx.committee.contains m.sender then .error (.senderUnknown m.sender)
+  else
+    match m.kind with
+    | .propose =>
+      match m.target with
+      | .block _ =>
+        if m.sender == P.leader m.view then .ok () else .error (.notLeader m.sender m.view)
+      | .dummy _ => .error (.proposeNotBlock m.sender m.view)
+    | .vote =>
+      match idx.lookupPriorVote? m.sender m.view with
+      | some m' =>
+        match m' == m.target with
+        | true => .error (.votedTwice m.sender m.view)
+        | false => .error (.equivocation ⟨m.view, m', m.target, [m.sender]⟩)
+      | none =>
+        match voteRuleExec P idx m.view m.target with
+        | true => .ok ()
+        | false => .error (.voteRule m.sender m.view)
+    | .finalize =>
+      match m.target with
+      | .block c =>
+        match idx.votes.contains (senderKey m.sender m.view (.block c)) && decide (P.quorum ≤ idx.lookupVotes m.view (.block c)) with
+        | true => .ok ()
+        | false => .error (.finalizeRule m.sender m.view)
+      | .dummy _ => .error (.finalizeNotBlock m.sender m.view)
+
+theorem entryNotarizedExec_eq_entryNotarizedB {P : Protocol} {sent : Sent} {idx : TraceIndex}
+    (h : idx.Simulates P sent) (k : Nat) (c : Chain) (e : Entry) :
+    entryNotarizedExec P idx k c e = entryNotarizedB P sent k c e := by
+  cases e <;> simp only [entryNotarizedExec,entryNotarizedB,TraceIndex.lookupVotes_eq h]
+theorem chainNotarizedExec_eq_chainNotarizedB {P : Protocol} {sent : Sent} {idx : TraceIndex}
+    (h : idx.Simulates P sent) (c : Chain) : chainNotarizedExec P idx c = chainNotarizedB P sent c := by
+  simp only [chainNotarizedExec,chainNotarizedB,entryNotarizedExec_eq_entryNotarizedB h]
+private theorem voteRuleExec_eq {P : Protocol} {sent : Sent} {idx : TraceIndex}
+    (h : idx.Simulates P sent) (v : Nat) (t : Target) : voteRuleExec P idx v t = voteRuleB P sent v t := by
+  cases t <;> simp only [voteRuleExec,voteRuleB,chainNotarizedExec_eq_chainNotarizedB h,h.2.2.2.2] <;> rfl
+private theorem checkStepExec_eq {P : Protocol} {sent : Sent} {idx : TraceIndex}
+    (h : idx.Simulates P sent) (m : Msg) : checkStepExec P idx m = checkStep P sent m := by
+  simp only [checkStepExec,checkStep,h.1,h.2.2.1,h.2.2.2.1,voteRuleExec_eq h,TraceIndex.lookupVotes_eq h]
+  split <;> try rfl
+  split <;> try rfl
+  cases m.kind <;> try rfl
+  cases sent.find? (isVoteOf m.sender m.view) <;> rfl
+def checkTraceAuxExec (P : Protocol) : TraceIndex → List Msg → Except TraceClause Unit
+  | _, [] => .ok ()
+  | idx,m::rest => match checkStepExec P idx m with
+    | .ok () => checkTraceAuxExec P (idx.add m) rest
+    | .error c => .error c
+def checkTraceExec (P : Protocol) (tr : List Msg) : Except TraceClause Unit :=
+  checkTraceAuxExec P (TraceIndex.empty P) tr
+private theorem checkTraceAuxExec_eq {P : Protocol} (tr : List Msg) {sent : Sent} {idx : TraceIndex}
+    (h : idx.Simulates P sent) : checkTraceAuxExec P idx tr = checkTraceAux P sent tr := by
+  induction tr generalizing sent idx with
+  | nil => rfl
+  | cons m rest ih =>
+    simp only [checkTraceAuxExec,checkTraceAux,checkStepExec_eq h]
+    split
+    · exact ih (TraceIndex.add_simulates h m)
+    · rfl
+
+/-- Check a trace in send order. An empty or single-message trace needs no history
+index. Longer traces use the incremental committee, voter and proposal indexes. -/
+@[expose] def checkTrace (P : Protocol) : List Msg → Except TraceClause Unit
+  | [] => .ok ()
+  | [m] => checkStep P [] m
+  | m :: n :: rest => checkTraceExec P (m :: n :: rest)
+
+/-- All paths through the public checker return the list specification's exact verdict. -/
+theorem checkTrace_eq_spec (P : Protocol) (tr : List Msg) :
+    checkTrace P tr = checkTraceAux P [] tr := by
+  cases tr with
+  | nil => rfl
+  | cons m rest =>
+    cases rest with
+    | nil => cases h : checkStep P [] m <;> simp [checkTrace, checkTraceAux, h]
+    | cons n rest => exact checkTraceAuxExec_eq _ (TraceIndex.empty_simulates P)
+
+theorem checkTraceExec_eq_checkTrace (P : Protocol) (tr : List Msg) :
+    checkTraceExec P tr = checkTrace P tr :=
+  (checkTraceAuxExec_eq tr (TraceIndex.empty_simulates P)).trans (checkTrace_eq_spec P tr).symm
+
 /-- **An accepted trace is reachable.** -/
 theorem checkTrace_sound {P : Protocol} {tr : List Msg} (h : checkTrace P tr = .ok ()) :
     Reach P tr.reverse := by
+  rw [checkTrace_eq_spec] at h
   have := checkTraceAux_sound P tr [] Reach.nil h
   simpa using this
 
@@ -315,13 +564,38 @@ theorem traceVerdict_ok {P : Protocol} {tr : List Msg} (h : traceVerdict P tr = 
   | ok u => cases u; rfl
   | error k => rw [hc] at h; cases h
 
+/-- **Every protocol admits a trace**: the empty one is reachable. So over `Protocol` objects the
+claim `∃ tr, TraceMeaning P tr` is never false, and `∀ tr', ¬ TraceMeaning P tr'` never holds. -/
+theorem protocol_always_admits_empty_trace (P : Protocol) : TraceMeaning P [] := Reach.nil
+
+/-- The refuting clauses of the protocol-level judge: none. A refuting clause would certify
+`∀ tr', ¬ TraceMeaning P tr'`, which `protocol_always_admits_empty_trace` contradicts for every
+`P`. This determines the classification of every emitted clause (`simplexProtocolRefutes_exact`).
+`traceVerdict_refutes_trace` and `simplexRunJudge` state what a refusal proves about the given trace. -/
+def simplexProtocolRefutes : TraceClause → Bool
+  | _ => false
+
+theorem simplexProtocolRefutes_eq_false (k : TraceClause) : simplexProtocolRefutes k = false := by
+  simp only [simplexProtocolRefutes]
+
+/-- Any `refutes` that obeys the `refuted` law over `Protocol` objects is `false` on every clause
+the checker emits, since the empty trace contradicts a refutation of the protocol. -/
+theorem simplexProtocolRefutes_exact (refutes : TraceClause → Bool)
+    (law : ∀ {P : Protocol} {tr : List Msg} {k : TraceClause} {p : List Nat},
+      traceVerdict P tr = .refused k p → refutes k = true → ∀ tr', ¬ TraceMeaning P tr')
+    {P : Protocol} {tr : List Msg} {k : TraceClause} {p : List Nat}
+    (h : traceVerdict P tr = .refused k p) : refutes k = simplexProtocolRefutes k := by
+  cases hk : refutes k with
+  | false => exact (simplexProtocolRefutes_eq_false k).symm
+  | true => exact absurd (protocol_always_admits_empty_trace P) (law h hk [])
+
 @[expose, instance_reducible] def simplexTraceJudge : Obend.Judge Protocol (List Msg) where
   Clause := TraceClause
   Meaning := TraceMeaning
   check _ P tr := traceVerdict P tr
   sound := by intro _ P tr h; exact checkTrace_sound (traceVerdict_ok h)
-  refutes _ := false
-  refuted := by intro _ _ _ _ _ _ href; cases href
+  refutes := simplexProtocolRefutes
+  refuted := by intro _ _ _ k _ _ href; rw [simplexProtocolRefutes_eq_false k] at href; cases href
   Fragment _ := True
   complete := by intro P _ _; exact ⟨[], 0, rfl⟩
   mono := by intro _ _ _ _ _ _; rfl
@@ -402,6 +676,7 @@ outside it. -/
 
 @[expose] def badTrace : List Msg := [⟨7, 1, .vote, .dummy 1⟩]
 
+-- fixture kept (2026-11-05): consumed by Format.bad_refused
 theorem badTrace_refused :
     simplexTraceJudge.check 0 badProtocol badTrace = .refused (.senderUnknown 7) [] := rfl
 
@@ -445,7 +720,7 @@ theorem checkStep_complete {P : Protocol} {sent : Sent} {m : Msg}
     have hc := List.contains_iff_mem.mpr hn.1
     unfold checkStep
     simp only [hn.2,hc,Bool.false_eq_true,↓reduceIte,Bool.not_true]
-    rw [if_pos (beq_iff_eq.mpr hl)]
+    rw [ite_eq_left (beq_iff_eq.mpr hl)]
   | finalize n v c hn hv hnot => simp only [checkStep, hn.2, Bool.false_eq_true, ↓reduceIte, List.contains_iff_mem.mpr hn.1, Bool.not_true, hv, decide_eq_true hnot, Bool.true_and]
   | vote n v t hn hfresh hrule =>
     have hnone : sent.find? (isVoteOf n v) = none := by
@@ -479,41 +754,50 @@ theorem checkTrace_complete {P : Protocol} {tr : List Msg} (h : Reach P tr.rever
       | propose n v c hn hl => exact advance _ (checkStep_complete (.propose s n v c hn hl))
       | vote n v t hn hf hr => exact advance _ (checkStep_complete (.vote s n v t hn hf hr))
       | finalize n v c hn hv hnot => exact advance _ (checkStep_complete (.finalize s n v c hn hv hnot))
-  simpa [checkTrace] using aux h
+  rw [checkTrace_eq_spec]
+  simpa using aux h
 
-open Obend.Receipt.Merkle (leb128 leb128_injective encodeFields encodeFields_injective)
-def encodeEntryBytes : Entry → List UInt8
-  | .dummy v => encodeFields [[0],leb128 v]
-  | .block v p => encodeFields [[1],leb128 v,leb128 p]
-private theorem encodeEntryBytes_injective {a b : Entry} (h : encodeEntryBytes a = encodeEntryBytes b) : a = b := by
-  cases a <;> cases b <;> simp only [encodeEntryBytes] at h <;>
-    have hh := encodeFields_injective _ _ h <;> simp only [List.cons.injEq] at hh
-  · rw [leb128_injective hh.2.1,leb128_injective hh.2.2.1]
-  · exact False.elim ((show (1 : UInt8) ≠ 0 from by decide) hh.1.1)
-  · exact False.elim ((show (0 : UInt8) ≠ 1 from by decide) hh.1.1)
-  · exact congrArg Entry.dummy (leb128_injective hh.2.1)
-private theorem encodeChainBytes_injective (a b : Chain)
-    (h : a.map encodeEntryBytes = b.map encodeEntryBytes) : a = b := by
-  induction a generalizing b with
-  | nil => cases b <;> simp_all
-  | cons e es ih =>
-    cases b with
-    | nil => simp at h
-    | cons f fs =>
-      simp only [List.map_cons,List.cons.injEq] at h
-      rw [encodeEntryBytes_injective h.1,ih fs h.2]
-def encodeTargetBytes : Target → List UInt8
-  | .dummy v => encodeFields [[0],leb128 v]
-  | .block c => encodeFields [[1],encodeFields (c.map encodeEntryBytes)]
-private theorem encodeTargetBytes_injective {a b : Target} (h : encodeTargetBytes a = encodeTargetBytes b) : a = b := by
-  cases a <;> cases b <;> simp only [encodeTargetBytes] at h <;>
-    have h := encodeFields_injective _ _ h <;> simp only [List.cons.injEq] at h
-  · congr 1
-    have hh := encodeFields_injective _ _ h.2.1
-    exact encodeChainBytes_injective _ _ hh
-  · exact False.elim ((show (1 : UInt8) ≠ 0 from by decide) h.1.1)
-  · exact False.elim ((show (0 : UInt8) ≠ 1 from by decide) h.1.1)
-  · exact congrArg Target.dummy (leb128_injective h.2.1)
+/-! ## The run judge: a refusal refutes the run -/
+
+theorem traceVerdict_sound {P : Protocol} {tr : List Msg} (h : traceVerdict P tr = .ok) :
+    TraceMeaning P tr :=
+  checkTrace_sound (traceVerdict_ok h)
+
+theorem traceVerdict_complete {P : Protocol} {tr : List Msg} (h : TraceMeaning P tr) :
+    traceVerdict P tr = .ok := by
+  unfold traceVerdict
+  rw [checkTrace_complete h]
+
+/-- **A refused trace is not reachable**, whatever the clause: the check is complete, so a
+reachable trace would have been accepted. -/
+theorem traceVerdict_refutes_trace {P : Protocol} {tr : List Msg} {k : TraceClause}
+    {path : List Nat} (h : traceVerdict P tr = .refused k path) : ¬ TraceMeaning P tr := by
+  intro hm
+  rw [traceVerdict_complete hm] at h
+  cases h
+
+/-- A committee is never empty: it has `3f+1` members. So `simplexRunJudge`'s fragment is every
+run, and its completeness is unconditional. -/
+theorem committee_ne_nil (P : Protocol) : P.committee ≠ [] := by
+  intro h
+  have hsize := P.size
+  rw [h, List.length_nil] at hsize
+  omega
+
+/-- **The run judge**: the object is the run `(P, tr)` itself and the certificate is empty, so the
+claim is `Reach P tr.reverse` for that trace and no other. Every clause refutes
+(`traceVerdict_refutes_trace`), and the check is complete on every run (`committee_ne_nil`). -/
+instance simplexRunJudge : Obend.Judge (Protocol × List Msg) Unit where
+  Clause := TraceClause
+  Meaning o _ := TraceMeaning o.1 o.2
+  check _ o _ := traceVerdict o.1 o.2
+  sound := fun h => traceVerdict_sound h
+  refutes _ := true
+  refuted := fun h _ _ => traceVerdict_refutes_trace h
+  Fragment o := o.1.committee ≠ []
+  complete := fun _ ⟨_, hm⟩ => ⟨(), 0, traceVerdict_complete hm⟩
+  mono := fun _ _ => rfl
+
 def kindByte : Kind → UInt8 | .propose => 0 | .vote => 1 | .finalize => 2
 /-- Every field, including each chain entry and the domain, is length framed. -/
 def encodeMsgBytes (tag : List UInt8) (m : Msg) : List UInt8 :=
@@ -655,200 +939,6 @@ theorem checkSignedSimplex_authentic_message {c : SignedSimplexClaim} {tr : List
   obtain ⟨m,ha,he⟩ := checkSignedSimplex_euf_cma_authentic secure h sm hm hn
   have he := encodeMsgBytes_injective c.domainTag he
   simpa [he] using ha
-/-! ## Incremental voter and quorum indexing -/
-attribute [local instance] lexOrd
-abbrev VoteKey := Nat × Target
-abbrev VoterViewKey := Nat × Nat
-def cmpEntry (a b : Entry) : Ordering := compare (encodeEntryBytes a) (encodeEntryBytes b)
-def cmpTarget (a b : Target) : Ordering := compare (encodeTargetBytes a) (encodeTargetBytes b)
-def cmpVoteKey (a b : VoteKey) : Ordering := compare (a.1,encodeTargetBytes a.2) (b.1,encodeTargetBytes b.2)
-instance : Ord Target where compare := cmpTarget
-instance : Std.LawfulEqOrd Target where
-  compare_self := by intro a; exact Std.ReflCmp.compare_self (a := encodeTargetBytes a)
-  eq_of_compare := by
-    intro a b h
-    exact encodeTargetBytes_injective (Std.compare_eq_iff_eq.mp h)
-instance : Std.TransOrd Target :=
-  inferInstanceAs (Std.TransCmp (compareOn encodeTargetBytes))
-abbrev SenderVoteKey := Nat × Nat × Target
-private def voteKey (v : Nat) (t : Target) : VoteKey := (v,t)
-private def senderKey (n v : Nat) (t : Target) : SenderVoteKey := (n,v,t)
-private theorem voteKey_eq {v w : Nat} {t u : Target} : voteKey v t = voteKey w u ↔ v=w ∧ t=u := by simp only [voteKey,Prod.mk.injEq]
-private theorem senderKey_eq {n m v w : Nat} {t u : Target} :
-    senderKey n v t = senderKey m w u ↔ n=m ∧ v=w ∧ t=u := by
-  simp only [senderKey,Prod.mk.injEq]
-theorem cmpEntry_eq_iff (a b : Entry) : cmpEntry a b = .eq ↔ a=b := by
-  constructor
-  · intro h; exact encodeEntryBytes_injective (Std.compare_eq_iff_eq.mp h)
-  · intro h; subst b; exact Std.ReflCmp.compare_self (a := encodeEntryBytes a)
-theorem cmpTarget_eq_iff (a b : Target) : cmpTarget a b = .eq ↔ a=b := by
-  change compare a b = .eq ↔ a=b
-  exact Std.compare_eq_iff_eq
-theorem cmpVoteKey_eq_compare (a b : VoteKey) : cmpVoteKey a b = compare a b := by unfold cmpVoteKey; rfl
-instance : Std.TransCmp cmpEntry := inferInstanceAs (Std.TransCmp (compareOn encodeEntryBytes))
-instance : Std.TransCmp cmpTarget := inferInstanceAs (Std.TransCmp (compareOn encodeTargetBytes))
-instance : Std.TransCmp cmpVoteKey := inferInstanceAs (Std.TransCmp (compare : VoteKey → VoteKey → Ordering))
-/-- Persistent balanced indexes let each trace step share its predecessor's untouched branches.
-Distinct committee voters are stored in a set per vote key; duplicate votes never increase quorum. -/
-structure TraceIndex where
-  committee : Std.TreeSet Nat
-  voters : Std.TreeMap VoteKey (Std.TreeSet Nat)
-  votes : Std.TreeSet SenderVoteKey
-  prior : Std.TreeMap VoterViewKey Target
-  proposals : Std.TreeSet SenderVoteKey
-namespace TraceIndex
-def empty (P : Protocol) : TraceIndex := ⟨Std.TreeSet.ofList P.committee,∅,∅,∅,∅⟩
-def lookupVoters (idx : TraceIndex) (v : Nat) (t : Target) : Std.TreeSet Nat := idx.voters.getD (voteKey v t) ∅
-def lookupVotes (idx : TraceIndex) (v : Nat) (t : Target) : Nat := (idx.lookupVoters v t).size
-def lookupPriorVote? (idx : TraceIndex) (n v : Nat) : Option Target := idx.prior[(n,v)]?
-def add (idx : TraceIndex) (m : Msg) : TraceIndex :=
-  match m.kind with
-  | .propose => { idx with proposals := idx.proposals.insert (senderKey m.sender m.view m.target) }
-  | .finalize => idx
-  | .vote =>
-    { idx with
-      voters := if idx.committee.contains m.sender then
-        idx.voters.insert (voteKey m.view m.target) ((idx.lookupVoters m.view m.target).insert m.sender)
-        else idx.voters
-      votes := idx.votes.insert (senderKey m.sender m.view m.target)
-      prior := idx.prior.insert (m.sender,m.view) m.target }
-def ofSent (P : Protocol) : Sent → TraceIndex
-  | [] => empty P
-  | m::sent => (ofSent P sent).add m
-/-- Representation invariant: each query denotes exactly the corresponding historical fact. -/
-def Simulates (idx : TraceIndex) (P : Protocol) (sent : Sent) : Prop :=
-  (∀ n, idx.committee.contains n = P.committee.contains n) ∧
-  (∀ v t n, (idx.lookupVoters v t).contains n = (P.committee.contains n && voted sent n v t)) ∧
-  (∀ n v t, idx.votes.contains (senderKey n v t) = voted sent n v t) ∧
-  (∀ n v, idx.lookupPriorVote? n v = (sent.find? (isVoteOf n v)).map Msg.target) ∧
-  (∀ n v t, idx.proposals.contains (senderKey n v t) = sent.contains ⟨n,v,.propose,t⟩)
-theorem empty_simulates (P : Protocol) : (empty P).Simulates P [] := by
-  simp [Simulates,empty,lookupVoters,lookupPriorVote?,voted,Std.TreeSet.contains_ofList]
-private theorem compare_eq_decide {α : Type} [Ord α] [Std.LawfulEqOrd α] [DecidableEq α] (a b : α) :
-    (compare a b == .eq) = decide (a=b) := by
-  apply Bool.eq_iff_iff.mpr
-  simp [Std.LawfulEqOrd.compare_beq_iff_eq]
-set_option maxRecDepth 4096 in
-theorem add_simulates {idx : TraceIndex} {P : Protocol} {sent : Sent}
-    (h : idx.Simulates P sent) (m : Msg) : (idx.add m).Simulates P (m::sent) := by
-  rcases h with ⟨hc,hv,ha,hp,hr⟩
-  rcases m with ⟨mn,mv,mk,mt⟩
-  cases mk <;> simp only [Simulates,add]
-  all_goals refine ⟨hc,?_,?_,?_,?_⟩
-  all_goals intros
-  all_goals simp only [lookupVoters,lookupPriorVote?,Std.TreeMap.getD_insert,
-    Std.TreeMap.getElem?_insert,Std.TreeSet.contains_insert,Std.compare_eq_iff_eq,
-    beq_iff_eq, voteKey_eq,senderKey_eq] at *
-  all_goals simp [hc,hv,ha,hp,hr,isVoteOf,List.find?_cons,List.contains_cons,Msg.mk.injEq,
-    Bool.and_assoc,Bool.or_assoc,compare_eq_decide,senderKey_eq]
-  all_goals repeat' split <;> simp_all [Std.TreeMap.getD_insert,Std.TreeSet.contains_insert,compare_eq_decide,
-    beq_iff_eq,Std.compare_eq_iff_eq,voteKey_eq]
-  all_goals grind
-end TraceIndex
-namespace TraceIndex
-private theorem set_size_filter (xs : List Nat) (hn : xs.Nodup) (p : Nat → Bool) (set : Std.TreeSet Nat)
-    (h : ∀ n, set.contains n = (xs.contains n && p n)) : set.size = (xs.filter p).length := by
-  have hs : set.toList.Nodup := by simpa only [List.nodup_iff_pairwise_ne,Std.compare_eq_iff_eq] using (Std.TreeSet.distinct_toList (t := set))
-  have hf : (xs.filter p).Nodup := hn.filter p
-  have he : ∀ n, n ∈ set.toList ↔ n ∈ xs.filter p := by
-    intro n
-    rw [← List.contains_iff_mem,Std.TreeSet.contains_toList,h]
-    simp [List.mem_filter,List.contains_iff_mem]
-  have hp := (List.perm_ext_iff_of_nodup hs hf).mpr he
-  simpa only [Std.TreeSet.length_toList] using hp.length_eq
-theorem lookupVotes_eq {idx : TraceIndex} {P : Protocol} {sent : Sent} (h : idx.Simulates P sent)
-    (v : Nat) (t : Target) : idx.lookupVotes v t = votesFor P sent v t :=
-  set_size_filter P.committee P.nodup (fun n => voted sent n v t) _ (h.2.1 v t)
-theorem ofSent_simulates (P : Protocol) (sent : Sent) : (ofSent P sent).Simulates P sent := by
-  induction sent with
-  | nil => exact empty_simulates P
-  | cons m sent ih => exact add_simulates ih m
-end TraceIndex
-def entryNotarizedExec (P : Protocol) (idx : TraceIndex) (k : Nat) (upto : Chain) : Entry → Bool
-  | .dummy v => v == k + 1 && decide (P.quorum ≤ idx.lookupVotes (k+1) (.dummy (k+1)))
-  | .block v _ => v == k + 1 && decide (P.quorum ≤ idx.lookupVotes (k+1) (.block upto))
-
-def chainNotarizedExec (P : Protocol) (idx : TraceIndex) (c : Chain) : Bool :=
-  (List.range c.length).all fun k =>
-    match c[k]? with
-    | some e => entryNotarizedExec P idx k (c.take (k + 1)) e
-    | none => false
-
-def voteRuleExec (P : Protocol) (idx : TraceIndex) (v : Nat) : Target → Bool
-  | .block c =>
-    decide (1 ≤ v) &&
-      (match c.getLast? with
-       | some (.block w _) =>
-         w == v && c.dropLast.length == v - 1 && chainNotarizedExec P idx c.dropLast &&
-           idx.proposals.contains (senderKey (P.leader v) v (.block c))
-       | _ => false)
-  | .dummy w => decide (1 ≤ v) && w == v
-
-def checkStepExec (P : Protocol) (idx : TraceIndex) (m : Msg) : Except TraceClause Unit :=
-  if P.faulty m.sender then .ok ()
-  else if !idx.committee.contains m.sender then .error (.senderUnknown m.sender)
-  else
-    match m.kind with
-    | .propose =>
-      match m.target with
-      | .block _ =>
-        if m.sender == P.leader m.view then .ok () else .error (.notLeader m.sender m.view)
-      | .dummy _ => .error (.proposeNotBlock m.sender m.view)
-    | .vote =>
-      match idx.lookupPriorVote? m.sender m.view with
-      | some m' =>
-        match m' == m.target with
-        | true => .error (.votedTwice m.sender m.view)
-        | false => .error (.equivocation ⟨m.view, m', m.target, [m.sender]⟩)
-      | none =>
-        match voteRuleExec P idx m.view m.target with
-        | true => .ok ()
-        | false => .error (.voteRule m.sender m.view)
-    | .finalize =>
-      match m.target with
-      | .block c =>
-        match idx.votes.contains (senderKey m.sender m.view (.block c)) && decide (P.quorum ≤ idx.lookupVotes m.view (.block c)) with
-        | true => .ok ()
-        | false => .error (.finalizeRule m.sender m.view)
-      | .dummy _ => .error (.finalizeNotBlock m.sender m.view)
-
-theorem entryNotarizedExec_eq_entryNotarizedB {P : Protocol} {sent : Sent} {idx : TraceIndex}
-    (h : idx.Simulates P sent) (k : Nat) (c : Chain) (e : Entry) :
-    entryNotarizedExec P idx k c e = entryNotarizedB P sent k c e := by
-  cases e <;> simp only [entryNotarizedExec,entryNotarizedB,TraceIndex.lookupVotes_eq h]
-theorem chainNotarizedExec_eq_chainNotarizedB {P : Protocol} {sent : Sent} {idx : TraceIndex}
-    (h : idx.Simulates P sent) (c : Chain) : chainNotarizedExec P idx c = chainNotarizedB P sent c := by
-  simp only [chainNotarizedExec,chainNotarizedB,entryNotarizedExec_eq_entryNotarizedB h]
-private theorem voteRuleExec_eq {P : Protocol} {sent : Sent} {idx : TraceIndex}
-    (h : idx.Simulates P sent) (v : Nat) (t : Target) : voteRuleExec P idx v t = voteRuleB P sent v t := by
-  cases t <;> simp only [voteRuleExec,voteRuleB,chainNotarizedExec_eq_chainNotarizedB h,h.2.2.2.2] <;> rfl
-private theorem checkStepExec_eq {P : Protocol} {sent : Sent} {idx : TraceIndex}
-    (h : idx.Simulates P sent) (m : Msg) : checkStepExec P idx m = checkStep P sent m := by
-  simp only [checkStepExec,checkStep,h.1,h.2.2.1,h.2.2.2.1,voteRuleExec_eq h,TraceIndex.lookupVotes_eq h]
-  split <;> try rfl
-  split <;> try rfl
-  cases m.kind <;> try rfl
-  cases sent.find? (isVoteOf m.sender m.view) <;> rfl
-def checkTraceAuxExec (P : Protocol) : TraceIndex → List Msg → Except TraceClause Unit
-  | _, [] => .ok ()
-  | idx,m::rest => match checkStepExec P idx m with
-    | .ok () => checkTraceAuxExec P (idx.add m) rest
-    | .error c => .error c
-def checkTraceExec (P : Protocol) (tr : List Msg) : Except TraceClause Unit :=
-  checkTraceAuxExec P (TraceIndex.empty P) tr
-private theorem checkTraceAuxExec_eq {P : Protocol} (tr : List Msg) {sent : Sent} {idx : TraceIndex}
-    (h : idx.Simulates P sent) : checkTraceAuxExec P idx tr = checkTraceAux P sent tr := by
-  induction tr generalizing sent idx with
-  | nil => rfl
-  | cons m rest ih =>
-    simp only [checkTraceAuxExec,checkTraceAux,checkStepExec_eq h]
-    split
-    · exact ih (TraceIndex.add_simulates h m)
-    · rfl
-theorem checkTraceExec_eq_checkTrace (P : Protocol) (tr : List Msg) : checkTraceExec P tr = checkTrace P tr :=
-  checkTraceAuxExec_eq tr (TraceIndex.empty_simulates P)
-@[csimp] theorem checkTrace_eq_exec : @checkTrace = @checkTraceExec := by
-  funext P tr; exact (checkTraceExec_eq_checkTrace P tr).symm
 /-! Sorted array snapshots support repeated binary queries without retaining the trace. -/
 def StrictRows {κ ν : Type} [Ord κ] (rows : Array (κ × ν)) : Prop :=
   ∀ i j : Fin rows.size, i.val < j.val → compare rows[i].1 rows[j].1 = .lt
@@ -893,7 +983,7 @@ private theorem searchRows_some_iff {κ ν : Type} [Ord κ] [Std.LawfulEqOrd κ]
       have hml : lo ≤ mid := by dsimp [mid]; omega
       have hmh : mid < hi := by dsimp [mid]; omega
       let j : Fin rows.size := ⟨mid,hm⟩
-      simp only [searchRows,dif_pos (And.intro hlt hb)]
+      simp only [searchRows,dite_eq_left (And.intro hlt hb)]
       change (match compare key rows[j].1 with
         | .eq => some rows[j].2
         | .lt => searchRows rows key fuel lo mid
@@ -931,7 +1021,7 @@ private theorem searchRows_some_iff {κ ν : Type} [Ord κ] [Std.LawfulEqOrd κ]
           have hji := ordered_match_lt sorted j i hji
           change mid < i.val at hji
           exact ⟨i,by omega,hih,hik,hiv⟩
-    · rw [searchRows,dif_neg (by omega : ¬ (lo < hi ∧ hi ≤ rows.size))]
+    · rw [searchRows,dite_eq_right (by omega : ¬ (lo < hi ∧ hi ≤ rows.size))]
       constructor
       · intro h; cases h
       · rintro ⟨i,hil,hih,_,_⟩; omega
@@ -1001,9 +1091,25 @@ example : checkStep singleNodeProtocol [] ⟨0,1,.vote,.dummy 1⟩ = .ok () := r
 example : checkTraceAux singleNodeProtocol [] singleNodeTrace = .ok () := rfl
 def signedSingleNodeClaim : SignedSimplexClaim :=
   ⟨singleNodeProtocol,⟨fun _ _ sig => sig == 0⟩,fun _ => 0,[83,50,67],1,singleNodeChain⟩
-theorem signedSimplexFragment_inhabited : SignedSimplexFragment signedSingleNodeClaim := by
+example : SignedSimplexFragment signedSingleNodeClaim := by
   unfold SignedSimplexFragment; decide
-example : checkSignedSimplex signedSingleNodeClaim (singleNodeTrace.map fun m => ⟨m,0⟩) = .ok := by decide
+example : simplexRunJudge.Fragment (singleNodeProtocol, singleNodeTrace) :=
+  committee_ne_nil singleNodeProtocol
+example : simplexRunJudge.check 0 (singleNodeProtocol, singleNodeTrace) () = .ok := by
+  change traceVerdict singleNodeProtocol singleNodeTrace = .ok
+  unfold traceVerdict
+  rw [checkTrace_eq_spec]
+  rfl
+example :
+    simplexRunJudge.check 0 (badProtocol, badTrace) () = .refused (.senderUnknown 7) [] ∧
+    simplexRunJudge.refutes (.senderUnknown 7) = true :=
+  ⟨rfl, rfl⟩
+example : ¬ TraceMeaning badProtocol badTrace :=
+  traceVerdict_refutes_trace (k := .senderUnknown 7) (path := []) rfl
+example : checkSignedSimplex signedSingleNodeClaim (singleNodeTrace.map fun m => ⟨m,0⟩) = .ok := by
+  unfold checkSignedSimplex
+  rw [checkTrace_eq_spec]
+  decide
 #guard (QuorumIndex.ofSent singleNodeProtocol singleNodeTrace.reverse).lookupVotes 1 (.block singleNodeChain) == 1
 #guard (QuorumIndex.ofSent singleNodeProtocol (singleNodeTrace.reverse ++ singleNodeTrace.reverse)).lookupVotes 1 (.block singleNodeChain) == 1
 #guard (VoterViewIndex.ofSent singleNodeProtocol singleNodeTrace.reverse).lookupPriorVote? 0 1 == some (.block singleNodeChain)

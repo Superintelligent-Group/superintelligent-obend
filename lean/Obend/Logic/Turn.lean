@@ -9,14 +9,16 @@ Closes item (7) of `lean/docs/REPORT-LOGIC-20261101.md` and `review/PROGRAM-LOGI
    - `yields? : Term → Option (Term × List SourceFrame)` extracts the yielded plan and inner-first
      evaluation context, sound (`yields?_sound`) and complete (`yields?_complete`) against `Yields`.
    - `runToYield : Nat → Term → Option (Term × List SourceFrame)` iterates `Law.step?` until `yields?`
-     matches, monotone in fuel (`runToYield_mono_le`) and sound (`runToYield_sound`).
+     matches, monotone in fuel (`runToYield_mono_le`), sound (`runToYield_sound`) and complete
+     (`runToYield_complete`: every `Steps`-reachable `Yields` state is found at some fuel).
    - `steps_yields_unique`: because `Step` is deterministic and a yielding term cannot step
      (`yields_no_step`), the yielded state, plan, and context reached from any start term are unique.
 2. **The Turn Judge (`turnJudge : Judge TurnProblem Unit`)**:
    - Twin of `Logic.Ground.ground` for one-turn `Interaction` obligations:
      `Meaning p _ := Interaction p.term [(p.expectedPlan, p.response.term)] p.expectedResult.term`.
-   - Sound on `.ok` (`turn_sound`) and refuting on both `.planMismatch` and `.resultMismatch`
-     (`turn_refutes`).
+   - Sound on `.ok` (`turn_sound`), refuting on both `.planMismatch` and `.resultMismatch`
+     (`turn_refutes`), and complete on every problem (`turnCheck_complete`: a one-turn
+     `Interaction` is accepted at some fuel, from `runToYield_complete` and `run_complete`).
 3. **`Counter.obend` `bump` verified across all responses**:
    - `counter_bump_written_verified` & `counter_bump_refused_verified`: ground turn-judge proofs by
      `decide +kernel` and universally quantified `Interaction` theorems (`counter_bump_interaction`)
@@ -26,10 +28,15 @@ Closes item (7) of `lean/docs/REPORT-LOGIC-20261101.md` and `review/PROGRAM-LOGI
      `ifBool` (or all matching arms of a `case`) rewrite to a common right-hand side `r` via
      `Logic.Rewrite.replay`, the conditional is `HoldsEq` to `r` under every substitution whose
      scrutinee evaluates to a Boolean (or listed variant).
+
+Encapsulation: the bodies exported are `yields?` (the `obend_wp` tactic reduces it and closes the
+side goal by `rfl`), the semantic `TurnFragment` predicate, and the `Counter.obend` fixtures that
+`Logic.MultiTurnHoare` unfolds. The checkers (`runToYield`, `turnCheck`, `checkBoolSplit`) are
+sealed behind their theorems.
 -/
 public import Obend.Logic.Rewrite
 public import Obend.Logic.Ground
-@[expose] public section
+public section
 namespace Obend.Logic
 open Obend.Core.Term
 open Obend.Core.Data (Data)
@@ -39,7 +46,7 @@ set_option autoImplicit false
 /-! ## 1. Executable `Yields` and `runToYield` -/
 
 /-- Extract the yielded plan and evaluation context when `t` is at a `Yields` redex. -/
-def yields? : Term → Option (Term × List SourceFrame)
+@[expose] def yields? : Term → Option (Term × List SourceFrame)
   | .perform plan => some (plan, [])
   | .app f a => (yields? f).map fun (p, ctx) => (p, ctx ++ [.application a])
   | .get t n => (yields? t).map fun (p, ctx) => (p, ctx ++ [.field n])
@@ -222,6 +229,36 @@ theorem runToYield_mono_le {fuel fuel' : Nat} {t : Term} {res : Term × List Sou
   | refl => exact h
   | step _ ih => exact runToYield_mono _ ih
 
+/-- **`runToYield_complete`**: a `Yields` state reached by `Steps` is found at some fuel. No term
+on the way yields (a yielding term cannot step), so the run takes exactly the steps of `hs`. -/
+theorem runToYield_complete {t u plan : Term} {ctx : List SourceFrame}
+    (hs : Steps t u) (hy : Yields u plan ctx) : ∃ fuel, runToYield fuel t = some (plan, ctx) := by
+  induction hs with
+  | refl => exact ⟨0, yields?_complete hy⟩
+  | @next t m _ st _ ih =>
+    obtain ⟨fuel, hf⟩ := ih hy
+    refine ⟨fuel + 1, ?_⟩
+    have hnone : yields? t = none := by
+      cases hq : yields? t with
+      | none => rfl
+      | some res =>
+        obtain ⟨p, c⟩ := res
+        exact absurd st (yields_no_step (yields?_sound t hq) _)
+    rw [runToYield, hnone, Obend.Law.step?_complete st]
+    exact hf
+
+/-- **`run_complete`**: an evaluation is found by `Law.run` at some fuel. -/
+theorem run_complete {t v : Term} (hev : Evaluates t v) : ∃ fuel, Obend.Law.run fuel t = some v := by
+  obtain ⟨hs, hv⟩ := hev
+  induction hs with
+  | refl => exact ⟨0, by simp only [Obend.Law.run, value_isValueB' hv, ite_true]⟩
+  | @next t m _ st _ ih =>
+    obtain ⟨fuel, hf⟩ := ih hv
+    refine ⟨fuel + 1, ?_⟩
+    have hnv : ¬ Obend.Law.isValueB t = true := fun hb => value_no_step (isValueB_value' hb) st
+    rw [Obend.Law.run, ite_eq_right hnv, Obend.Law.step?_complete st]
+    exact hf
+
 /-- Deterministic step relation (`Obend.Law.step?_complete` + `step?_sound`). -/
 theorem step_det {t u₁ u₂ : Term} (h₁ : Step t u₁) (h₂ : Step t u₂) : u₁ = u₂ := by
   have e₁ := Obend.Law.step?_complete h₁
@@ -366,7 +403,64 @@ theorem turnCheck_mono {k k' : Nat} {p : TurnProblem} (le : k ≤ k')
       | some v => rw [run_mono_le le hr]
     · simp [hp]
 
-/-- **The one-turn `Interaction` judge.** -/
+/-- **`turnCheck_complete`**: every one-turn `Interaction` is accepted at some fuel. The yield is
+found by `runToYield_complete`, the resumed evaluation by `run_complete`, and both survive the
+larger fuel by monotonicity; the two `termEq` comparisons are then reflexive. -/
+theorem turnCheck_complete {p : TurnProblem}
+    (h : Interaction p.term [(p.expectedPlan, p.response.term)] p.expectedResult.term) :
+    ∃ fuel, turnCheck fuel p () = .ok := by
+  cases h with
+  | turn hs hy rest =>
+    cases rest with
+    | finish hev =>
+      obtain ⟨fuel₁, h₁⟩ := runToYield_complete hs hy
+      obtain ⟨fuel₂, h₂⟩ := run_complete hev
+      have hp : Obend.Law.termEq p.expectedPlan p.expectedPlan = true := termEq_refl' _
+      have hv : Obend.Law.termEq p.expectedResult.term p.expectedResult.term = true := termEq_refl' _
+      refine ⟨fuel₁ + fuel₂, ?_⟩
+      unfold turnCheck
+      rw [runToYield_mono_le (Nat.le_add_right fuel₁ fuel₂) h₁]
+      simp only [hp, ite_true]
+      rw [run_mono_le (Nat.le_add_left fuel₂ fuel₁) h₂]
+      simp only [hv, ite_true]
+
+/-- The activity reaches a yield at which the plan differs, or from which the supplied
+response evaluates to a value. Both observations are phrased in the source semantics. -/
+@[expose] def TurnFragment (p : TurnProblem) : Prop :=
+  ∃ u plan ctx, Steps p.term u ∧ Yields u plan ctx ∧
+    (plan ≠ p.expectedPlan ∨ ∃ v, Evaluates (plug ctx p.response.term) v)
+
+/-- The fragment is exactly where finite fuel can settle the claim, including refusals
+that can be issued before the resumed computation terminates. -/
+theorem turnFragment_iff_decided (p : TurnProblem) :
+    TurnFragment p ↔ ∃ fuel, turnCheck fuel p () ≠ .uncovered := by
+  constructor
+  · rintro ⟨u, plan, ctx, hs, hy, observation⟩
+    obtain ⟨k, hk⟩ := runToYield_complete hs hy
+    by_cases hp : Obend.Law.termEq plan p.expectedPlan = true
+    · obtain ⟨v, hv⟩ := observation.resolve_left (fun h => h (termEq_sound' hp))
+      obtain ⟨j, hj⟩ := run_complete hv
+      refine ⟨k + j, ?_⟩
+      simp only [turnCheck, runToYield_mono_le (Nat.le_add_right k j) hk, hp, ite_true,
+        run_mono_le (Nat.le_add_left j k) hj]
+      split <;> intro h <;> cases h
+    · exact ⟨k, by simp [turnCheck, hk, hp]⟩
+  · rintro ⟨k, hd⟩
+    cases hk : runToYield k p.term with
+    | none => simp [turnCheck, hk] at hd
+    | some res =>
+      obtain ⟨plan, ctx⟩ := res
+      obtain ⟨u, hs, hy⟩ := runToYield_sound k hk
+      refine ⟨u, plan, ctx, hs, hy, ?_⟩
+      by_cases hp : plan = p.expectedPlan
+      · subst plan
+        cases hj : Obend.Law.run k (plug ctx p.response.term) with
+        | none => simp [turnCheck, hk, termEq_refl', hj] at hd
+        | some v => exact .inr ⟨v, Obend.Law.run_sound k hj⟩
+      · exact .inl hp
+
+/-- The one-turn judge decides every problem in `TurnFragment`. Acceptance of a true
+one-turn interaction also follows unconditionally from `turnCheck_complete`. -/
 instance turnJudge : Judge TurnProblem Unit where
   Clause := TurnClause
   Meaning p _ := Interaction p.term [(p.expectedPlan, p.response.term)] p.expectedResult.term
@@ -374,8 +468,11 @@ instance turnJudge : Judge TurnProblem Unit where
   sound := by intro k p _ h; exact turn_sound h
   refutes _ := true
   refuted := by intro k p _ clause path h _ _; exact turn_refutes h
-  Fragment p := ∃ fuel, turnCheck fuel p () = .ok
-  complete := by rintro p ⟨fuel, hf⟩ _; exact ⟨(), fuel, hf⟩
+  Fragment := TurnFragment
+  complete := by
+    intro p _ ⟨_, hm⟩
+    obtain ⟨fuel, hf⟩ := turnCheck_complete hm
+    exact ⟨(), fuel, hf⟩
   mono := by intro k k' p _ le hne; exact turnCheck_mono le hne
 
 /-! ## 3. `Counter.obend` `bump` Verified Across All Responses -/
@@ -387,7 +484,7 @@ def bump(count: Nat) -> Activity<Plan, Response, Nat>:
     case written(_): count + 1n
     case refused(_): count
 ``` -/
-def counterBump : Term :=
+@[expose] def counterBump : Term :=
   .lam (.case
     (.perform (.inject "write" (.record [
       ("field", .nat 0),
@@ -398,15 +495,15 @@ def counterBump : Term :=
       ("refused", .done (.bound 1)) ])
 
 /-- The plan yielded by `counterBump (.nat count)`. -/
-def counterBumpPlan (count : Nat) : Term :=
+@[expose] def counterBumpPlan (count : Nat) : Term :=
   .inject "write" (.record [
     ("field", .nat 0),
     ("before", .nat count),
     ("after", .binary .add (.nat count) (.nat 1))
   ])
 
-def writtenResponse : Data := .variant "written" (.record [])
-def refusedResponse : Data := .variant "refused" (.record [])
+@[expose] def writtenResponse : Data := .variant "written" (.record [])
+@[expose] def refusedResponse : Data := .variant "refused" (.record [])
 
 /-- Ground turn-judge verification of `bump(5)` on `written` (`6`) and `refused` (`5`),
 plus refutation when `written` claims `5`. -/
@@ -416,6 +513,25 @@ example :
     turnCheck 10 ⟨counterBump, [.natural 5], counterBumpPlan 5, refusedResponse, .natural 5⟩ () = .ok ∧
     turnCheck 10 ⟨counterBump, [.natural 5], counterBumpPlan 5, writtenResponse, .natural 5⟩ () =
       .refused .resultMismatch [] := by
+  decide +kernel
+
+example : turnJudge.Fragment ⟨.perform (.nat 1), [], .nat 2, .natural 0, .natural 0⟩ :=
+  (turnFragment_iff_decided _).mpr ⟨0, by decide +kernel⟩
+
+example : ¬ turnJudge.Fragment ⟨.nat 1, [], .nat 1, .natural 0, .natural 0⟩ := by
+  rintro ⟨u, plan, ctx, hs, hy, _⟩
+  change Steps (.nat 1) u at hs
+  cases hs with
+  | refl => cases hy
+  | next st _ => exact value_no_step (.natural 1) st
+
+/-- The fuel is load-bearing: `bump(5)` reaches its `write` plan, under one `case` frame, after
+one β-step and not before. -/
+example :
+    (match runToYield 1 (Term.app counterBump (.nat 5)) with
+      | some (plan, ctx) => Obend.Law.termEq plan (counterBumpPlan 5) && ctx.length == 1
+      | none => false) = true ∧
+    (runToYield 0 (Term.app counterBump (.nat 5))).isNone = true := by
   decide +kernel
 
 theorem counterBump_beta (count : Nat) :
@@ -530,6 +646,19 @@ def checkBoolSplit (R : Resolver) (whenTrue whenFalse rhs : Term)
   match replay R onTrue whenTrue, replay R onFalse whenFalse with
   | .ok u₁, .ok u₂ => Obend.Law.termEq u₁ rhs && Obend.Law.termEq u₂ rhs
   | _, _ => false
+
+/-- `checkBoolSplit` accepts a split whose branches differ and each need a reduction step:
+`1 + 2` and `2 + 1` both reach `3`. -/
+example :
+    checkBoolSplit (fun _ _ => none) (.binary .add (.nat 1) (.nat 2)) (.binary .add (.nat 2) (.nat 1))
+      (.nat 3) [.run 1] [.run 1] = true := by
+  decide +kernel
+
+/-- The same two derivations are refused against `4`. -/
+example :
+    checkBoolSplit (fun _ _ => none) (.binary .add (.nat 1) (.nat 2)) (.binary .add (.nat 2) (.nat 1))
+      (.nat 4) [.run 1] [.run 1] = false := by
+  decide +kernel
 
 /-- **T4 `boolSplit_sound`**: when `checkBoolSplit` accepts `onTrue` and `onFalse`, then under every
 observer-free substitution `σ` where `R` is sound and `s.substitute σ` evaluates to a Boolean,

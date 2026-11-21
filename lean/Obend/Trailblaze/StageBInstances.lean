@@ -2063,9 +2063,9 @@ theorem internSymbol_injective (table : SymbolTable) (a b : DeltaTag)
   have ea := symbolAt_index table a ha
   have eb := symbolAt_index table b hb
   have ea' : table[table.idxOf a]? = some a := by
-    simpa only [List.getElem?_eq_getElem haLt, ea]
+    simp only [List.getElem?_eq_getElem haLt, ea]
   have eb' : table[table.idxOf b]? = some b := by
-    simpa only [List.getElem?_eq_getElem hbLt, eb]
+    simp only [List.getElem?_eq_getElem hbLt, eb]
   exact Option.some.inj (ea'.symm.trans ((congrArg (fun i => table[i]?) hab).trans eb'))
 
 /-- Salvadori `Δ`-Net (`arXiv:2505.20314`) hardware interaction-net node kinds:
@@ -2208,14 +2208,56 @@ theorem deltaNetBytes_injective {a b : DeltaNet} (h : deltaNetBytes a = deltaNet
 def deltaNetDigest (H : Obend.Digest.HashBytes.Hash) (net : DeltaNet) : List UInt8 :=
   H (deltaNetBytes net)
 
+/-- Compare the two serialized graphs and retain both byte strings if their digests collide. -/
+def deltaNetDigest_extractBinding (H : Obend.Digest.HashBytes.Hash) (a b : DeltaNet)
+    (h : deltaNetDigest H a = deltaNetDigest H b) :
+    PSum (PLift (a = b)) (Obend.Digest.HashBytes.CollisionPair H
+      (fun x => x = deltaNetBytes a ∨ x = deltaNetBytes b)) :=
+  Obend.Digest.HashBytes.extractBinding H _ _ deltaNetBytes_injective
+    (congrArg Obend.Digest.HashBytes.ofBE h)
+
 theorem deltaNetDigest_binding (H : Obend.Digest.HashBytes.Hash) (a b : DeltaNet)
     (h : deltaNetDigest H a = deltaNetDigest H b) :
-    a = b ∨ Obend.Digest.HashBytes.Collision H := by
-  if he : deltaNetBytes a = deltaNetBytes b then
-    exact .inl (deltaNetBytes_injective he)
-  else
-    exact .inr ⟨deltaNetBytes a, deltaNetBytes b, he,
-      congrArg Obend.Digest.HashBytes.ofBE h⟩
+    a = b ∨ Obend.Digest.HashBytes.CollisionAmong H (fun x => x = deltaNetBytes a ∨ x = deltaNetBytes b) :=
+  Obend.Digest.HashBytes.bindingResult (deltaNetDigest_extractBinding H a b h)
+
+/-- The scope of `deltaNetDigest_binding` is exact: `H` collides on the two serializations
+    precisely when the nets differ and their digests agree. Equal nets leave one string in scope,
+    so nothing in it can collide. -/
+theorem deltaNetDigest_collisionAmong_iff (H : Obend.Digest.HashBytes.Hash) (a b : DeltaNet) :
+    Obend.Digest.HashBytes.CollisionAmong H (fun x => x = deltaNetBytes a ∨ x = deltaNetBytes b) ↔
+      a ≠ b ∧ Obend.Digest.HashBytes.ofBE (deltaNetDigest H a) =
+        Obend.Digest.HashBytes.ofBE (deltaNetDigest H b) := by
+  constructor
+  · rintro ⟨x, y, hx, hy, hne, heq⟩
+    rcases hx with rfl | rfl <;> rcases hy with rfl | rfl
+    · exact absurd rfl hne
+    · exact ⟨fun hab => hne (congrArg deltaNetBytes hab), heq⟩
+    · exact ⟨fun hab => hne (congrArg deltaNetBytes hab.symm), heq.symm⟩
+    · exact absurd rfl hne
+  · rintro ⟨hne, heq⟩
+    exact ⟨deltaNetBytes a, deltaNetBytes b, .inl rfl, .inr rfl,
+      fun hbytes => hne (deltaNetBytes_injective hbytes), heq⟩
+
+/-- The extractor answers `inl` exactly when the nets are equal: it never charges `H` with a
+    collision between a net and itself. -/
+theorem deltaNetDigest_extractBinding_sound (H : Obend.Digest.HashBytes.Hash) (a b : DeltaNet)
+    (h : deltaNetDigest H a = deltaNetDigest H b) :
+    a = b ↔ ∃ e, deltaNetDigest_extractBinding H a b h = .inl e := by
+  constructor
+  · intro hab
+    cases hx : deltaNetDigest_extractBinding H a b h with
+    | inl e => exact ⟨e, rfl⟩
+    | inr w =>
+      exact absurd hab ((deltaNetDigest_collisionAmong_iff H a b).mp w.toCollisionAmong).1
+  · rintro ⟨e, -⟩
+    exact e.down
+
+/-- The collision outcome is reachable: a constant hash collides on every two distinct nets. -/
+example (a b : DeltaNet) (hne : a ≠ b) :
+    Obend.Digest.HashBytes.CollisionAmong (fun _ => [])
+      (fun x => x = deltaNetBytes a ∨ x = deltaNetBytes b) :=
+  (deltaNetDigest_binding (fun _ => []) a b rfl).resolve_left hne
 
 /-- Render a `PortEnd` as a deterministic HVM2 wire variable identifier. -/
 def renderPortVar (p : PortEnd) : String :=
@@ -2458,8 +2500,7 @@ theorem lowerTermToLeafExpr_injective {a b : Obend.Core.Term.Term}
     (ha : LoweringSupported a) (hb : LoweringSupported b)
     (h : lowerTermToLeafExpr a = lowerTermToLeafExpr b) : a = b := by
   induction ha generalizing b <;> cases hb <;>
-    simp_all [lowerTermToLeafExpr, lowerTermToLeafExpr.lowerFields, stringToDeltaTag,
-      ← UInt16.toNat_inj]
+    simp_all [lowerTermToLeafExpr, lowerTermToLeafExpr.lowerFields, stringToDeltaTag]
   all_goals try omega
   all_goals first
     | solve_by_elim
@@ -3565,7 +3606,8 @@ def auditLeanFpgaTurn (H : Obend.Digest.HashBytes.Hash) (pinned : List UInt8)
 theorem auditLeanFpgaTurn_digest_binding (H : Obend.Digest.HashBytes.Hash) (pinned : List UInt8)
     (a b : LeanFpgaTurn) (ha : auditLeanFpgaTurn H pinned a = true)
     (hb : auditLeanFpgaTurn H pinned b = true) :
-    a.deltaNet = b.deltaNet ∨ Obend.Digest.HashBytes.Collision H := by
+    a.deltaNet = b.deltaNet ∨ Obend.Digest.HashBytes.CollisionAmong H
+      (fun x => x = deltaNetBytes a.deltaNet ∨ x = deltaNetBytes b.deltaNet) := by
   simp only [auditLeanFpgaTurn, Bool.and_eq_true, decide_eq_true_eq] at ha hb
   exact deltaNetDigest_binding H a.deltaNet b.deltaNet (ha.2.trans hb.2.symm)
 
@@ -4878,14 +4920,11 @@ theorem runStageBCathedralTrace_two_turn_inhabited
   let c₂ : CathedralTraceState :=
     { weightsRoot := 0x55556666, lastEpoch := 2, usedFlops := 13500000, remFlopsBudget := 6500000, remHiddenOpsBudget := 2, decoLedger := ledger₂ }
   have hPol₁ : stepPolisSession sampleInitSessionState sampleValidPolisTurn = some p₁ := by
-    have hf : sampleValidPolisTurn.inputCode ∉ sampleInitSessionState.revokedCodes := by
-      change (DeosCapCode.capToken 3 1 25) ∉ [DeosCapCode.capToken 3 1 9]
-      decide
     have hb : decide (turnMandateCost sampleValidPolisTurn ≤ sampleInitSessionState.mandateBudget) = true := by decide
     have ht : checkMemAfterHorizon sampleInitSessionState.lastTimestamp sampleValidPolisTurn.onlineMem = true := by decide
     have hk : refusePolisTurn sampleValidPolisTurn = none := by rfl
     have hm : checkSessionMemory sampleInitSessionState sampleValidPolisTurn = true := hMem₁
-    simp only [stepPolisSession, refusePolisSessionStep, hf, decide_false, hb, ht, hm, hk,
+    simp only [stepPolisSession, refusePolisSessionStep, hb, ht, hm, hk,
       Bool.not_true, Bool.false_eq_true, ↓reduceIte]
     rfl
   have hPol₂ : stepPolisSession p₁ sampleSecondPolisTurn = some p₂ := by
@@ -4894,7 +4933,7 @@ theorem runStageBCathedralTrace_two_turn_inhabited
     have ht : checkMemAfterHorizon p₁.lastTimestamp sampleSecondPolisTurn.onlineMem = true := by decide
     have hk : refusePolisTurn sampleSecondPolisTurn = none := by rfl
     have hm : checkSessionMemory p₁ sampleSecondPolisTurn = true := hMem₂
-    simp only [stepPolisSession, refusePolisSessionStep, hf, decide_false, hb, ht, hm, hk,
+    simp only [stepPolisSession, refusePolisSessionStep, hf, hb, ht, hm, hk,
       Bool.not_true, Bool.false_eq_true, ↓reduceIte]
     rfl
   have hCath₁ : stepCathedralTrace sampleInitTraceState sampleCathedralTurn = some c₁ := by

@@ -21,6 +21,7 @@ The instance exercised (`noCarry n`): for `n`-bit `x` and `y` with `x AND y = 0`
 `x &&& y = 0 → x + y = x ||| y`, stated over the adder's bits.
 -/
 public import Obend.Judge.Lrat
+import Obend.Tactic.Tooth
 
 public section
 namespace Obend.Judge.Identity
@@ -55,9 +56,12 @@ def BExp.eval (σ : Nat → Bool) : BExp → Bool
 
 /-! ## The Tseitin encoding -/
 
-@[expose] def andGate (o a b : Int) : List Lrat.Clause := [[-o, a], [-o, b], [o, -a, -b]]
-@[expose] def orGate (o a b : Int) : List Lrat.Clause := [[o, -a], [o, -b], [-o, a, b]]
-@[expose] def xorGate (o a b : Int) : List Lrat.Clause := [[-o, a, b], [-o, -a, -b], [o, -a, b], [o, a, -b]]
+/-- The clauses of a gate with output `o` and inputs `a`, `b`. `tseitin` writes these lists out, so
+that the encoding reduces without them; the model lemmas (`and_sat`, `or_sat`, `xor_sat`) are stated
+over the names. -/
+def andGate (o a b : Int) : List Lrat.Clause := [[-o, a], [-o, b], [o, -a, -b]]
+def orGate (o a b : Int) : List Lrat.Clause := [[o, -a], [o, -b], [-o, a, b]]
+def xorGate (o a b : Int) : List Lrat.Clause := [[-o, a, b], [-o, -a, -b], [o, -a, b], [o, a, -b]]
 
 /-- The literal standing for an expression, its clauses, and the next fresh variable. -/
 @[expose] def tseitin : BExp → Nat → Int × List Lrat.Clause × Nat
@@ -69,15 +73,19 @@ def BExp.eval (σ : Nat → Bool) : BExp → Bool
   | .and a b, n =>
     let ra := tseitin a n
     let rb := tseitin b ra.2.2
-    ((rb.2.2 : Int), ra.2.1 ++ rb.2.1 ++ andGate rb.2.2 ra.1 rb.1, rb.2.2 + 1)
+    ((rb.2.2 : Int), ra.2.1 ++ rb.2.1 ++
+      [[-(rb.2.2 : Int), ra.1], [-(rb.2.2 : Int), rb.1], [(rb.2.2 : Int), -ra.1, -rb.1]], rb.2.2 + 1)
   | .or a b, n =>
     let ra := tseitin a n
     let rb := tseitin b ra.2.2
-    ((rb.2.2 : Int), ra.2.1 ++ rb.2.1 ++ orGate rb.2.2 ra.1 rb.1, rb.2.2 + 1)
+    ((rb.2.2 : Int), ra.2.1 ++ rb.2.1 ++
+      [[(rb.2.2 : Int), -ra.1], [(rb.2.2 : Int), -rb.1], [-(rb.2.2 : Int), ra.1, rb.1]], rb.2.2 + 1)
   | .xor a b, n =>
     let ra := tseitin a n
     let rb := tseitin b ra.2.2
-    ((rb.2.2 : Int), ra.2.1 ++ rb.2.1 ++ xorGate rb.2.2 ra.1 rb.1, rb.2.2 + 1)
+    ((rb.2.2 : Int), ra.2.1 ++ rb.2.1 ++
+      [[-(rb.2.2 : Int), ra.1, rb.1], [-(rb.2.2 : Int), -ra.1, -rb.1], [(rb.2.2 : Int), -ra.1, rb.1],
+        [(rb.2.2 : Int), ra.1, -rb.1]], rb.2.2 + 1)
 
 /-! ## Assignments that agree below a bound -/
 
@@ -173,7 +181,7 @@ theorem tseitin_bounds : ∀ (e : BExp) (n : Nat), 0 < n → e.varsIn n = true �
     rcases hc with (hc | hc) | hc
     · exact inRange_mono (hc₁ c hc x hx) (Nat.le_trans le₂ (Nat.le_succ _))
     · exact inRange_mono (hc₂ c hc x hx) (Nat.le_succ _)
-    · simp only [andGate, orGate, xorGate, List.mem_cons, List.mem_nil_iff, or_false] at hc
+    · simp only [List.mem_cons, List.mem_nil_iff, or_false] at hc
       repeat' (first | (rcases hc with rfl | hc) | (subst hc))
       all_goals
         simp only [List.mem_cons, List.mem_nil_iff, or_false] at hx
@@ -360,6 +368,8 @@ theorem encode_sound (d : Identity) (h : Unsat (encode d)) : d.Holds := by
         rw [lit]; simp [Identity.violation, BExp.eval, hyp, hd]
   · exact absurd (fun _ h => by cases h) (h (fun _ => false))
 
+#tooth encode_sound by mutation encode := fun _ => ⟨0, [[]]⟩
+
 /-- The translation of conditional identities into LRAT's objects. -/
 @[expose] def translation : Judge.Translation Lrat.format Identity Identity.Holds where
   encode := encode
@@ -367,24 +377,26 @@ theorem encode_sound (d : Identity) (h : Unsat (encode d)) : d.Holds := by
 
 /-! ## The instance: no-carry addition is OR -/
 
-/-- Bit `i` of `x` (variables `1 … n`) and of `y` (variables `n+1 … 2n`). -/
-@[expose] def xBit (i : Nat) : BExp := .var (i + 1)
-@[expose] def yBit (n i : Nat) : BExp := .var (n + i + 1)
+/-- The input variables for bit `i` of each operand. -/
+def xBit (i : Nat) : BExp := .var (i + 1)
+def yBit (n i : Nat) : BExp := .var (n + i + 1)
 
-/-- The ripple-carry sum bits of `x + y` and the carry out. -/
+/-- The ripple-carry sum bits of `x + y` and the carry out. Bit `i` of `x` is the variable `i + 1`
+(variables `1 … n`) and bit `i` of `y` the variable `n + i + 1` (variables `n+1 … 2n`). -/
 @[expose] def adder (n : Nat) : List BExp :=
   let step := fun (acc : List BExp × BExp) (i : Nat) =>
-    let x := xBit i; let y := yBit n i; let c := acc.2
+    let x : BExp := .var (i + 1); let y : BExp := .var (n + i + 1); let c := acc.2
     (acc.1 ++ [.xor (.xor x y) c], .or (.and x y) (.and c (.xor x y)))
   let r := (List.range n).foldl step ([], .const false)
   r.1 ++ [r.2]
 
 /-- `x &&& y = 0`. -/
 @[expose] def disjoint (n : Nat) : BExp :=
-  (List.range n).foldl (fun acc i => .and acc (.not (.and (xBit i) (yBit n i)))) (.const true)
+  (List.range n).foldl (fun acc i => .and acc (.not (.and (.var (i + 1)) (.var (n + i + 1))))) (.const true)
 
 /-- `x ||| y` with a zero top bit. -/
-@[expose] def orBits (n : Nat) : List BExp := (List.range n).map (fun i => .or (xBit i) (yBit n i)) ++ [.const false]
+@[expose] def orBits (n : Nat) : List BExp :=
+  (List.range n).map (fun i => .or (.var (i + 1)) (.var (n + i + 1))) ++ [.const false]
 
 /-- **`x &&& y = 0 → x + y = x ||| y`** for `n`-bit `x` and `y`. -/
 @[expose] def noCarry (n : Nat) : Identity := ⟨s!"no-carry-add-is-or-{n}", 2 * n, disjoint n, adder n, orBits n⟩

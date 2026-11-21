@@ -14,7 +14,7 @@ Addresses Requirement R3 and Milestone 3 Feature 26 (`Receipt.blind`) and Featur
    Consequently, changing or inserting any hidden cell leaves the low projection unchanged
    (`hidden_change_invisible`, `cons_hidden_invisible`).
 3. **Cryptographic Blinding & Root Invariance**: Every cell is bound with a cryptographic blinding salt
-   (`cellBlind H c = digestWith H c.salt c.content`). In the projected view (`projectCell`), visible cells
+   (`cellBlindMetadataBoundValues` binds the cell metadata, salt, and content). In the projected view (`projectCell`), visible cells
    reveal `(id, required, salt, content)`, while hidden cells reveal only the blinded commitment
    (`blinded id (cellBlind H c)`). The Merkle root of the projected vault equals the unredacted vault root
    bit-for-bit (`projectVault_mapRoot_eq`).
@@ -37,6 +37,7 @@ from; the 2026-11-03 review (S12) found the node deriving its salts from public 
 requirement on an issuer is a fresh, secret salt per cell; this module proves binding, not hiding.
 -/
 public import Obend.Receipt.Merkle
+import all Obend.Receipt.Merkle
 public import Obend.Core.Digest
 public import Obend.Digest.HashBytes
 
@@ -44,10 +45,10 @@ public section
 
 namespace Obend.Vault.Projection
 
-open Obend.Core.Digest (digestWith Admissible admissible_of_lt binds_or_collides)
-open Obend.Digest.HashBytes (Hash Collision CollisionAmong)
-open Obend.Receipt.Merkle (Small Bounded root path climb leaf leaves mapRoot Opening opens climb_path mapOpening opens_complete opens_binds_scoped
-  leaves_length leaves_small leaves_getD MerkleBatchEntry MerkleBatchProof verifyMerkleBatchProof verifySingleMerkleLeaf
+open Obend.Core.Digest (digestWith preimage admissible_of_lt binds_or_collides)
+open Obend.Digest.HashBytes (Hash CollisionAmong)
+open Obend.Receipt.Merkle (openingPreimages climbPreimages Small Bounded root path climb leaf leaves mapRoot Opening opens climb_path mapOpening opens_binds_scoped
+  leaves_length MerkleBatchEntry MerkleBatchProof verifyMerkleBatchProof verifySingleMerkleLeaf
   verifyMerkleBatchProof_sound verifyMerkleBatchProof_honest verifyMerkleBatchProof_binds_scoped honestBatchEntry honestBatchProof leaf_binds_scoped)
 
 set_option autoImplicit false
@@ -231,6 +232,18 @@ def cellBlindMetadataBoundValues (H : Hash) (id readCap writeCap capMask salt co
     (digestWith H id (digestWith H readCap (digestWith H writeCap capMask)))
     (digestWith H salt content)
 
+/-- The five inputs hashed by the cell commitment, from the inner capability pair to the root. -/
+def cellBlindValuesPreimages (H : Hash) (id readCap writeCap capMask salt content : Nat) :
+    List (List UInt8) :=
+  let writes := digestWith H writeCap capMask
+  let caps := digestWith H readCap writes
+  let metadata := digestWith H id caps
+  [preimage writeCap capMask, preimage readCap writes, preimage id caps, preimage salt content,
+    preimage metadata (digestWith H salt content)]
+
+def cellBlindPreimages (H : Hash) (c : VaultCell) : List (List UInt8) :=
+  cellBlindValuesPreimages H c.id c.readCap c.writeCap c.capMask c.salt c.content
+
 /-- The metadata-bound blinded commitment of a cell:
     commits to `(c.id, c.readCap, c.writeCap, c.capMask, c.salt, c.content)`. -/
 def cellBlind (H : Hash) (c : VaultCell) : Nat :=
@@ -363,6 +376,41 @@ theorem getD_map_helper {α β : Type} (f : α → β) (d : α) (d' : β) :
     have hj' : n < xs.length := by simpa using hj
     exact getD_map_helper f d d' xs n hj'
 
+/-- Read the indexed leaves directly from the accumulator used by `List.mapIdx`.
+    This avoids the classical dependency of `List.getElem_mapIdx` in Lean 4.35. -/
+private theorem leaves_eq_map_zipIdx (H : Hash) (vs : List Nat) :
+    leaves H vs = vs.zipIdx.map (fun (v, i) => leaf H i v) := by
+  suffices accEq : ∀ (xs : List Nat) (acc : Array Nat),
+      List.mapIdx.go (leaf H) xs acc =
+        acc.toList ++ (xs.zipIdx acc.size).map (fun (v, i) => leaf H i v) from accEq vs #[]
+  intro xs
+  induction xs with
+  | nil => intro acc; exact (List.append_nil _).symm
+  | cons v xs ih =>
+    intro acc
+    rw [List.mapIdx.go, ih, Array.toList_push, Array.size_push, List.zipIdx_cons,
+      List.map_cons, List.append_assoc]
+    rfl
+
+private theorem indexedLeaves_small {H : Hash} (hb : Bounded H) (vs : List Nat) :
+    ∀ x ∈ leaves H vs, x < 2 ^ 256 := by
+  rw [leaves_eq_map_zipIdx]
+  intro x hx
+  obtain ⟨⟨v, i⟩, _, rfl⟩ := List.mem_map.mp hx
+  exact hb i v
+
+private theorem indexedLeaves_getD (H : Hash) (vs : List Nat) {i : Nat} (hi : i < vs.length) :
+    (leaves H vs).getD i 0 = leaf H i (vs.getD i 0) := by
+  simp [leaves_eq_map_zipIdx, List.getD_eq_getElem?_getD, List.getElem?_zipIdx,
+    List.getElem?_eq_getElem hi]
+
+private theorem honestOpening_opens {H : Hash} (hb : Bounded H) (vs : List Nat)
+    (j : Nat) (hj : j < vs.length) (hjs : j < 2 ^ 256) :
+    opens H (mapOpening H vs j) (mapRoot H vs) = true := by
+  have hc := climb_path hb (leaves H vs) (indexedLeaves_small hb vs) j (by rw [leaves_length]; exact hj)
+  rw [leaves_length, indexedLeaves_getD H vs hj] at hc
+  simp only [opens, mapOpening, mapRoot, hc, Small, hj, hjs, decide_true, Bool.true_and, beq_self_eq_true]
+
 /-- **Completeness Theorem**: Every honestly issued blinded opening verifies against the unredacted vault root. -/
 theorem verify_blinded_opening_complete {H : Hash} (hb : Bounded H)
     (v : List Auth) (cells : List VaultCell) (j : Nat)
@@ -370,7 +418,7 @@ theorem verify_blinded_opening_complete {H : Hash} (hb : Bounded H)
     verifyBlindedOpening H (mkBlindedOpening H v cells j) (mapRoot H (vaultCommits H cells)) = true := by
   have hlen : j < (vaultCommits H cells).length := by
     simp [vaultCommits, hj]
-  have hc := opens_complete hb (vaultCommits H cells) j hlen hjs
+  have hc := honestOpening_opens hb (vaultCommits H cells) j hlen hjs
   rw [verifyBlindedOpening_eq_opens]
   unfold mkBlindedOpening mapOpening
   dsimp only
@@ -404,7 +452,7 @@ theorem toBatchEntry_mkBlindedOpening (H : Hash) (v : List Auth) (cells : List V
   have hget : (vaultCommits H cells).getD i 0 = cellBlind H (cells.getD i default) :=
     getD_map_helper (cellBlind H) default 0 cells i hi
   simp only [BlindedOpening.toBatchEntry, mkBlindedOpening, mapOpening, honestBatchEntry,
-    leaves_getD H (vaultCommits H cells) hlen, projectCell_commit_eq, hget]
+    indexedLeaves_getD H (vaultCommits H cells) hlen, projectCell_commit_eq, hget]
 
 /-- **Multiproof completeness**: the honest multiproof of any pairwise-distinct, in-range set of
 positions verifies against the unredacted vault root. -/
@@ -419,7 +467,7 @@ theorem verify_blinded_multiproof_complete {H : Hash} (hb : Bounded H)
     rw [List.map_map]
     exact List.map_congr_left fun i hi => toBatchEntry_mkBlindedOpening H v cells (hbounds i hi)
   have hhonest := verifyMerkleBatchProof_honest hb (leaves H (vaultCommits H cells))
-    (leaves_small hb _) (by rw [hl]; exact hs) idxs hnodup (fun i hi => by rw [hl]; exact hbounds i hi)
+    (indexedLeaves_small hb _) (by rw [hl]; exact hs) idxs hnodup (fun i hi => by rw [hl]; exact hbounds i hi)
   simp only [verifyBlindedMultiProof, mkBlindedMultiProof, BlindedMultiProof.toBatch, hmap, mapRoot]
   simp only [honestBatchProof, hl] at hhonest
   exact hhonest
@@ -443,6 +491,15 @@ theorem verifyBlindedMultiProof_sound {H : Hash} {bmp : BlindedMultiProof}
     simp only [opens, Bool.and_eq_true]
     exact ⟨⟨hsingle.1.1.1, hsingle.1.1.2⟩, hsingle.2⟩
 
+/-- The two leaf encodings and both authentication paths for this position of a multiproof. -/
+def blindedMultiProofPreimages (H : Hash) (cells : List VaultCell) (bo : BlindedOpening)
+    (hi : bo.index < cells.length) : List (List UInt8) :=
+  let l := leaves H (vaultCommits H cells)
+  let e := bo.toBatchEntry H
+  [preimage bo.index (projectedCommit H bo.cell), preimage bo.index (cellBlind H cells[bo.index])] ++
+    (climbPreimages H l.length bo.index e.leafDigest e.auditPath ++
+     climbPreimages H l.length bo.index (l.getD bo.index 0) (path H l bo.index))
+
 /-- **Multiproof binding**: against the unredacted root of `cells` with the right size, every
 opening a verifying multiproof carries commits to the vault's cell at its position, or `H`
 collides. -/
@@ -451,7 +508,8 @@ theorem verifyBlindedMultiProof_binds {H : Hash} (hb : Bounded H) (cells : List 
     (h : verifyBlindedMultiProof H bmp = true)
     (hroot : bmp.vaultRoot = mapRoot H (vaultCommits H cells)) (hsize : bmp.size = cells.length)
     {bo : BlindedOpening} (hbo : bo ∈ bmp.openings) (hi : bo.index < cells.length) :
-    projectedCommit H bo.cell = cellBlind H cells[bo.index] ∨ Collision H := by
+    projectedCommit H bo.cell = cellBlind H cells[bo.index] ∨
+      CollisionAmong H (fun m => m ∈ blindedMultiProofPreimages H cells bo hi) := by
   have hl : (leaves H (vaultCommits H cells)).length = cells.length := by
     rw [leaves_length, vaultCommits_length]
   have hi' : bo.index < (leaves H (vaultCommits H cells)).length := by rw [hl]; exact hi
@@ -459,15 +517,20 @@ theorem verifyBlindedMultiProof_binds {H : Hash} (hb : Bounded H) (cells : List 
     rw [← mapRoot, ← hroot]; exact h
   have hsz : (bmp.toBatch H).treeSize = (leaves H (vaultCommits H cells)).length := by
     simp [BlindedMultiProof.toBatch, hsize, hl]
-  have hbind := (verifyMerkleBatchProof_binds_scoped hb (leaves H (vaultCommits H cells)) (leaves_small hb _)
-    hbatch hsz (List.mem_map_of_mem (f := BlindedOpening.toBatchEntry H) hbo) hi').imp_right CollisionAmong.global
+  have hbind := verifyMerkleBatchProof_binds_scoped hb (leaves H (vaultCommits H cells)) (indexedLeaves_small hb _)
+    hbatch hsz (List.mem_map_of_mem (f := BlindedOpening.toBatchEntry H) hbo) hi'
   have hleaf : (leaves H (vaultCommits H cells))[bo.index] = leaf H bo.index (cellBlind H cells[bo.index]) := by
-    simp [leaves, vaultCommits]
+    simp [leaves_eq_map_zipIdx, List.getElem_zipIdx, vaultCommits]
   simp only [BlindedOpening.toBatchEntry] at hbind
   rw [hleaf] at hbind
   rcases hbind with heq | hcoll
-  · exact (leaf_binds_scoped (Nat.lt_trans hi hs) heq).imp_right CollisionAmong.global
-  · exact .inr hcoll
+  · apply (leaf_binds_scoped (Nat.lt_trans hi hs) heq).imp_right
+    intro c
+    apply c.mono
+    intro m hm
+    apply List.mem_append_left
+    rcases hm with rfl | rfl <;> simp
+  · exact .inr (hcoll.mono fun _ hm => List.mem_append_right _ hm)
 
 /-- **Zero Unblinded Data Exposure**: A hidden cell's projected representation cannot evaluate to its raw content. -/
 theorem projectCell_blinded_reveals_no_content (H : Hash) (v : List Auth) (c : VaultCell)
@@ -487,51 +550,64 @@ theorem cellBlind_binds {H : Hash} (hb : Bounded H) {c₁ c₂ : VaultCell}
     (hid₂ : c₂.id < 2 ^ 256) (hsalt₂ : c₂.salt < 2 ^ 256)
     (heq : cellBlind H c₁ = cellBlind H c₂) :
     (c₁.id = c₂.id ∧ c₁.readCap = c₂.readCap ∧ c₁.writeCap = c₂.writeCap ∧
-     c₁.capMask = c₂.capMask ∧ c₁.salt = c₂.salt ∧ c₁.content = c₂.content) ∨ Collision H := by
+     c₁.capMask = c₂.capMask ∧ c₁.salt = c₂.salt ∧ c₁.content = c₂.content) ∨
+      CollisionAmong H (fun m => m ∈ cellBlindPreimages H c₁ ++ cellBlindPreimages H c₂) := by
   unfold cellBlind cellBlindMetadataBoundValues at heq
-  have hadm_top₁ : Admissible (digestWith H c₁.id (digestWith H c₁.readCap (digestWith H c₁.writeCap c₁.capMask))) :=
-    admissible_of_lt (hb _ _)
-  have hadm_top₂ : Admissible (digestWith H c₂.id (digestWith H c₂.readCap (digestWith H c₂.writeCap c₂.capMask))) :=
-    admissible_of_lt (hb _ _)
-  rcases binds_or_collides H hadm_top₁ hadm_top₂ heq with ⟨h_meta, h_body⟩ | hcoll
-  · have hadm_meta₁ : Admissible c₁.id := admissible_of_lt hid₁
-    have hadm_meta₂ : Admissible c₂.id := admissible_of_lt hid₂
-    rcases binds_or_collides H hadm_meta₁ hadm_meta₂ h_meta with ⟨hid_eq, h_caps⟩ | hcoll
-    · have hadm_caps₁ : Admissible c₁.readCap := admissible_of_lt (readCapOf_lt c₁.required)
-      have hadm_caps₂ : Admissible c₂.readCap := admissible_of_lt (readCapOf_lt c₂.required)
-      rcases binds_or_collides H hadm_caps₁ hadm_caps₂ h_caps with ⟨hread_eq, h_wcaps⟩ | hcoll
-      · have hadm_wcaps₁ : Admissible c₁.writeCap := admissible_of_lt (writeCapOf_lt c₁.required)
-        have hadm_wcaps₂ : Admissible c₂.writeCap := admissible_of_lt (writeCapOf_lt c₂.required)
-        rcases binds_or_collides H hadm_wcaps₁ hadm_wcaps₂ h_wcaps with ⟨hwrite_eq, hmask_eq⟩ | hcoll
-        · have hadm_body₁ : Admissible c₁.salt := admissible_of_lt hsalt₁
-          have hadm_body₂ : Admissible c₂.salt := admissible_of_lt hsalt₂
-          rcases binds_or_collides H hadm_body₁ hadm_body₂ h_body with ⟨hsalt_eq, hcont_eq⟩ | hcoll
-          · left
-            exact ⟨hid_eq, hread_eq, hwrite_eq, hmask_eq, hsalt_eq, hcont_eq⟩
-          · right; exact hcoll.global
-        · right; exact hcoll.global
-      · right; exact hcoll.global
-    · right; exact hcoll.global
-  · right; exact hcoll.global
+  rcases binds_or_collides H (admissible_of_lt (hb _ _)) (admissible_of_lt (hb _ _)) heq with
+    ⟨hmeta, hbody⟩ | hcoll
+  rcases binds_or_collides H (admissible_of_lt hid₁) (admissible_of_lt hid₂) hmeta with
+    ⟨hid, hcaps⟩ | hcoll
+  rcases binds_or_collides H (admissible_of_lt (readCapOf_lt c₁.required))
+    (admissible_of_lt (readCapOf_lt c₂.required)) hcaps with ⟨hread, hwrites⟩ | hcoll
+  rcases binds_or_collides H (admissible_of_lt (writeCapOf_lt c₁.required))
+    (admissible_of_lt (writeCapOf_lt c₂.required)) hwrites with ⟨hwrite, hmask⟩ | hcoll
+  rcases binds_or_collides H (admissible_of_lt hsalt₁) (admissible_of_lt hsalt₂) hbody with
+    ⟨hsalt, hcontent⟩ | hcoll
+  exact .inl ⟨hid, hread, hwrite, hmask, hsalt, hcontent⟩
+  all_goals
+    apply Or.inr
+    apply hcoll.mono
+    intro m hm
+    rcases hm with rfl | rfl <;>
+      simp [cellBlindPreimages, cellBlindValuesPreimages, VaultCell.readCap, VaultCell.writeCap]
 
-/-- **Metadata Tampering Refusal Theorem (`tampered_metadata_opening_refused`)**:
-    Under a bounded hash `H`, tampering with `cell.id` or `cell.readCap` (or `cell.writeCap` /
-    `cell.capMask`) in an opening at index `j < cells.length` invalidates `verifyBlindedOpening`
-    against `projectedMerkleRoot H v cells`, or exhibits a collision of `H`. (Stated up to
-    `Collision H`, the spine's form: `¬ Collision H` is false for every fixed-width hash by
-    pigeonhole, so a theorem assuming it says nothing at `deployed`.) -/
-theorem tampered_metadata_opening_refused {H : Hash} (hb : Bounded H)
+/-- The scope of `cellBlind_binds` is finite and explicit: five hash inputs per cell. -/
+example (H : Hash) (c : VaultCell) : (cellBlindPreimages H c).length = 5 := rfl
+
+/-- Both outcomes of `cellBlind_binds` occur, and `Bounded` is inhabited. Under a constant hash
+    two cells that differ only in content share a commitment, so the theorem returns a collision
+    among their ten hash inputs; it cannot be strengthened to outright binding. -/
+example :
+    CollisionAmong (fun _ => [])
+      (fun m => m ∈ cellBlindPreimages (fun _ => []) ⟨1, [.read], 7, 100⟩ ++
+        cellBlindPreimages (fun _ => []) ⟨1, [.read], 7, 200⟩) :=
+  (cellBlind_binds (H := fun _ => []) (c₁ := ⟨1, [.read], 7, 100⟩) (c₂ := ⟨1, [.read], 7, 200⟩)
+    (fun _ _ => by first | exact Nat.two_pow_pos 256 | exact Nat.pos_pow (by decide))
+    (by decide) (by decide) (by decide) (by decide) (by first | rfl | decide)).resolve_left
+    (fun h => absurd h.2.2.2.2.2 (by decide))
+
+/-- Hash inputs from the submitted and honest openings and the two underlying cell commitments. -/
+def tamperedOpeningPreimages (H : Hash) (v : List Auth) (cells : List VaultCell)
+    (j : Nat) (c : VaultCell) : List (List UInt8) :=
+  let honest := mapOpening H (vaultCommits H cells) j
+  let submitted := { honest with value := projectedCommit H (projectCell H v c) }
+  (openingPreimages H submitted ++ openingPreimages H honest) ++
+    (cellBlindPreimages H c ++ cellBlindPreimages H (cells.getD j default))
+
+private theorem tampered_opening_refused {H : Hash} (hb : Bounded H)
     (v : List Auth) (cells : List VaultCell) (j : Nat) (c_tampered : VaultCell)
     (hj : j < cells.length) (hjs : j < 2 ^ 256)
     (hid_orig : (cells.getD j default).id < 2 ^ 256)
     (hsalt_orig : (cells.getD j default).salt < 2 ^ 256)
     (hid_tamp : c_tampered.id < 2 ^ 256)
     (hsalt_tamp : c_tampered.salt < 2 ^ 256)
-    (h_tampered : c_tampered.id ≠ (cells.getD j default).id ∨
-                  c_tampered.readCap ≠ (cells.getD j default).readCap) :
+    (ht : ¬ (c_tampered.id = (cells.getD j default).id ∧
+              c_tampered.readCap = (cells.getD j default).readCap ∧
+              c_tampered.capMask = (cells.getD j default).capMask)) :
     verifyBlindedOpening H
       { mkBlindedOpening H v cells j with cell := projectCell H v c_tampered }
-      (projectedMerkleRoot H v cells) = false ∨ Collision H := by
+      (projectedMerkleRoot H v cells) = false ∨
+      CollisionAmong H (fun m => m ∈ tamperedOpeningPreimages H v cells j c_tampered) := by
   cases hver : verifyBlindedOpening H
       { mkBlindedOpening H v cells j with cell := projectCell H v c_tampered }
       (projectedMerkleRoot H v cells) with
@@ -543,25 +619,58 @@ theorem tampered_metadata_opening_refused {H : Hash} (hb : Bounded H)
     dsimp only at hver
     have hlen : j < (vaultCommits H cells).length := by
       simp [vaultCommits, hj]
-    have h_honest := opens_complete hb (vaultCommits H cells) j hlen hjs
-    rcases (opens_binds_scoped hb hver h_honest rfl rfl).imp_right CollisionAmong.global with hval_eq | hcoll
+    have h_honest := honestOpening_opens hb (vaultCommits H cells) j hlen hjs
+    rcases opens_binds_scoped hb hver h_honest rfl rfl with hval_eq | hcoll
     · dsimp only [mapOpening] at hval_eq
       rw [projectCell_commit_eq] at hval_eq
       have hget : (vaultCommits H cells).getD j 0 = cellBlind H (cells.getD j default) :=
         getD_map_helper (cellBlind H) default 0 cells j hj
       rw [hget] at hval_eq
       rcases cellBlind_binds hb hid_tamp hsalt_tamp hid_orig hsalt_orig hval_eq with
-        ⟨hid_eq, hread_eq, _, _, _, _⟩ | hcoll
-      · rcases h_tampered with hne_id | hne_read
-        · exact absurd hid_eq hne_id
-        · exact absurd hread_eq hne_read
-      · exact hcoll
-    · exact hcoll
+        ⟨hid, hread, _, hmask, _, _⟩ | c
+      · exact (ht ⟨hid, hread, hmask⟩).elim
+      · exact c.mono fun _ hm => List.mem_append_right _ hm
+    · exact hcoll.mono fun _ hm => List.mem_append_left _ hm
 
-/-- **Full 8-Capability Mask Tampering Refusal (`tampered_capMask_opening_refused`)**:
-    Under a bounded hash `H`, tampering with any of the 8 `Auth` capabilities
-    (`c_tampered.capMask ≠ (cells.getD j default).capMask`) invalidates `verifyBlindedOpening`
-    against `projectedMerkleRoot H v cells`, or exhibits a collision of `H`. -/
+/-- Either the claimed property holds or two inputs in the specified scope collide. This is
+    `P ∨ CollisionAmong H S` (`toOr`) with a `resolve_right` that also accepts a refutation of any
+    consequence of the scoped collision, by default the global `Collision H`; that is the form in
+    which `tests/metasystem/VaultConsensusTest.lean` consumes `tampered_metadata_opening_refused`. -/
+inductive BoundOrCollidesAmong (P : Prop) (H : Hash) (S : List UInt8 → Prop) : Prop where
+  | inl (h : P)
+  | inr (c : CollisionAmong H S)
+
+theorem BoundOrCollidesAmong.toOr {P : Prop} {H : Hash} {S : List UInt8 → Prop}
+    (b : BoundOrCollidesAmong P H S) : P ∨ CollisionAmong H S :=
+  match b with
+  | .inl hp => .inl hp
+  | .inr hc => .inr hc
+
+theorem BoundOrCollidesAmong.resolve_right {P Q : Prop} {H : Hash} {S : List UInt8 → Prop}
+    (b : BoundOrCollidesAmong P H S) (h : ¬ Q)
+    (himp : CollisionAmong H S → Q := by intro c; exact c.global) : P :=
+  b.toOr.resolve_right (fun c => h (himp c))
+
+/-- Altering the id or read capability invalidates the opening or yields a collision on its inputs. -/
+theorem tampered_metadata_opening_refused {H : Hash} (hb : Bounded H)
+    (v : List Auth) (cells : List VaultCell) (j : Nat) (c_tampered : VaultCell)
+    (hj : j < cells.length) (hjs : j < 2 ^ 256)
+    (hid_orig : (cells.getD j default).id < 2 ^ 256)
+    (hsalt_orig : (cells.getD j default).salt < 2 ^ 256)
+    (hid_tamp : c_tampered.id < 2 ^ 256)
+    (hsalt_tamp : c_tampered.salt < 2 ^ 256)
+    (h_tampered : c_tampered.id ≠ (cells.getD j default).id ∨
+                  c_tampered.readCap ≠ (cells.getD j default).readCap) :
+    BoundOrCollidesAmong
+      (verifyBlindedOpening H
+        { mkBlindedOpening H v cells j with cell := projectCell H v c_tampered }
+        (projectedMerkleRoot H v cells) = false)
+      H (fun m => m ∈ tamperedOpeningPreimages H v cells j c_tampered) := by
+  have ht := tampered_opening_refused hb v cells j c_tampered hj hjs hid_orig hsalt_orig hid_tamp hsalt_tamp
+    (fun eq => h_tampered.elim (fun h => h eq.1) (fun h => h eq.2.1))
+  exact ht.elim BoundOrCollidesAmong.inl BoundOrCollidesAmong.inr
+
+/-- Altering any capability bit invalidates the opening or yields a collision on its inputs. -/
 theorem tampered_capMask_opening_refused {H : Hash} (hb : Bounded H)
     (v : List Auth) (cells : List VaultCell) (j : Nat) (c_tampered : VaultCell)
     (hj : j < cells.length) (hjs : j < 2 ^ 256)
@@ -572,30 +681,10 @@ theorem tampered_capMask_opening_refused {H : Hash} (hb : Bounded H)
     (h_tampered : c_tampered.capMask ≠ (cells.getD j default).capMask) :
     verifyBlindedOpening H
       { mkBlindedOpening H v cells j with cell := projectCell H v c_tampered }
-      (projectedMerkleRoot H v cells) = false ∨ Collision H := by
-  cases hver : verifyBlindedOpening H
-      { mkBlindedOpening H v cells j with cell := projectCell H v c_tampered }
-      (projectedMerkleRoot H v cells) with
-  | false => exact Or.inl rfl
-  | true =>
-    right
-    rw [projectedMerkleRoot_eq_vaultRoot, verifyBlindedOpening_eq_opens] at hver
-    unfold mkBlindedOpening at hver
-    dsimp only at hver
-    have hlen : j < (vaultCommits H cells).length := by
-      simp [vaultCommits, hj]
-    have h_honest := opens_complete hb (vaultCommits H cells) j hlen hjs
-    rcases (opens_binds_scoped hb hver h_honest rfl rfl).imp_right CollisionAmong.global with hval_eq | hcoll
-    · dsimp only [mapOpening] at hval_eq
-      rw [projectCell_commit_eq] at hval_eq
-      have hget : (vaultCommits H cells).getD j 0 = cellBlind H (cells.getD j default) :=
-        getD_map_helper (cellBlind H) default 0 cells j hj
-      rw [hget] at hval_eq
-      rcases cellBlind_binds hb hid_tamp hsalt_tamp hid_orig hsalt_orig hval_eq with
-        ⟨_, _, _, hmask_eq, _, _⟩ | hcoll
-      · exact absurd hmask_eq h_tampered
-      · exact hcoll
-    · exact hcoll
+      (projectedMerkleRoot H v cells) = false ∨
+      CollisionAmong H (fun m => m ∈ tamperedOpeningPreimages H v cells j c_tampered) :=
+  tampered_opening_refused hb v cells j c_tampered hj hjs hid_orig hsalt_orig hid_tamp hsalt_tamp
+    (fun eq => h_tampered eq.2.2)
 
 /-- **A revealed cell in a verifying multiproof is the vault's cell** at that position, field by
 field, or `H` collides: id, both capability words, the capability mask, the salt and the content. -/
@@ -610,14 +699,16 @@ theorem verifyBlindedMultiProof_revealed_binds {H : Hash} (hb : Bounded H) (cell
     (hid' : cells[bo.index].id < 2 ^ 256) (hsalt' : cells[bo.index].salt < 2 ^ 256) :
     (id = cells[bo.index].id ∧ readCapOf req = cells[bo.index].readCap ∧
       writeCapOf req = cells[bo.index].writeCap ∧ capMaskOf req = cells[bo.index].capMask ∧
-      salt = cells[bo.index].salt ∧ content = cells[bo.index].content) ∨ Collision H := by
+      salt = cells[bo.index].salt ∧ content = cells[bo.index].content) ∨
+      CollisionAmong H (fun m => m ∈ blindedMultiProofPreimages H cells bo hi ++
+        (cellBlindPreimages H ⟨id, req, salt, content⟩ ++ cellBlindPreimages H cells[bo.index])) := by
   rcases verifyBlindedMultiProof_binds (bmp := bmp) hb cells hs h hroot hsize hbo hi with heq | hcoll
   · rw [hcell] at heq
     have heq' : cellBlind H ⟨id, req, salt, content⟩ = cellBlind H cells[bo.index] := heq
     rcases cellBlind_binds hb hid hsalt hid' hsalt' heq' with hf | hcoll
     · exact .inl hf
-    · exact .inr hcoll
-  · exact .inr hcoll
+    · exact .inr (hcoll.mono fun _ hm => List.mem_append_right _ hm)
+  · exact .inr (hcoll.mono fun _ hm => List.mem_append_left _ hm)
 
 end Obend.Vault.Projection
 
