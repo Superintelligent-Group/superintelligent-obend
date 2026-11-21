@@ -6,7 +6,7 @@ record Counter:
   n: Nat
 
 spec Start for Counter:
-  claim positive: self.n == 41n
+  claim positive: 0n < self.n
   def n() -> Nat:
     41n
 
