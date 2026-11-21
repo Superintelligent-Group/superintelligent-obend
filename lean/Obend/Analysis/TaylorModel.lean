@@ -288,7 +288,8 @@ across the $\ln(0) = -\infty$ pole at $x = -1$) and computing Lagrange remainder
      (`tmAdd (tmMul 4 sinTM sinTM) (tmMul 4 cosTM cosTM)`) cancels the $-x^2 + x^2$ quadratic
      and $\pm \frac{1}{3} x^4$ quartic drift and encloses $1$ across the entire domain. -/
 -- fixture kept (2026-11-04): consumed by Obend/Tactic/SiliconElab.lean
-theorem taylorModel_transcendental_enclosure_sound :
+theorem taylorModel_transcendental_enclosure_sound
+    (center : CanonicalRat) (anyDom : Interval) :
     let dom : Interval := ⟨CanonicalRat.mk (-1) 10, CanonicalRat.mk 1 10⟩
     let posPtDom : Interval := ⟨CanonicalRat.mk 1 10, CanonicalRat.mk 1 10⟩
     let xTM := tmVar 0 dom
@@ -299,6 +300,8 @@ theorem taylorModel_transcendental_enclosure_sound :
     let lnTM := tmLn1pCertified dom
     let sqrtTM := tmSqrt1pCertified dom
     let pythagTM := tmAdd (tmMul 4 sinTM sinTM) (tmMul 4 cosTM cosTM)
+    -- 0. Universal dependency cancellation for arbitrary center and domain
+    evalTaylorModelRange (tmSub (tmVar center anyDom) (tmVar center anyDom)) = ⟨0, 0⟩ ∧
     -- 1. Dependency cancellation vs. naive interval subtraction
     evalTaylorModelRange (tmSub xTM xTM) = ⟨0, 0⟩ ∧
     Interval.sub dom dom = ⟨CanonicalRat.mk (-1) 5, CanonicalRat.mk 1 5⟩ ∧
@@ -317,7 +320,13 @@ theorem taylorModel_transcendental_enclosure_sound :
     -- 4. Pythagorean identity sin^2(x) + cos^2(x) cancels degree-2 and degree-4 terms and encloses 1
     pythagTM.coeffs = [1, 0, 0, 0, 0] ∧
     Interval.containsRat (evalTaylorModelRange pythagTM) 1 = true := by
-  decide +kernel
+  refine ⟨?_, by decide +kernel⟩
+  have hCenter : center + -center = 0 := by grind
+  have hOne : (1 : CanonicalRat) + -1 = 0 := by grind
+  simp [evalTaylorModelRange, tmSub, tmVar, polySub, polyAdd, polyNeg,
+    evalTaylorPolyInterval, evalPolyTermsInterval, Interval.ofPoint, Interval.sub, Interval.add,
+    hCenter, hOne]
+  grind
 
 /-! ## 3. Picard–Lindelöf Taylor-Model ODE Operator & Wrapping-Effect Elimination -/
 
@@ -378,18 +387,30 @@ $c_j \Delta t^j X_0$ as an independent interval and sums them, suffering the int
      with strictly smaller width `picardBox.hi - picardBox.lo < naiveBox.hi - naiveBox.lo`) of the
      naive interval Taylor evaluation (`stepNaiveIntervalPicard1D X0 (1/2) R`). -/
 -- fixture kept (2026-11-04): consumed by Obend/Tactic/SiliconElab.lean
-theorem taylorModel_picard_sound :
+theorem taylorModel_picard_sound (x0 : CanonicalRat) :
     let X0 : Interval := ⟨CanonicalRat.mk 9 10, CanonicalRat.mk 11 10⟩
     let dt : CanonicalRat := CanonicalRat.mk 1 2
     let rem : Interval := ⟨CanonicalRat.mk (-1) 1000, CanonicalRat.mk 1 1000⟩
     let naiveBox := stepNaiveIntervalPicard1D X0 dt rem
     let picardBox := stepPicardDecay1D X0 dt rem
+    stepPicardDecay1D (Interval.ofPoint x0) dt ⟨0, 0⟩ =
+      Interval.ofPoint (CanonicalRat.mk 233 384 * x0) ∧
     picardLinearCoeffs 4 1 (-1) 0 4 =
       [1, -1, CanonicalRat.mk 1 2, CanonicalRat.mk (-1) 6, CanonicalRat.mk 1 24] ∧
     evalTaylorPolyAt (picardLinearCoeffs 4 1 (-1) 0 4) dt = CanonicalRat.mk 233 384 ∧
     Interval.isSubintervalOf picardBox naiveBox = true ∧
     decide (picardBox.hi - picardBox.lo < naiveBox.hi - naiveBox.lo) = true := by
-  decide +kernel
+  refine ⟨?_, by decide +kernel⟩
+  have hFactor : evalTaylorPolyAt (picardLinearCoeffs 4 1 (-1) 0 4) (CanonicalRat.mk 1 2) =
+      CanonicalRat.mk 233 384 := by decide +kernel
+  simp only [stepPicardDecay1D, hFactor, Interval.ofPoint, Interval.mul, Interval.add,
+    Interval.min4, Interval.max4]
+  have hMin : min (CanonicalRat.mk 233 384 * x0) (CanonicalRat.mk 233 384 * x0) =
+      CanonicalRat.mk 233 384 * x0 := by simp [min]
+  have hMax : max (CanonicalRat.mk 233 384 * x0) (CanonicalRat.mk 233 384 * x0) =
+      CanonicalRat.mk 233 384 * x0 := by simp [max]
+  have hAdd : CanonicalRat.mk 233 384 * x0 + 0 = CanonicalRat.mk 233 384 * x0 := by grind
+  rw [hMin, hMin, hMax, hMax, hAdd]
 
 /-! ## 4. Semantic Function Enclosure (`TaylorModel.Models`) & `AnalyticModel` Soundness -/
 

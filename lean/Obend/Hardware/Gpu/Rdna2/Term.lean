@@ -922,7 +922,7 @@ theorem eval_isBool2 (env : UInt64 → UInt32) (t : Tm) (h : isBool2 t = true) :
          rcases eval_isBool env _ ha with h | h <;> rcases eval_isBool env _ hb with h' | h' <;>
            simp [h, h'])
 
-theorem succ_toUInt32 (k : Nat) (_hk : k < 31) : (k + 1).toUInt32 = k.toUInt32 + 1 := by
+theorem succ_toUInt32 (k : Nat) : (k + 1).toUInt32 = k.toUInt32 + 1 := by
   apply UInt32.toNat.inj; simp [Nat.toUInt32, UInt32.toNat_add]
 
 theorem bit_packWord (bs : List UInt32) (k : Nat) (hk : k < 32) :
@@ -940,7 +940,7 @@ theorem bit_packWord (bs : List UInt32) (k : Nat) (hk : k < 32) :
       rcases b2w_le (w2b b) with hb | hb <;> rw [hb] <;> (generalize packWord bs = r) <;> bv_decide
     | succ k =>
       simp only [packWord, List.getD_cons_succ]
-      rw [← ih k (by omega), succ_toUInt32 k (by omega)]
+      rw [← ih k (by omega), succ_toUInt32 k]
       have hk' : k.toUInt32 < 31 := by rw [UInt32.lt_iff_toNat_lt]; simp [Nat.toUInt32]; omega
       generalize k.toUInt32 = j at *; generalize packWord bs = r
       rcases b2w_le (w2b b) with hb | hb <;> rw [hb] <;> bv_decide

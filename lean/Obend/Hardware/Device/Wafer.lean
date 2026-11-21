@@ -301,9 +301,9 @@ removed. -/
                         siliconRemovedCm := w.siliconRemovedCm + depth }
   | _ => none
 
-/-- Etching what was just deposited restores the stack, whatever is under it, for any `t ≥ 0`
+/-- Etching what was just deposited restores the stack, whatever is under it
 (when the top film has positive thickness). -/
-theorem etch_deposit (w : WaferState) (m : FilmMaterial) {t : CanonicalRat} (_ht : 0 ≤ t)
+theorem etch_deposit (w : WaferState) (m : FilmMaterial) {t : CanonicalRat}
     (hpos : ∀ f ∈ w.films, 0 < f.thicknessCm) :
     (w.deposit m t).etch m t = some w := by
   obtain ⟨bg, films, dops, rem⟩ := w

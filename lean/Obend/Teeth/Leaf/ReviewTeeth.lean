@@ -62,8 +62,8 @@ example :
         (Obend.Law.termEq · (.inject "ReviewBase.Review" (.record []))) = some true := by
   decide +kernel
 
-theorem brand_sound : .get (emit branded).link "#kind" ≈b .get branded.object "#kind" :=
-  book_sound branded (by decide +kernel) "#kind"
+theorem brand_sound (k : String) : .get (emit branded).link k ≈b .get branded.object k :=
+  book_sound branded (by decide +kernel) k
 
 /-- `twiceOfThree() = twice(3)`, read from the linked book. -/
 def bookTwiceOfThree (C : Composition) : Term := .app (.get (emit C).link "twice") (.nat 3)

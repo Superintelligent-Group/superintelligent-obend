@@ -139,7 +139,7 @@ structure IdealMembershipCert where
   deriving @[expose] DecidableEq, Repr
 
 /-- Expand the ideal combination $\sum_{(q, i) \in \text{cert}} q \cdot g_i$. -/
-@[expose] def expandIdealCombination (generators : List Poly) : List (Poly × Nat) → Poly
+def expandIdealCombination (generators : List Poly) : List (Poly × Nat) → Poly
   | [] => Poly.zero
   | (q, idx) :: rest =>
     let restPoly := expandIdealCombination generators rest
@@ -296,10 +296,18 @@ structure PositivstellensatzCert where
 
 /-- Refusal clauses for `positivstellensatzJudge`. -/
 inductive PositivstellensatzClause where
+  | feasibleAtOrigin
   | negativeSosWeight
   | invalidGeneratorIndex
   | nonZeroResidual (residual : Poly)
   deriving @[expose] DecidableEq, Repr
+
+/-- Check whether the origin `ρ₀ := fun _ => 0` simultaneously satisfies all strict-positivity,
+non-negativity, and equality constraints of `q`, directly refuting `PositivstellensatzQuery.Infeasible q`. -/
+@[expose] def queryFeasibleAtOrigin (q : PositivstellensatzQuery) : Bool :=
+  (q.strictPos.all fun f => decide (0 < f.eval (fun _ => 0))) &&
+  (q.nonneg.all fun g => decide (0 ≤ g.eval (fun _ => 0))) &&
+  (q.eqs.all fun h => decide (h.eval (fun _ => 0) = 0))
 
 /-- Expand the multiplicative monoid product $\prod_{idx \in \text{indices}} f_{idx}$ (defaulting to $1$ when empty). -/
 @[expose] def expandMonoidProduct (strictPos : List Poly) : List Nat → Option Poly
@@ -324,7 +332,9 @@ inductive PositivstellensatzClause where
     (_fuel : Nat)
     (q : PositivstellensatzQuery)
     (c : PositivstellensatzCert) : Judge.Verdict PositivstellensatzClause :=
-  if !c.sigma0.allCoeffsPos then
+  if queryFeasibleAtOrigin q then
+    .refused .feasibleAtOrigin []
+  else if !c.sigma0.allCoeffsPos then
     .refused .negativeSosWeight []
   else
     match expandMonoidProduct q.strictPos c.monoidIndices,
@@ -340,9 +350,12 @@ theorem positivstellensatzCheck_sigma0_pos (fuel : Nat) (q : PositivstellensatzQ
     (h : positivstellensatzCheck fuel q c = .ok) :
     c.sigma0.allCoeffsPos = true := by
   unfold positivstellensatzCheck at h
-  by_cases hPos : c.sigma0.allCoeffsPos = true
-  · exact hPos
-  · simp [hPos] at h
+  by_cases hFeas : queryFeasibleAtOrigin q = true
+  · simp [hFeas] at h
+  · simp only [hFeas, Bool.false_eq_true, ↓reduceIte] at h
+    by_cases hPos : c.sigma0.allCoeffsPos = true
+    · exact hPos
+    · simp [hPos] at h
 
 theorem expandMonoidProduct_eval_pos
     (ρ : Nat → CanonicalRat) (strictPos : List Poly)
@@ -434,32 +447,35 @@ theorem positivstellensatz_general_eval_infeasible
     PositivstellensatzQuery.Infeasible q := by
   intro ρ hStrict hNonneg hEqs
   unfold positivstellensatzCheck at hOk
-  by_cases hPos0 : c.sigma0.allCoeffsPos = true
-  · simp only [hPos0, Bool.not_true, Bool.false_eq_true, ↓reduceIte] at hOk
-    cases hMon : expandMonoidProduct q.strictPos c.monoidIndices with
-    | none => rw [hMon] at hOk; contradiction
-    | some monoidPoly =>
-      rw [hMon] at hOk
-      cases hCone : expandConeSum q.nonneg c.coneTerms with
-      | none => rw [hCone] at hOk; contradiction
-      | some conePoly =>
-        rw [hCone] at hOk
-        cases hIdeal : expandIdealCombination? q.eqs c.idealTerms with
-        | none => rw [hIdeal] at hOk; contradiction
-        | some idealPoly =>
-          rw [hIdeal] at hOk
-          dsimp only at hOk
-          split at hOk
-          · rename_i hTotalZero
-            have hEvalTotal := Poly.eval_isZero ρ _ hTotalZero
-            rw [Poly.eval_add, Poly.eval_add, Poly.eval_add] at hEvalTotal
-            have hMonPos := expandMonoidProduct_eval_pos ρ q.strictPos hStrict c.monoidIndices monoidPoly hMon
-            have hSig0 := SOSPoly.eval_expand_nonneg ρ c.sigma0 hPos0
-            have hConeNonneg := expandConeSum_eval_nonneg ρ q.nonneg hNonneg c.coneTerms conePoly hCone
-            have hIdealZero := expandIdealCombination?_eval_eq_zero ρ q.eqs hEqs c.idealTerms idealPoly hIdeal
-            grind
-          · contradiction
-  · simp [hPos0] at hOk
+  by_cases hFeas : queryFeasibleAtOrigin q = true
+  · simp [hFeas] at hOk
+  · simp only [hFeas, Bool.false_eq_true, ↓reduceIte] at hOk
+    by_cases hPos0 : c.sigma0.allCoeffsPos = true
+    · simp only [hPos0, Bool.not_true, Bool.false_eq_true, ↓reduceIte] at hOk
+      cases hMon : expandMonoidProduct q.strictPos c.monoidIndices with
+      | none => rw [hMon] at hOk; contradiction
+      | some monoidPoly =>
+        rw [hMon] at hOk
+        cases hCone : expandConeSum q.nonneg c.coneTerms with
+        | none => rw [hCone] at hOk; contradiction
+        | some conePoly =>
+          rw [hCone] at hOk
+          cases hIdeal : expandIdealCombination? q.eqs c.idealTerms with
+          | none => rw [hIdeal] at hOk; contradiction
+          | some idealPoly =>
+            rw [hIdeal] at hOk
+            dsimp only at hOk
+            split at hOk
+            · rename_i hTotalZero
+              have hEvalTotal := Poly.eval_isZero ρ _ hTotalZero
+              rw [Poly.eval_add, Poly.eval_add, Poly.eval_add] at hEvalTotal
+              have hMonPos := expandMonoidProduct_eval_pos ρ q.strictPos hStrict c.monoidIndices monoidPoly hMon
+              have hSig0 := SOSPoly.eval_expand_nonneg ρ c.sigma0 hPos0
+              have hConeNonneg := expandConeSum_eval_nonneg ρ q.nonneg hNonneg c.coneTerms conePoly hCone
+              have hIdealZero := expandIdealCombination?_eval_eq_zero ρ q.eqs hEqs c.idealTerms idealPoly hIdeal
+              grind
+            · contradiction
+    · simp [hPos0] at hOk
 
 /-- **Theorem (`positivstellensatz_eval_infeasible`)**:
 If a Positivstellensatz SOS certificate is valid (`positivstellensatzCheck fuel q c = .ok` with
@@ -474,20 +490,83 @@ theorem positivstellensatz_eval_infeasible
     (hNonneg : ∀ g ∈ q.nonneg, 0 ≤ g.eval ρ)
     (hEqs : ∀ h ∈ q.eqs, h.eval ρ = 0) :
     False := by
-  have hOk' : positivstellensatzCheck fuel { q with strictPos := [] } c = .ok := by
-    unfold positivstellensatzCheck at hOk ⊢
-    rw [hMonoidOne] at hOk ⊢
-    exact hOk
-  exact positivstellensatz_general_eval_infeasible fuel { q with strictPos := [] } c hOk' ρ
-    (by intro _ hMem; cases hMem) hNonneg hEqs
+  unfold positivstellensatzCheck at hOk
+  by_cases hFeas : queryFeasibleAtOrigin q = true
+  · simp [hFeas] at hOk
+  · simp only [hFeas, Bool.false_eq_true, ↓reduceIte] at hOk
+    by_cases hPos0 : c.sigma0.allCoeffsPos = true
+    · simp only [hPos0, Bool.not_true, Bool.false_eq_true, ↓reduceIte, hMonoidOne,
+        expandMonoidProduct] at hOk
+      cases hCone : expandConeSum q.nonneg c.coneTerms with
+      | none => rw [hCone] at hOk; contradiction
+      | some conePoly =>
+        rw [hCone] at hOk
+        cases hIdeal : expandIdealCombination? q.eqs c.idealTerms with
+        | none => rw [hIdeal] at hOk; contradiction
+        | some idealPoly =>
+          rw [hIdeal] at hOk
+          dsimp only at hOk
+          split at hOk
+          · rename_i hTotalZero
+            have hEvalTotal := Poly.eval_isZero ρ _ hTotalZero
+            rw [Poly.eval_add, Poly.eval_add, Poly.eval_add, Poly.eval_one] at hEvalTotal
+            have hSig0 := SOSPoly.eval_expand_nonneg ρ c.sigma0 hPos0
+            have hConeNonneg := expandConeSum_eval_nonneg ρ q.nonneg hNonneg c.coneTerms conePoly hCone
+            have hIdealZero := expandIdealCombination?_eval_eq_zero ρ q.eqs hEqs c.idealTerms idealPoly hIdeal
+            grind
+          · contradiction
+    · simp [hPos0] at hOk
+
+/-- Refuting clauses of `positivstellensatzJudge`: `.feasibleAtOrigin` constructively exhibits
+the feasible point `ρ₀ = fun _ => 0`, refuting `PositivstellensatzQuery.Infeasible q`. -/
+def positivstellensatzRefutes : PositivstellensatzClause → Bool
+  | .feasibleAtOrigin => true
+  | _ => false
+
+theorem queryFeasibleAtOrigin_refutes (q : PositivstellensatzQuery)
+    (hFeas : queryFeasibleAtOrigin q = true) :
+    ¬ PositivstellensatzQuery.Infeasible q := by
+  intro hInfeas
+  unfold queryFeasibleAtOrigin at hFeas
+  rcases (Bool.and_eq_true _ _).mp hFeas with ⟨hStrictNonneg, hEqsB⟩
+  rcases (Bool.and_eq_true _ _).mp hStrictNonneg with ⟨hStrictB, hNonnegB⟩
+  apply hInfeas (fun _ => 0)
+  · intro f hf
+    exact of_decide_eq_true (List.all_eq_true.mp hStrictB f hf)
+  · intro g hg
+    exact of_decide_eq_true (List.all_eq_true.mp hNonnegB g hg)
+  · intro h hh
+    exact of_decide_eq_true (List.all_eq_true.mp hEqsB h hh)
+
+theorem positivstellensatzCheck_refuted
+    {r : Nat} {q : PositivstellensatzQuery} {c : PositivstellensatzCert}
+    {k : PositivstellensatzClause} {p : List Nat}
+    (hRef : positivstellensatzCheck r q c = .refused k p)
+    (hRefutes : positivstellensatzRefutes k = true) :
+    ¬ PositivstellensatzQuery.Infeasible q := by
+  have hk : k = .feasibleAtOrigin := by
+    cases k <;> simp [positivstellensatzRefutes] at hRefutes ⊢
+  subst hk
+  unfold positivstellensatzCheck at hRef
+  by_cases hFeas : queryFeasibleAtOrigin q = true
+  · exact queryFeasibleAtOrigin_refutes q hFeas
+  · simp only [hFeas, Bool.false_eq_true, ↓reduceIte] at hRef
+    by_cases hPos0 : c.sigma0.allCoeffsPos = true
+    · simp only [hPos0, Bool.not_true, Bool.false_eq_true, ↓reduceIte] at hRef
+      cases hMon : expandMonoidProduct q.strictPos c.monoidIndices <;>
+        cases hCone : expandConeSum q.nonneg c.coneTerms <;>
+        cases hIdeal : expandIdealCombination? q.eqs c.idealTerms <;>
+        simp [hMon, hCone, hIdeal] at hRef
+      split at hRef <;> simp at hRef
+    · simp [hPos0] at hRef
 
 instance positivstellensatzJudge : Judge PositivstellensatzQuery PositivstellensatzCert where
   Clause := PositivstellensatzClause
   Meaning q _c := PositivstellensatzQuery.Infeasible q
   check := positivstellensatzCheck
   sound := by intro r q c h; exact positivstellensatz_general_eval_infeasible r q c h
-  refutes _ := false
-  refuted := by intro _ _ _ _ _ _ h; cases h
+  refutes := positivstellensatzRefutes
+  refuted := by intro r q c k p hRef hRefutes _c'; exact positivstellensatzCheck_refuted hRef hRefutes
   Fragment q := ∃ c r, positivstellensatzCheck r q c = .ok
   complete := by rintro q ⟨c, r, h⟩ _; exact ⟨c, r, h⟩
   mono := by intro _ _ _ _ _ _; rfl

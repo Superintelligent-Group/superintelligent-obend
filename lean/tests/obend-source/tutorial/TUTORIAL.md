@@ -14,7 +14,7 @@ guide and its formal status see [OBJECTIVE-BEND.md](OBJECTIVE-BEND.md).
 ## Before you start
 
 You need `bun`, a `lean` binary, and the compiled Lean modules that
-[Host/ObjectiveBendPreview.lean](../Host/ObjectiveBendPreview.lean) imports
+[lean/Obend/Spec/Preview.lean](../../../Obend/Spec/Preview.lean) imports
 (`Theory.ObjectiveBendTyping`, `Theory.ObjectiveBendDemandMachine`,
 `Theory.ObjectiveBendDemandData` and `Theory.ObjectiveBendCheckpoint`). The
 runner looks for `lean` on your `PATH` and for the compiled modules in
@@ -1053,7 +1053,7 @@ message: ownership refused: an affine or linear parameter is used more than once
 The checker refuses the whole program. The checker itself only answers
 accepted or refused; the preview names the kind of rule by asking the same
 checker about two variations of the program (see `refusalReason` in
-[Host/ObjectiveBendPreview.lean](../Host/ObjectiveBendPreview.lean)): with ample
+[lean/Obend/Spec/Preview.lean](../../../Obend/Spec/Preview.lean)): with ample
 type fuel (a `checker budget refused` message), and with every quantity made
 unrestricted (this `ownership refused` message: relaxing `affine` is exactly
 what makes `twice` check). Anything else is reported as `typing refused`. It
