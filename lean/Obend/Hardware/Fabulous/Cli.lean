@@ -22,7 +22,7 @@ public import Obend.Hardware.Fabulous.LUT4ABSwitchMatrix
 public import Obend.Hardware.YosysLec
 public import Obend.Hardware.Fabulous.CertGen
 public import Obend.Hardware.Fabulous.Bin
-@[expose] public section
+public section
 
 namespace Obend.Hardware.Fabulous
 

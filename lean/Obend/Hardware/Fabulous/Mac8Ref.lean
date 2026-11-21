@@ -11,7 +11,7 @@ public import Obend.Hardware.Mac8
 public import Std.Tactic.BVDecide
 public meta import Std.Tactic.BVDecide.Reflect
 public import Obend.AssertCompiled
-@[expose] public section
+public section
 
 namespace Obend.Hardware.Fabulous
 
@@ -23,7 +23,7 @@ def mac8Roles : List PinRole :=
   [.reset] ++ (List.range 16).map (.output 0)
 
 /-- `iceStickMac8`'s registers after one edge, as 16-bit words: `mulReg`, `cReg`, `outReg`. -/
-def mac8Next (a b : BitVec 8) (c r0 r1 : BitVec 16) (rst : Bool) : Nat → BitVec 16
+@[expose] def mac8Next (a b : BitVec 8) (c r0 r1 : BitVec 16) (rst : Bool) : Nat → BitVec 16
   | 0 => if rst then 0#16 else a.setWidth 16 * b.setWidth 16
   | 1 => if rst then 0#16 else c
   | 2 => if rst then 0#16 else r0 + r1

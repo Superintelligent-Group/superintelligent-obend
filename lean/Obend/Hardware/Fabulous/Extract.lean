@@ -8,7 +8,7 @@ closed bit-level obligations, each discharged by `bv_decide`. `obend fabric extr
 -/
 public import Obend.Hardware.Fabulous.Bitstream
 public import Obend.Hardware.Fabulous.Mac8Ref
-@[expose] public section
+public section
 
 namespace Obend.Hardware.Fabulous
 

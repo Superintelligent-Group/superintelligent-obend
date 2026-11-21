@@ -10,7 +10,7 @@ configuration bits (`lut4c_O`, `lut4c_next`), the form the readback proof uses.
 -/
 public import Obend.Hardware.Fabulous.TileEval
 public import Obend.Hardware.Fabulous.Net
-@[expose] public section
+public section
 
 namespace Obend.Hardware.Fabulous
 
@@ -32,7 +32,8 @@ def lut4F (l : Nat → Bool) (a b c d : Bool) : Bool :=
     (mux2 c (mux2 b (mux2 a (l 0) (l 1)) (mux2 a (l 2) (l 3))) (mux2 b (mux2 a (l 4) (l 5)) (mux2 a (l 6) (l 7))))
     (mux2 c (mux2 b (mux2 a (l 8) (l 9)) (mux2 a (l 10) (l 11))) (mux2 b (mux2 a (l 12) (l 13)) (mux2 a (l 14) (l 15))))
 
-theorem lut4_eq_lut4F (init : BitVec 16) (a b c d : Bool) : lut4 init a b c d = lut4F init.getLsbD a b c d := rfl
+theorem lut4_eq_lut4F (init : BitVec 16) (a b c d : Bool) : lut4 init a b c d = lut4F init.getLsbD a b c d := by
+  simp only [lut4, lut4F]
 
 theorem lut4F_congr (l l' : Nat → Bool) (h : ∀ j < 16, l j = l' j) (a b c d : Bool) :
     lut4F l a b c d = lut4F l' a b c d := by
@@ -67,15 +68,18 @@ theorem cellIns_cfg (i0 i1 i2 i3 ci sr en : Bool) (cb : Nat → Bool) (k : Nat) 
   simp; omega
 
 /-- The cell's `LUT_out`: the truth table `cb 0..15` at `{I3, I2, I1, I0mux}`, `I0mux = cb 17 ? Ci : I0`. -/
-def cellLut (i0 i1 i2 i3 ci : Bool) (cb : Nat → Bool) : Bool :=
+@[expose] def cellLut (i0 i1 i2 i3 ci : Bool) (cb : Nat → Bool) : Bool :=
   lut4F cb (if cb 17 then ci else i0) i1 i2 i3
 
 theorem ite_boolBV (c : Bool) (x y : Bool) :
     (if c = true then boolBV x else boolBV y) = boolBV (if c then x else y) := by cases c <;> rfl
 
-theorem cellIns_one (i0 i1 i2 i3 ci sr en : Bool) (cb : Nat → Bool) : cellIns i0 i1 i2 i3 ci sr en cb 1 = boolBV ci := rfl
-theorem cellIns_two (i0 i1 i2 i3 ci sr en : Bool) (cb : Nat → Bool) : cellIns i0 i1 i2 i3 ci sr en cb 2 = boolBV sr := rfl
-theorem cellIns_three (i0 i1 i2 i3 ci sr en : Bool) (cb : Nat → Bool) : cellIns i0 i1 i2 i3 ci sr en cb 3 = boolBV en := rfl
+theorem cellIns_one (i0 i1 i2 i3 ci sr en : Bool) (cb : Nat → Bool) : cellIns i0 i1 i2 i3 ci sr en cb 1 = boolBV ci := by
+  simp only [cellIns]
+theorem cellIns_two (i0 i1 i2 i3 ci sr en : Bool) (cb : Nat → Bool) : cellIns i0 i1 i2 i3 ci sr en cb 2 = boolBV sr := by
+  simp only [cellIns]
+theorem cellIns_three (i0 i1 i2 i3 ci sr en : Bool) (cb : Nat → Bool) : cellIns i0 i1 i2 i3 ci sr en cb 3 = boolBV en := by
+  simp only [cellIns]
 
 set_option maxRecDepth 4000 in
 /-- **The cell's output.** `O` is the flop with `FF` (`cb 16`) set, otherwise `LUT_out`. -/
@@ -85,7 +89,7 @@ theorem lut4c_O (i0 i1 i2 i3 ci sr en qv : Bool) (cb : Nat → Bool) :
   simp only [evalModuleOutputsW, lut4cModule, evalWireTable, List.foldl, List.map_cons, List.map_nil,
     List.getElem?_cons_zero, Option.some.injEq, Prod.mk.injEq, true_and, evalRtlExpr, m21, eval_bitOf,
     beq_self_eq_true, ite_true, Nat.reduceBEq, Bool.false_eq_true, ite_false, lut4cModule.tree,
-    lut4cModule.tree.pr, List.range_succ, List.range_zero, List.map_nil, List.nil_append, List.cons_append,
+    lut4cModule.tree.pr, List.range_succ, List.range_zero, List.nil_append, List.cons_append,
     List.headD_cons]
   simp (disch := decide) only [cellIns_bit0, cellIns_cfg, cellIns_one,
     List.getD_cons_zero, List.getD_cons_succ, boolBV_ne_zero, ite_boolBV, truncToWidth_one_boolBV]
@@ -110,7 +114,7 @@ theorem lut4c_next (rst i0 i1 i2 i3 ci sr en qv : Bool) (cb : Nat → Bool) :
     cases en <;> simp
 
 /-- The truth table does not depend on input `i` (the extraction then leaves that input unrouted). -/
-def ignores (init : BitVec 16) (i : Nat) : Bool :=
+@[expose] def ignores (init : BitVec 16) (i : Nat) : Bool :=
   (List.range 16).all fun k => init.getLsbD k == init.getLsbD (k ^^^ (1 <<< i))
 
 theorem ignores_at {init : BitVec 16} {i : Nat} (h : ignores init i = true) (k : Nat) (hk : k < 16) :
