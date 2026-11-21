@@ -29,7 +29,7 @@ Implements `WS 28` Stage 5 (`SILICON-ELABORATOR.md` §6–7):
 public import Obend.Lower.LeanKernel
 public import Obend.Lower.ExprCAM
 public import Obend.Lower.Proofs.SiliconKernel
-@[expose] public section
+public section
 
 namespace Obend.Lower.MetaUnify
 open Obend.Core.Term
@@ -101,7 +101,7 @@ def isMVarExpr? : KExpr → Option MVarId
   | _        => none
 
 @[simp] theorem isMVarExpr_mkMVarExpr (id : MVarId) :
-    isMVarExpr? (mkMVarExpr id) = some id := rfl
+    isMVarExpr? (mkMVarExpr id) = some id := by rfl
 
 /-- Look up a metavariable declaration in `mctx`. -/
 def MetavarContext.findDecl? (mctx : MetavarContext) (id : MVarId) : Option MVarDecl :=
@@ -132,7 +132,7 @@ def occursMVar (targetId : MVarId) : KExpr → Bool
   | .proj _ _ s => occursMVar targetId s
 
 /-- Check whether `e : KExpr` contains *any* metavariable `.mvar _` (by structural recursion). -/
-def exprHasAnyMVar : KExpr → Bool
+@[expose] def exprHasAnyMVar : KExpr → Bool
   | .bvar _ | .fvar _ | .sort _ | .const _ _ | .lit _ => false
   | .mvar _ => true
   | .app f a => exprHasAnyMVar f || exprHasAnyMVar a
@@ -142,7 +142,7 @@ def exprHasAnyMVar : KExpr → Bool
   | .proj _ _ s => exprHasAnyMVar s
 
 /-- Check whether a `KConstInfo` declaration contains any uninstantiated metavariable. -/
-def declHasMVar : KConstInfo → Bool
+@[expose] def declHasMVar : KConstInfo → Bool
   | .axiomInfo _ _ ty | .inductInfo _ _ ty | .ctorInfo _ _ ty _ =>
     exprHasAnyMVar ty
   | .defnInfo _ _ ty val | .thmInfo _ _ ty val =>
@@ -188,7 +188,7 @@ def freshBinderFVarId (mctx : MetavarContext) (e1 e2 : KExpr) : Nat :=
   Nat.max (maxFVarIdMCtx mctx) (Nat.max (maxFVarIdExpr e1) (maxFVarIdExpr e2))
 
 /-- Fuel-bounded recursive instantiation of assigned metavariables and universe level parameters. -/
-def instantiateMVarsFuel (mctx : MetavarContext) : Nat → KExpr → KExpr
+@[expose] def instantiateMVarsFuel (mctx : MetavarContext) : Nat → KExpr → KExpr
   | 0, e => e
   | fuel + 1, e =>
     match e with
@@ -211,7 +211,7 @@ def instantiateMVarsFuel (mctx : MetavarContext) : Nat → KExpr → KExpr
     | .proj s idx p => .proj s idx (instantiateMVarsFuel mctx fuel p)
 
 /-- Instantiate all assigned metavariables across a `KConstInfo` declaration. -/
-def instantiateDeclMVars (mctx : MetavarContext) (fuel : Nat) : KConstInfo → KConstInfo
+@[expose] def instantiateDeclMVars (mctx : MetavarContext) (fuel : Nat) : KConstInfo → KConstInfo
   | .axiomInfo n ps ty =>
     .axiomInfo n ps (instantiateMVarsFuel mctx fuel ty)
   | .defnInfo n ps ty val =>
@@ -245,7 +245,7 @@ def assignMVar? (mctx : MetavarContext) (fuel : Nat) (id : MVarId) (rhs : KExpr)
 /-! ## 3. Higher-Order Miller Pattern Unification (`?m x₁ ... xₖ =?= rhs`) -/
 
 /-- Decompose an application spine `f a₁ ... aₖ` into `(head, [a₁, ..., aₖ])` by structural recursion. -/
-def decomposeAppSpine : KExpr → KExpr × List KExpr
+@[expose] def decomposeAppSpine : KExpr → KExpr × List KExpr
   | .app f a =>
     let (hd, args) := decomposeAppSpine f
     (hd, args ++ [a])
@@ -442,7 +442,7 @@ def metaUnifyFuel (env : KEnv) : Nat → MetavarContext → KExpr → KExpr → 
               none
 
 /-- Solve a list of `(lhs, rhs)` unification constraints sequentially by structural recursion. -/
-def solveConstraintList (env : KEnv) (fuel : Nat) (mctx : MetavarContext) : List (KExpr × KExpr) → Option MetavarContext
+@[expose] def solveConstraintList (env : KEnv) (fuel : Nat) (mctx : MetavarContext) : List (KExpr × KExpr) → Option MetavarContext
   | [] => some mctx
   | (lhs, rhs) :: rest =>
     match metaUnifyFuel env fuel mctx lhs rhs with
@@ -450,7 +450,7 @@ def solveConstraintList (env : KEnv) (fuel : Nat) (mctx : MetavarContext) : List
     | none       => none
 
 /-- Resolve a list of postponed constraints sequentially by structural recursion. -/
-def resolvePostponedList (env : KEnv) (fuel : Nat) (mctx : MetavarContext) : List PostponedConstraint → Option MetavarContext
+@[expose] def resolvePostponedList (env : KEnv) (fuel : Nat) (mctx : MetavarContext) : List PostponedConstraint → Option MetavarContext
   | [] => some mctx
   | c :: rest =>
     match metaUnifyFuel env fuel mctx c.lhs c.rhs with
@@ -462,7 +462,7 @@ def resolvePostponedList (env : KEnv) (fuel : Nat) (mctx : MetavarContext) : Lis
 
 /-- Resolve all postponed unification constraints in `mctx.postponed` using newly discovered
 metavariable assignments (`resolvePostponedFuel`). -/
-def resolvePostponedFuel (env : KEnv) (fuel : Nat) (mctx : MetavarContext) : Option MetavarContext :=
+@[expose] def resolvePostponedFuel (env : KEnv) (fuel : Nat) (mctx : MetavarContext) : Option MetavarContext :=
   resolvePostponedList env fuel { mctx with postponed := [] } mctx.postponed
 
 /-- Elaborate a declaration `rawDecl` under `mctx` and a list of unification obligations `constraints`:
@@ -471,7 +471,7 @@ def resolvePostponedFuel (env : KEnv) (fuel : Nat) (mctx : MetavarContext) : Opt
 3. Instantiates all assigned metavariables via `instantiateDeclMVars`,
 4. Verifies that zero unassigned metavariables remain (`declHasMVar elabDecl == false`),
 5. Verifies the resulting declaration with the pure Lean kernel (`kernelCheckDecl env fuel elabDecl`). -/
-def elaborateDeclWithMCtx
+@[expose] def elaborateDeclWithMCtx
     (env : KEnv)
     (fuel : Nat)
     (mctx : MetavarContext)
@@ -522,6 +522,29 @@ def samplePostponedMCtx : MetavarContext where
   decls :=
     [ { mvarId := 0, lctx := [], expectedType := kArrow kNatConst kNatConst, kind := .synthetic }
     , { mvarId := 2, lctx := [], expectedType := kNatConst, kind := .synthetic } ]
+
+/-- The declared metavariable `?0` accepts every closed natural literal. -/
+theorem assignMVar?_inhabited (v : Nat) :
+    ∃ mctx' : MetavarContext, assignMVar? sampleMetaCtx 8 0 (.lit (.natVal v)) = some mctx' :=
+  ⟨{ sampleMetaCtx with exprAssigns := [(0, .lit (.natVal v))] }, rfl⟩
+
+/-- The same declaration accepts its local variable and refuses one outside its context. -/
+example :
+    assignMVar? sampleMetaCtx 8 0 (.fvar 10) =
+      some { sampleMetaCtx with exprAssigns := [(0, .fvar 10)] } ∧
+    assignMVar? sampleMetaCtx 8 0 (.fvar 11) = none :=
+  ⟨rfl, rfl⟩
+
+/-- `elaborateDeclWithMCtx` is inhabited on a declaration with a genuine hole: the Miller
+constraint `?0 (fvar 10) =?= idNat (fvar 10)` synthesizes `?0 := λ x : Nat => idNat x`, the hole in
+`sampleMillerRawDecl` is instantiated, and the elaborated declaration passes `kernelCheckDecl`. -/
+example :
+    (elaborateDeclWithMCtx stdKernelEnv 8 sampleMetaCtx sampleMillerConstraints sampleMillerRawDecl).map
+      (fun r =>
+        r.1.getAssignment? 0 ==
+            some (.lam kNatConst (.app (.const (KName.mkSimple "idNat") []) (.bvar 0))) &&
+          !declHasMVar r.2 && kernelCheckDecl stdKernelEnv 8 r.2) = some true := by
+  decide +kernel
 
 /-! ## 6. Mechanized Soundness Theorems (`metaUnify_assign_sound`, `metaUnify_binder_opening_scope_sound`) -/
 
@@ -645,14 +668,39 @@ theorem metaUnify_miller_pattern_sound (n : Nat) :
       KExpr.instantiate1, KExpr.instantiateAt, KExpr.liftLooseBVars,
       BEq.beq, KExpr.beq]
 
-/-- **Theorem (`metaUnify_occurs_check_and_scope_refusal`)**:
-Negative Poles:
-1. **Occurs-Check Refusal**: Unifying `?2 =?= Nat.succ ?2` is rejected (`none`), preventing cyclic infinite terms.
-2. **Non-Linear Spine Pattern Refusal**: Unifying `?1 (fvar 10) (fvar 10) =?= fvar 10` (duplicate variable
-   `fvar 10` in the Miller pattern spine) is rejected (`none`).
-3. **Out-of-Scope Free Variable Escape Refusal**: Unifying `?0 (fvar 10) =?= fvar 99` where `fvar 99` is
-   not bound by the pattern spine `[10]` is rejected (`none`). -/
-theorem metaUnify_occurs_check_and_scope_refusal :
+/-- **Theorem (`metaUnify_occurs_check_and_scope_refusal`, Universally Quantified)**:
+For every `mctx : MetavarContext`, `fuel : Nat`, `id : MVarId`, and `rhs : KExpr`:
+1. **Occurs-Check Refusal**: if `?id` occurs in the instantiated `rhs`, `assignMVar?` refuses (`none`),
+   preventing cyclic infinite terms.
+2. **Out-of-Scope Free Variable Escape Refusal**: if `?id` is declared with local context `decl.lctx`
+   and the instantiated `rhs` mentions a free variable outside it, `assignMVar?` refuses (`none`).
+3. **Non-Linear Spine Pattern Refusal**: a Miller spine repeating a variable
+   (`?id (fvar x) (fvar x) ...`) is refused (`none`) for every `x` and every spine tail. -/
+theorem metaUnify_occurs_check_and_scope_refusal
+    (mctx : MetavarContext) (fuel : Nat) (id : MVarId) (rhs : KExpr) :
+    (occursMVar id (instantiateMVarsFuel mctx fuel rhs) = true →
+      assignMVar? mctx fuel id rhs = none) ∧
+    (∀ decl : MVarDecl, mctx.findDecl? id = some decl →
+      scopeCheckFVars (decl.lctx.map (·.1)) (instantiateMVarsFuel mctx fuel rhs) = false →
+      assignMVar? mctx fuel id rhs = none) ∧
+    (∀ (x : Nat) (rest : List KExpr),
+      millerPatternUnify? mctx fuel id (.fvar x :: .fvar x :: rest) rhs = none) := by
+  refine ⟨fun hOcc => ?_, fun decl hDecl hScope => ?_, fun x rest => ?_⟩
+  · unfold assignMVar?
+    simp [hOcc]
+  · unfold assignMVar?
+    simp [hDecl, hScope]
+  · have hSpine : extractDistinctFVarSpine? (.fvar x :: .fvar x :: rest) = none := by
+      simp only [extractDistinctFVarSpine?]
+      cases extractDistinctFVarSpine? rest with
+      | none => rfl
+      | some tailIds => by_cases hMem : x ∈ tailIds <;> simp [hMem]
+    unfold millerPatternUnify?
+    rw [hSpine]
+
+/-- Ground refusal poles on `sampleMetaCtx`: `?2 =?= Nat.succ ?2` (occurs check), the non-linear
+spine `?1 (fvar 10) (fvar 10)`, and the escaping `?0 (fvar 10) =?= fvar 99` are all refused. -/
+example :
     metaUnifyFuel stdKernelEnv 8 sampleMetaCtx
       (mkMVarExpr 2)
       (.app (.const (KName.mkSimple "Nat.succ") []) (mkMVarExpr 2)) = none ∧

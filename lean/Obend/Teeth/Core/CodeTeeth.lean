@@ -8,13 +8,13 @@ version 1, one holding version 2 (layout `{n, note}`) with no migration judgment
 judgment migrates 1 to 2. The identity `Units.Kilo` is the same in both revisions; the versions
 differ, and that difference is a judgment, never assumed:
 
-* `same_revision_imports`: the reader holding version 1 imports it;
-* `revised_kind_refused`: the reader holding version 2 refuses it by name, `kindVersion Kilo 1 2`;
-* `migration_rechecks`: the migrating reader rechecks it under its own rules and kinds, and its
+* the reader holding version 1 imports it;
+* the reader holding version 2 refuses it by name, `kindVersion Kilo 1 2`;
+* the migrating reader rechecks it under its own rules and kinds, and its
   checker refuses the old annotation at the new layout: a migration is a recheck, not a replay;
-* `reannotated_imports`: the term annotated and pinned under version 2 imports under version 2;
-* `identity_stable`: both revisions' types name one kind;
-* `import_crossing_refused`: the same quotation imported where a `Mile → Nat` is expected is
+* the term annotated and pinned under version 2 imports under version 2;
+* both revisions' types name one kind;
+* the same quotation imported where a `Mile → Nat` is expected is
   refused, naming the two kinds: nominal identity survives the import boundary.
 -/
 public import Obend.Core.Code
@@ -27,7 +27,7 @@ import all Obend.Core.FiniteBisimulation
 import all Obend.Core.RecursiveAgreement
 import all Obend.Core.EquiRecursiveAgreement
 import all Obend.Elab.Work
-@[expose] public section
+public section
 namespace Obend.Core.Code
 open Obend.Core.Ty Obend.Core.Check Obend.Core.Term
 set_option autoImplicit false
@@ -56,27 +56,27 @@ def outcome {α : Type} : Except ImportRefusal α → String × List String × L
   | .error (.rejected _) => ("rejected", [], [])
   | .error _ => ("other", [], [])
 
-theorem same_revision_imports :
+example :
     outcome (importWith rev1 [] at1 {} (quotation 0 (readNAt kilo1 1))) = ("accepted", [], []) := by
   decide +kernel
 
-theorem revised_kind_refused :
+example :
     outcome (importWith rev2 [] at2 {} (quotation 0 (readNAt kilo1 1))) = ("kindVersion", ["Units.Kilo"], [1, 2]) := by
   decide +kernel
 
-theorem migration_rechecks :
+example :
     outcome (importWith rev2migrating [] at2 {} (quotation 0 (readNAt kilo1 1))) = ("rejected", [], []) := by
   decide +kernel
 
-theorem reannotated_imports :
+example :
     outcome (importWith rev2 [] at2 {} (quotation 0 (readNAt kilo2 2))) = ("accepted", [], []) := by
   decide +kernel
 
-theorem identity_stable :
+example :
     Obend.Core.Nominal.kindOf kilo1 = some "Units.Kilo" ∧ Obend.Core.Nominal.kindOf kilo2 = some "Units.Kilo" := by
   decide +kernel
 
-theorem import_crossing_refused :
+example :
     outcome (importWith rev1 [] (.arrow .reusable .unrestricted
       (Ty.kinded "Units.Mile" (.field "n" .natural .emptyRow)) .natural) {} (quotation 0 (readNAt kilo1 1))) =
       ("kindsCrossed", ["Units.Mile", "Units.Kilo"], []) := by

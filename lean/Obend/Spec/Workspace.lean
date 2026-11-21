@@ -338,34 +338,34 @@ abbrev WorkspaceModuleDep.pinnedBlocks (m : WorkspaceModuleDep) : List (String �
   m.pins
 
 /-- Structural string-list membership check using `DecidableEq String` (`0 Classical.choice`). -/
-@[expose] def memStringList (s : String) : List String → Bool
+def memStringList (s : String) : List String → Bool
   | [] => false
   | x :: xs => decide (x = s) || memStringList s xs
 
 /-- Structural check that a list of strings contains no duplicate entries (`0 Classical.choice`). -/
-@[expose] def noDuplicateStrings : List String → Bool
+def noDuplicateStrings : List String → Bool
   | [] => true
   | x :: xs => !memStringList x xs && noDuplicateStrings xs
 
 /-- Check whether any string in `needles` appears in `haystack` (`0 Classical.choice`). -/
-@[expose] def anyStringInList (haystack : List String) : List String → Bool
+def anyStringInList (haystack : List String) : List String → Bool
   | [] => false
   | n :: ns => memStringList n haystack || anyStringInList haystack ns
 
 /-- Check whether every string in `needles` appears in `haystack` (`0 Classical.choice`). -/
-@[expose] def allStringsInList (haystack : List String) : List String → Bool
+def allStringsInList (haystack : List String) : List String → Bool
   | [] => true
   | n :: ns => memStringList n haystack && allStringsInList haystack ns
 
 /-- Check whether any pinned `(targetModule, blockAnchor, pinnedHash)` citation targets a module
     in `stale` (`0 Classical.choice`). -/
-@[expose] def anyPinTargetsStale (stale : List String) : List (String × String × String) → Bool
+def anyPinTargetsStale (stale : List String) : List (String × String × String) → Bool
   | [] => false
   | (targetMod, _, _) :: ps => memStringList targetMod stale || anyPinTargetsStale stale ps
 
 /-- Check whether a single `(targetModule, blockAnchor, pinnedHash)` citation matches a live
     `(moduleName, blockAnchor, liveHash)` export (`0 Classical.choice`). -/
-@[expose] def isPinFresh : List (String × String × String) → (String × String × String) → Bool
+def isPinFresh : List (String × String × String) → (String × String × String) → Bool
   | [], _ => false
   | exp :: exps, pin => decide (exp = pin) || isPinFresh exps pin
 
@@ -373,20 +373,20 @@ abbrev WorkspaceModuleDep.pinnedBlocks (m : WorkspaceModuleDep) : List (String �
 abbrev checkPinFresh := isPinFresh
 
 /-- Structural check that every pin in `pins` is fresh against `liveExports` (`0 Classical.choice`). -/
-@[expose] def allPinsFreshList (liveExports : List (String × String × String)) :
+def allPinsFreshList (liveExports : List (String × String × String)) :
     List (String × String × String) → Bool
   | [] => true
   | p :: ps => isPinFresh liveExports p && allPinsFreshList liveExports ps
 
 /-- Check that every pinned `(targetModule, blockAnchor, pinnedHash)` citation of module `m`
     is fresh against `liveExports` (`0 Classical.choice`). -/
-@[expose] def checkModulePinsFresh (liveExports : List (String × String × String))
+def checkModulePinsFresh (liveExports : List (String × String × String))
     (m : WorkspaceModuleDep) : Bool :=
   allPinsFreshList liveExports m.pins
 
 /-- Compute the list of module names in `deps` whose own pinned `#^block` citations are stale
     with respect to `liveExports` (`0 Classical.choice`). -/
-@[expose] def computeDirectStaleModules :
+def computeDirectStaleModules :
     List WorkspaceModuleDep → List (String × String × String) → List String
   | [], _ => []
   | m :: ms, liveExports =>
@@ -398,7 +398,7 @@ abbrev checkPinFresh := isPinFresh
 /-- Collect newly invalidated module names in one propagation wave (`0 Classical.choice`):
     a module `m` not already in `stale` becomes stale if it either imports a module in `stale`
     or pins a `#^block` from a module in `stale`. -/
-@[expose] def collectNewlyStaleModules (stale : List String) : List WorkspaceModuleDep → List String
+def collectNewlyStaleModules (stale : List String) : List WorkspaceModuleDep → List String
   | [] => []
   | m :: ms =>
     if !memStringList m.moduleName stale &&
@@ -409,14 +409,14 @@ abbrev checkPinFresh := isPinFresh
 
 /-- One step of stale-module propagation: preserves all already-stale module names in `stale`
     and appends any `m.moduleName` from `deps` that depends on a module in `stale` (`0 Classical.choice`). -/
-@[expose] def propagateStaleStep (deps : List WorkspaceModuleDep) (stale : List String) : List String :=
+def propagateStaleStep (deps : List WorkspaceModuleDep) (stale : List String) : List String :=
   match stale with
   | [] => []
   | _ => stale ++ collectNewlyStaleModules stale deps
 
 /-- Fuel-bounded transitive stale-module propagation across the workspace dependency graph
     (`0 Classical.choice`). -/
-@[expose] def computeTransitiveStaleModulesFuel :
+def computeTransitiveStaleModulesFuel :
     Nat → List WorkspaceModuleDep → List String → List String
   | 0, _, stale => stale
   | fuel + 1, deps, stale =>
@@ -424,7 +424,7 @@ abbrev checkPinFresh := isPinFresh
 
 /-- Compute all directly and transitively stale modules in a workspace given `deps` and
     `liveExports` (`0 Classical.choice`). -/
-@[expose] def computeStaleWorkspaceModules (deps : List WorkspaceModuleDep)
+def computeStaleWorkspaceModules (deps : List WorkspaceModuleDep)
     (liveExports : List (String × String × String)) : List String :=
   let direct := computeDirectStaleModules deps liveExports
   computeTransitiveStaleModulesFuel deps.length deps direct
@@ -432,7 +432,7 @@ abbrev checkPinFresh := isPinFresh
 /-- Fuel-bounded Kahn topological resolution of workspace modules (`0 Classical.choice`).
     Partitions `remaining` strictly by import readiness (`allStringsInList resolved m.imports`)
     so unready entries are never dropped even if duplicate module names are passed. -/
-@[expose] def topologicalResolveFuel :
+def topologicalResolveFuel :
     Nat → List WorkspaceModuleDep → List String → Option (List String)
   | _, [], resolved => some resolved
   | 0, _ :: _, _ => none
@@ -450,7 +450,7 @@ abbrev checkWorkspaceAcyclicFuel := topologicalResolveFuel
 
 /-- Verify that the workspace module import graph has distinct module names, is acyclic,
     and admits a complete topological ordering where every imported module is present (`0 Classical.choice`). -/
-@[expose] def checkWorkspaceAcyclic (deps : List WorkspaceModuleDep) : Bool :=
+def checkWorkspaceAcyclic (deps : List WorkspaceModuleDep) : Bool :=
   noDuplicateStrings (deps.map (·.moduleName)) &&
   (topologicalResolveFuel (deps.length + 1) deps []).isSome
 

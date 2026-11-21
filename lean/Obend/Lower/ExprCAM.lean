@@ -27,7 +27,7 @@ public import Std.Data.HashSet
 public import Std.Tactic.BVDecide
 public import Obend.Lower.LeanKernel
 public import Obend.Lower.Proofs.SiliconKernel
-@[expose] public section
+public section
 
 namespace Obend.Lower.ExprCAM
 open Obend.Core.Term
@@ -44,7 +44,7 @@ set_option autoImplicit false
 /-! ## 1. Loose De Bruijn & Free Variable Bit-Flags on `KExpr` -/
 
 /-- Check whether `e : KExpr` contains any loose bound variable `.bvar i` with `i >= cutoff`. -/
-def KExpr.hasLooseBVarAt (cutoff : Nat) : KExpr → Bool
+@[expose] def KExpr.hasLooseBVarAt (cutoff : Nat) : KExpr → Bool
   | .bvar i       => decide (i >= cutoff)
   | .fvar _       => false
   | .mvar _       => false
@@ -59,11 +59,11 @@ def KExpr.hasLooseBVarAt (cutoff : Nat) : KExpr → Bool
   | .proj _ _ e   => KExpr.hasLooseBVarAt cutoff e
 
 /-- Check whether `e : KExpr` contains any loose bound variable (`.bvar i` with `i >= 0`). -/
-def KExpr.hasLooseBVar (e : KExpr) : Bool :=
+@[expose] def KExpr.hasLooseBVar (e : KExpr) : Bool :=
   KExpr.hasLooseBVarAt 0 e
 
 /-- Check whether `e : KExpr` contains any free variable `.fvar id`. -/
-def KExpr.hasFVar : KExpr → Bool
+@[expose] def KExpr.hasFVar : KExpr → Bool
   | .bvar _       => false
   | .fvar _       => true
   | .mvar _       => false
@@ -205,7 +205,7 @@ def packCamWord64 (f : CamNodeFields) : CamWord64 :=
   hi32 ++ lo32
 
 /-- Unpack a 64-bit hardware `CamWord64` into its `CamNodeFields`. -/
-def unpackCamWord64 (w : CamWord64) : CamNodeFields where
+@[expose] def unpackCamWord64 (w : CamWord64) : CamNodeFields where
   tag       := w.extractLsb' 60 4
   looseBVar := w.getLsbD 59
   hasFVar   := w.getLsbD 58
@@ -247,7 +247,7 @@ def mixCamHash26 (tag : BitVec 4) (left right : BitVec 16) : BitVec 26 :=
   BitVec.ofNat 26 seed
 
 /-- Build the `CamNodeFields` for a `KExpr` node given its resolved child handles `(leftH, rightH)`. -/
-def mkExprCamFields (e : KExpr) (leftH rightH : Nat) : CamNodeFields :=
+@[expose] def mkExprCamFields (e : KExpr) (leftH rightH : Nat) : CamNodeFields :=
   let tag := exprTag4 e
   let l16 := BitVec.ofNat 16 leftH
   let r16 := BitVec.ofNat 16 rightH

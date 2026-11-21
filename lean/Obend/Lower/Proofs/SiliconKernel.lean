@@ -43,7 +43,7 @@ public import Obend.Leaf.Static
 public import Obend.Lower.LeanKernel
 public import Obend.Lower.Proofs.Hardware
 public import Obend.Hardware.ReductionMachine
-@[expose] public section
+public section
 
 -- Namespace alias kept so `Obend.Lower.SiliconElabFabric` (`open Obend.Leaf.Futamura`, owned by sibling lane) compiles cleanly.
 namespace Obend.Leaf.Futamura
@@ -99,8 +99,7 @@ def kernelGateLExpr : LExpr :=
   .lam .natural kernelGateBody
 
 /-- `lowerLiteScalar` agrees identically with `lowerT` on `kernelGateLExpr`. -/
-theorem kernelGate_matches_lowerT :
-    lowerT kernelGateLExpr = .lam (lowerLiteScalar kernelGateBody) := by
+example : lowerT kernelGateLExpr = .lam (lowerLiteScalar kernelGateBody) := by
   simp [kernelGateLExpr, kernelGateBody, lowerT, lowerLiteScalar, NatOp.prim]
 
 /-- Source `SSteps` reduction of `kernelGateLExpr` on any status tag `tag : Nat`. -/
@@ -206,18 +205,20 @@ def specializedSimpBody : LExpr :=
 def specializedSimpTerm : Term :=
   .lam (lowerLiteScalar specializedSimpBody)
 
-/-- `residualSimpTerm` folds the static environment check `envPin == 1` at compile time and
-produces `specializedSimpTerm = lowerT (.lam .natural specializedSimpBody)`. -/
+/-- Folding the pinned interpreter yields the same term as lowering the scalar function,
+and the same compiled composition under any method name. -/
 theorem residualSimpTerm_eq_lowerLite :
     residualSimpTerm = specializedSimpTerm ∧
-    residualSimpTerm = lowerT (.lam .natural specializedSimpBody) := by
+    residualSimpTerm = lowerT (.lam .natural specializedSimpBody) ∧
+    ∀ name : String, staticApplyComposition name elabSimpInterpreterTerm pinnedElabEnvTerm =
+      leanComposition name specializedSimpTerm := by
   have h1 : residualSimpTerm = specializedSimpTerm := by
     simp [residualSimpTerm, staticApply, elabSimpInterpreterTerm, pinnedElabEnvTerm,
       dataPinSpecialize, dataPinSteps, dataPinPass, Obend.Leaf.Static.resolveApp,
       Obend.Leaf.Static.resolveIfBool, Obend.Leaf.Static.resolveBinary,
       instantiate, Term.substitute, liftSubstitution, Term.rename, primitiveResult,
       specializedSimpTerm, specializedSimpBody, lowerLiteScalar, NatOp.prim]
-  refine ⟨h1, ?_⟩
+  refine ⟨h1, ?_, fun name => congrArg (leanComposition name) h1⟩
   rw [h1]
   simp [specializedSimpTerm, specializedSimpBody, lowerLiteScalar, lowerT, NatOp.prim]
 
@@ -229,22 +230,34 @@ def specializedSimpTile : AutomatonTile :=
 def specializedSimpComp :=
   leanComposition "specializedSimp" specializedSimpTerm
 
-theorem residualComp_eq_specializedSimpComp :
-    staticApplyComposition "specializedSimp" elabSimpInterpreterTerm pinnedElabEnvTerm =
-      specializedSimpComp := by
-  unfold staticApplyComposition specializedSimpComp
-  rw [← residualSimpTerm_eq_lowerLite.1]
-  rfl
-
 /-- Specialized `Candidate` (`Candidate.book`) for `specializedSimp`. -/
 def specializedSimpCand : Candidate :=
   .book "specializedSimp" specializedSimpComp
 
-theorem residualCand_eq_specializedSimpCand :
-    staticApplyCandidate "specializedSimp" elabSimpInterpreterTerm pinnedElabEnvTerm =
+/-- For every live `LeafView`, the statically applied elaborator is behaviourally equivalent to its
+residual, and `slotAdvance` keeps the residual `specializedSimpCand` exactly when `specSlot.usable`
+holds at that view, deoptimizing to `Candidate.machine` otherwise. -/
+theorem specializedSimp_slot_advance (view : LeafView) :
+    (.app elabSimpInterpreterTerm pinnedElabEnvTerm ≈b residualSimpTerm) ∧
+    (slotAdvance : Advance LeafView LeafPin Candidate).advance specSlot view
+      (specOrder "specializedSimp" specializedSimpComp) (some specializedSimpCand) =
+      if specSlot.usable (holdsAt view) specializedSimpCand
+      then .ok specializedSimpCand
+      else .ok .machine := by
+  have hComp : staticApplyComposition "specializedSimp" elabSimpInterpreterTerm pinnedElabEnvTerm =
+      specializedSimpComp := residualSimpTerm_eq_lowerLite.2.2 "specializedSimp"
+  have hCand : staticApplyCandidate "specializedSimp" elabSimpInterpreterTerm pinnedElabEnvTerm =
       specializedSimpCand := by
-  unfold staticApplyCandidate specializedSimpCand
-  rw [residualComp_eq_specializedSimpComp]
+    unfold staticApplyCandidate specializedSimpCand
+    rw [hComp]
+  have hclosed : (staticApplyComposition "specializedSimp" elabSimpInterpreterTerm pinnedElabEnvTerm).closedB = true := by
+    rw [hComp]
+    decide +kernel
+  have hfut := staticApply_slot_sound "specializedSimp"
+    elabSimpInterpreterTerm pinnedElabEnvTerm hclosed
+  have hadv := hfut.2.2.1 view
+  rw [hComp, hCand] at hadv
+  exact ⟨hfut.1, hadv⟩
 
 /-- Pinned `LeafView` at Epoch 1 supporting `specializedSimpComp`. -/
 def pinnedSimpView : LeafView :=
@@ -302,17 +315,12 @@ theorem silicon_elab_residual_dpr_specialize_sound
     evalReconfigTile afterTile0 (fun _ => 0#64) (fun _ => 0#64) 10#64 = 42#64 ∧
     evalReconfigTile afterTile1 (fun _ => 0#64) (fun _ => 0#64) 1#64 = 1#64 ∧
     evalReconfigTile afterTile1 (fun _ => 0#64) (fun _ => 0#64) 2#64 = 0#64 := by
-  have hclosed : (staticApplyComposition "specializedSimp" elabSimpInterpreterTerm pinnedElabEnvTerm).closedB = true := by
-    rw [residualComp_eq_specializedSimpComp]
-    decide +kernel
-  have hfut := staticApply_slot_sound "specializedSimp"
-    elabSimpInterpreterTerm pinnedElabEnvTerm hclosed
+  have hslot := specializedSimp_slot_advance pinnedSimpView
   have husable : specSlot.usable (holdsAt pinnedSimpView) specializedSimpCand = true := by
     decide +kernel
-  have hadv := hfut.2.2.1 pinnedSimpView
-  rw [residualComp_eq_specializedSimpComp, residualCand_eq_specializedSimpCand] at hadv
+  have hadv := hslot.2
   simp only [husable, ite_true] at hadv
-  refine ⟨husable, hadv, hfut.1, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  refine ⟨husable, hadv, hslot.1, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-! ## 3. Environment Mutation Invalidation & 1-Cycle Safe Fallback (`silicon_elab_env_mutation_fallback_sound`) -/
 
@@ -349,15 +357,9 @@ theorem silicon_elab_env_mutation_fallback_sound
     afterCorrupt.isolated = true ∧
     evalReconfigTile afterCorrupt (fun _ => 0#64) (fun _ => 0#64) argVal = skidVal := by
   intro tile0 corruptFrame afterCorrupt
-  have hclosed : (staticApplyComposition "specializedSimp" elabSimpInterpreterTerm pinnedElabEnvTerm).closedB = true := by
-    rw [residualComp_eq_specializedSimpComp]
-    decide +kernel
-  have hfut := staticApply_slot_sound "specializedSimp"
-    elabSimpInterpreterTerm pinnedElabEnvTerm hclosed
   have hunusable : specSlot.usable (holdsAt mutatedSimpView) specializedSimpCand = false := by
     decide +kernel
-  have hadv := hfut.2.2.1 mutatedSimpView
-  rw [residualComp_eq_specializedSimpComp, residualCand_eq_specializedSimpCand] at hadv
+  have hadv := (specializedSimp_slot_advance mutatedSimpView).2
   simp only [hunusable, Bool.false_eq_true, ite_false] at hadv
   have hCrc := dpr_corrupt_crc_keeps_tile_isolated corruptFrame tile0 rfl hCorrupt
   have hSkid : afterCorrupt.skidHeldOutput = skidVal := by

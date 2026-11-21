@@ -2,37 +2,17 @@ module
 /-
 # `Obend.Tactic.SymbolicCert` — Verified Reflection & `TacticM` Suite (`bool_spec_iff`, `before_rank`, `perm_cert`)
 
-Provides the custom metaprogramming and verified computational reflection suite for `Obend`'s
-3-relation symbolic engine (`Lookup + LinMem + Before`) and Boolean checker equivalences, with
-**zero `native_decide`**, **zero `sorry`**, and **zero custom `axiom`s**:
-
-1. **`by bool_spec_iff` (`bool_spec_iff` / `bool_spec_iff [defs, ...]`)**:
-   - Goal-directed `TacticM` proof builder discharging bidirectional `check x = true ↔ Spec x` and
-     `check x = false ↔ ¬ Spec x` equivalences across nested Boolean combinators (`&&`, `||`, `!`,
-     `==`, `!=`, `decide`, `Except.isOk`, `Except.toBool`, `Option.isSome`, `Option.isNone`, `ite`,
-     `List.all`, `List.any`), automatically aligning left-associated `&&`/`||` chains against
-     right-associated `∧`/`∨` specifications without manual `cases`/`split` boilerplate.
-2. **`by before_rank` (`Before`, `BeforeWeak`, `LexLt` `<ₗₑₓ`, `LexLe` `≤ₗₑₓ`)**:
-   - Verified topological & lexicographic rank solver using Bellman–Ford / Floyd–Warshall path and
-     cycle synthesis in `MetaM`, replayed in Lean's kernel via `@[expose]` structural checkers
-     (`checkDiffPath_sound`, `checkDiffCycle_refutes`, `checkLexChain_lt_sound`,
-     `checkLexChain_le_sound`, `checkLexCycle_refutes`, and `checkDagRankAssignment_sound`) by `rfl`.
-3. **`by perm_cert` (`checkPermWitness_sound`, `LinMemBalance`)**:
-   - Constructive `List.Perm` bag-equivalence prover via insertion-extraction witness reflection
-     (`checkPermWitness xs ys w = true → List.Perm xs ys`), supporting both `[BEq α] [LawfulBEq α]`
-     reducible lists and arbitrary polymorphic `LinMem` multiset conservation goals (`init ++ prod ~
-     cons ++ final`) without requiring `DecidableEq α`.
+The tactics construct kernel-checked proofs for Boolean specification equivalences,
+scalar and lexicographic rank constraints, and multiset conservation. Rank paths and
+permutation witnesses are synthesized in the elaborator and replayed by the verified checkers.
 -/
 public import Lean
 public meta import Lean
-
 public section
 namespace Obend.Tactic.SymbolicCert
 
 set_option autoImplicit false
-
 universe u v
-
 /-! ## 1. Compositional Bidirectional Boolean-Spec Lemmas & `by bool_spec_iff` -/
 
 theorem bool_and_iff {a b : Bool} {P Q : Prop} (ha : a = true ↔ P) (hb : b = true ↔ Q) :
@@ -358,8 +338,8 @@ elab "bool_spec_iff" "[" ids:ident,* "]" : tactic => do
 
 /-! ## 2. Verified `Before` & Lexicographic Rank Reflection (`by before_rank`) -/
 
-@[expose] def Before (u v : Nat) : Prop := u < v
-@[expose] def BeforeWeak (u v : Nat) : Prop := u ≤ v
+abbrev Before (u v : Nat) : Prop := u < v
+abbrev BeforeWeak (u v : Nat) : Prop := u ≤ v
 
 /-- Strict lexicographic rank order `(k₁, j₁) <ₗₑₓ (k₂, j₂)` for stage/derivation pairs (`WFS`, `CBV`). -/
 @[expose] def LexLt (p q : Nat × Nat) : Prop := p.1 < q.1 ∨ (p.1 = q.1 ∧ p.2 < q.2)
@@ -421,15 +401,14 @@ instance lexLt_wfRel : WellFoundedRelation (Nat × Nat) where
   rel := LexLt
   wf  := ⟨lexLt_acc⟩
 
-@[expose] def lookupRankVar : List Nat → Nat → Nat
-  | v :: _, 0 => v | _ :: vs, idx + 1 => lookupRankVar vs idx | [], _ => 0
+abbrev lookupRankVar (ranks : List Nat) (idx : Nat) : Nat := ranks.getD idx 0
 
 /-- Inductive syntax of reflected rank expressions over an environment `env : List Nat`. -/
 inductive RankExpr where
   | var (idx : Nat) | const (c : Nat) | addConst (idx : Nat) (c : Nat)
   deriving DecidableEq, Repr, Inhabited
 
-@[expose] def RankExpr.eval (env : List Nat) : RankExpr → Nat
+def RankExpr.eval (env : List Nat) : RankExpr → Nat
   | .var idx => lookupRankVar env idx | .const c => c | .addConst idx c => lookupRankVar env idx + c
 
 /-- Difference-bound edge `lookupRankVar env src + slack ≤ lookupRankVar env dst`. -/
@@ -440,7 +419,7 @@ structure DiffConstraint where
   deriving DecidableEq, Repr, Inhabited
 
 meta instance : Inhabited DiffConstraint := ⟨⟨0, 0, 0⟩⟩
-@[expose] def DiffHolds (env : List Nat) (e : DiffConstraint) : Prop :=
+def DiffHolds (env : List Nat) (e : DiffConstraint) : Prop :=
   lookupRankVar env e.src + e.slack ≤ lookupRankVar env e.dst
 @[expose] def DiffCtx (env : List Nat) : List DiffConstraint → Prop
   | [] => True | e :: es => DiffHolds env e ∧ DiffCtx env es
@@ -462,10 +441,7 @@ theorem diffHolds_of_eq_fwd {env : List Nat} {i j : Nat} (h : lookupRankVar env 
 theorem diffHolds_of_eq_bwd {env : List Nat} {i j : Nat} (h : lookupRankVar env i = lookupRankVar env j) :
     DiffHolds env ⟨j, 0, i⟩ := by dsimp only [DiffHolds]; omega
 
-@[expose] def lookupDiffConstraint? : List DiffConstraint → Nat → Option DiffConstraint
-  | e :: _, 0 => some e
-  | _ :: es, idx + 1 => lookupDiffConstraint? es idx
-  | [], _ => none
+abbrev lookupDiffConstraint? (edges : List DiffConstraint) (i : Nat) := edges[i]?
 
 theorem diffCtx_lookup {env : List Nat} {es : List DiffConstraint} {idx : Nat} {e : DiffConstraint}
     (hCtx : DiffCtx env es) (hGet : lookupDiffConstraint? es idx = some e) :
@@ -507,7 +483,7 @@ theorem traceDiffPath_sound {env : List Nat} {es : List DiffConstraint} (hCtx : 
         have hRest := traceDiffPath_sound hCtx rest hTrace
         rw [hEqSrc] at hEdge; omega
 
-@[expose] def checkDiffPath (es : List DiffConstraint) (src dst minSlack : Nat) (path : List Nat) : Bool :=
+def checkDiffPath (es : List DiffConstraint) (src dst minSlack : Nat) (path : List Nat) : Bool :=
   match traceDiffPath es src 0 path with
   | some (endV, totalSlack) => Nat.beq endV dst && Nat.ble minSlack totalSlack
   | none => false
@@ -525,6 +501,8 @@ theorem checkDiffPath_sound {env : List Nat} {es : List DiffConstraint}
     have hBound := traceDiffPath_sound hCtx path hTr
     rcases hOk with ⟨rfl, _⟩; omega
 
+example : DiffCtx [2, 4, 4] [⟨0, 1, 1⟩, ⟨1, 0, 2⟩] := ⟨(by decide : 2 + 1 ≤ 4), (by decide : 4 + 0 ≤ 4), trivial⟩
+example : traceDiffPath [⟨0, 1, 1⟩, ⟨1, 0, 2⟩] 0 0 [0, 1] = some (2, 1) := rfl
 example : checkDiffPath [⟨0, 1, 1⟩, ⟨1, 0, 2⟩] 0 2 1 [0, 1] = true := rfl
 
 theorem checkDiffPath_lt {env : List Nat} {es : List DiffConstraint} {src dst : Nat} {path : List Nat}
@@ -547,7 +525,7 @@ theorem checkDiffPath_beforeWeak {env : List Nat} {es : List DiffConstraint} {sr
     BeforeWeak (lookupRankVar env src) (lookupRankVar env dst) :=
   checkDiffPath_le hCtx hOk
 
-@[expose] def checkDiffCycle (es : List DiffConstraint) (startV : Nat) (path : List Nat) : Bool :=
+def checkDiffCycle (es : List DiffConstraint) (startV : Nat) (path : List Nat) : Bool :=
   checkDiffPath es startV startV 1 path
 
 theorem checkDiffCycle_refutes {env : List Nat} {es : List DiffConstraint} {startV : Nat} {path : List Nat}
@@ -579,10 +557,7 @@ meta instance : Inhabited LexConstraint := ⟨⟨0, 0, 0, 0, false⟩⟩
   | [] => True
   | le :: les => LexHolds env le ∧ LexCtx env les
 
-@[expose] def lookupLexConstraint? : List LexConstraint → Nat → Option LexConstraint
-  | le :: _, 0 => some le
-  | _ :: les, idx + 1 => lookupLexConstraint? les idx
-  | [], _ => none
+abbrev lookupLexConstraint? (edges : List LexConstraint) (i : Nat) := edges[i]?
 
 theorem lexCtx_lookup {env : List Nat} {les : List LexConstraint} {idx : Nat} {le : LexConstraint}
     (hCtx : LexCtx env les) (hGet : lookupLexConstraint? les idx = some le) :
@@ -714,7 +689,7 @@ theorem traceLexChain_sound {env : List Nat} {es : List DiffConstraint} {les : L
           | true => exact LexLt.to_lexLe hStep
         exact ⟨hOutTrue, LexLe.trans hStepLe ihLe⟩
 
-@[expose] def checkLexChain (es : List DiffConstraint) (les : List LexConstraint)
+def checkLexChain (es : List DiffConstraint) (les : List LexConstraint)
     (srcK srcJ dstK dstJ : Nat) (reqStrict : Bool) (hops : List LexHop) : Bool :=
   match traceLexChain es les srcK srcJ false hops with
   | some (endK, endJ, outStrict) => Nat.beq endK dstK && Nat.beq endJ dstJ && (!reqStrict || outStrict)
@@ -735,6 +710,9 @@ theorem checkLexChain_lt_sound {env : List Nat} {es : List DiffConstraint} {les 
     rcases hOk with ⟨⟨rfl, rfl⟩, rfl⟩
     exact (traceLexChain_sound hDiff hLex hops hTr).1 rfl
 
+example : LexCtx [0, 1, 2, 3] [⟨0, 1, 2, 3, true⟩] := ⟨Or.inl (by decide), trivial⟩
+example : checkLexHop [⟨0, 1, 2⟩] [] 0 1 (.stageStrict 2 3 [0]) = some (2, 3, true) := rfl
+example : traceLexChain [⟨0, 1, 2⟩] [] 0 1 false [.stageStrict 2 3 [0]] = some (2, 3, true) := rfl
 example : checkLexChain [⟨0, 1, 2⟩] [] 0 1 2 3 true [.stageStrict 2 3 [0]] = true := rfl
 
 theorem checkLexChain_le_sound {env : List Nat} {es : List DiffConstraint} {les : List LexConstraint}
@@ -755,7 +733,7 @@ theorem checkLexChain_le_sound {env : List Nat} {es : List DiffConstraint} {les 
     | false => exact hMain
     | true => exact LexLt.to_lexLe hMain
 
-@[expose] def checkLexCycle (es : List DiffConstraint) (les : List LexConstraint)
+def checkLexCycle (es : List DiffConstraint) (les : List LexConstraint)
     (startK startJ : Nat) (hops : List LexHop) : Bool :=
   checkLexChain es les startK startJ startK startJ true hops
 
@@ -768,7 +746,7 @@ theorem checkLexCycle_refutes {env : List Nat} {es : List DiffConstraint} {les :
 example : checkLexCycle [] [⟨0, 1, 2, 3, true⟩, ⟨2, 3, 0, 1, false⟩] 0 1 [.directLex 0, .directLex 1] = true := rfl
 
 /-- Executable DAG topological rank assignment checker (`Before` certificate for `ExprCAM` / `WFS`). -/
-@[expose] def checkDagRankAssignment (ranks : List Nat) : List (Nat × Nat) → Bool
+def checkDagRankAssignment (ranks : List Nat) : List (Nat × Nat) → Bool
   | [] => true
   | (u, v) :: rest =>
     Nat.blt (lookupRankVar ranks u) (lookupRankVar ranks v) && checkDagRankAssignment ranks rest
@@ -1024,6 +1002,16 @@ private meta def lexHopToExpr : LexHop → MetaM Expr
     return mkApp6 (mkConst ``LexHop.stageEqStep)
       (toExpr dstK) (toExpr dstJ) (toExpr strictStep) fE bE jE
 
+/-- Replay the checker's final Boolean premise using its public computation equations. -/
+private meta def applyCertificate (thm : Name) (args : Array (Option Expr)) : MetaM Expr := do
+  let f ← mkAppOptM thm args
+  let premise := (← whnf (← inferType f)).bindingDomain!
+  let reflTrue ← mkEqRefl (mkConst ``true)
+  if ← isDefEq (← inferType reflTrue) premise then return mkApp f reflTrue
+  let goal ← mkFreshExprSyntheticOpaqueMVar premise
+  Lean.Meta.Tactic.Cbv.cbvDecideGoal goal.mvarId!
+  return mkApp f (← instantiateMVars goal)
+
 meta partial def beforeRankCore (goal : MVarId) : TacticM (List MVarId) :=
   goal.withContext do
     if ← goal.isAssigned then return []
@@ -1089,14 +1077,13 @@ meta partial def beforeRankCore (goal : MVarId) : TacticM (List MVarId) :=
         if let some (gotSlack, path) := dist[src]![dst]! then
           if gotSlack >= reqSlack then
             let pathE ← mkListLit (mkConst ``Nat) (path.map toExpr)
-            let reflTrue ← mkEqRefl (mkConst ``true)
             let prf ←
               if soundThm == ``checkDiffPath_sound then
-                mkAppOptM soundThm #[some envE, some diffListE, some (toExpr src), some (toExpr dst),
-                  some (toExpr reqSlack), some pathE, some diffCtxPrf, some reflTrue]
+                applyCertificate soundThm #[some envE, some diffListE, some (toExpr src), some (toExpr dst),
+                  some (toExpr reqSlack), some pathE, some diffCtxPrf]
               else
-                mkAppOptM soundThm #[some envE, some diffListE, some (toExpr src), some (toExpr dst),
-                  some pathE, some diffCtxPrf, some reflTrue]
+                applyCertificate soundThm #[some envE, some diffListE, some (toExpr src), some (toExpr dst),
+                  some pathE, some diffCtxPrf]
             g.assign prf; return []
       let mut pairs : Array (Nat × Nat) := #[]
       let pushPair := fun (ps : Array (Nat × Nat)) (p : Nat × Nat) => if ps.contains p then ps else ps.push p
@@ -1118,17 +1105,15 @@ meta partial def beforeRankCore (goal : MVarId) : TacticM (List MVarId) :=
               let (lexListE, lexCtxPrf) ← buildLexCtxProof envE st.lexEdges
               let hopExprs ← liftMetaM (hops.mapM lexHopToExpr)
               let hopsE ← mkListLit (mkConst ``LexHop) hopExprs
-              let reflTrue ← mkEqRefl (mkConst ``true)
               let thmName := if reqStr then ``checkLexChain_lt_sound else ``checkLexChain_le_sound
-              let prf ← mkAppOptM thmName #[some envE, some diffListE, some lexListE,
+              let prf ← applyCertificate thmName #[some envE, some diffListE, some lexListE,
                 some (toExpr sk), some (toExpr sj), some (toExpr dk), some (toExpr dj),
-                some hopsE, some diffCtxPrf, some lexCtxPrf, some reflTrue]
+                some hopsE, some diffCtxPrf, some lexCtxPrf]
               g.assign prf; return []
       if let some (startV, cycPath) := findScalarCycle? nVars dist then
         let pathE ← mkListLit (mkConst ``Nat) (cycPath.map toExpr)
-        let reflTrue ← mkEqRefl (mkConst ``true)
-        let falsePrf ← mkAppOptM ``checkDiffCycle_refutes
-          #[some envE, some diffListE, some (toExpr startV), some pathE, some diffCtxPrf, some reflTrue]
+        let falsePrf ← applyCertificate ``checkDiffCycle_refutes
+          #[some envE, some diffListE, some (toExpr startV), some pathE, some diffCtxPrf]
         g.assign (← if tgt.isConstOf ``False then pure falsePrf else mkFalseElim tgt falsePrf)
         return []
       for u in [0 : pairs.size] do
@@ -1137,15 +1122,14 @@ meta partial def beforeRankCore (goal : MVarId) : TacticM (List MVarId) :=
           let (lexListE, lexCtxPrf) ← buildLexCtxProof envE st.lexEdges
           let hopExprs ← liftMetaM (cycHops.mapM lexHopToExpr)
           let hopsE ← mkListLit (mkConst ``LexHop) hopExprs
-          let reflTrue ← mkEqRefl (mkConst ``true)
-          let falsePrf ← mkAppOptM ``checkLexCycle_refutes #[some envE, some diffListE, some lexListE,
-            some (toExpr startK), some (toExpr startJ), some hopsE, some diffCtxPrf, some lexCtxPrf, some reflTrue]
+          let falsePrf ← applyCertificate ``checkLexCycle_refutes #[some envE, some diffListE, some lexListE,
+            some (toExpr startK), some (toExpr startJ), some hopsE, some diffCtxPrf, some lexCtxPrf]
           g.assign (← if tgt.isConstOf ``False then pure falsePrf else mkFalseElim tgt falsePrf)
           return []
       throwError "before_rank: could not synthesize a rank chain or cycle refutation from local hypotheses"
 
 /-- **`by before_rank`**: verified Bellman–Ford / lexicographic rank reflection tactic proving
-    `Before`, `<`, `≤`, `<ₗₑₓ`, `≤ₗₑₓ` chains and synthesizing strict-cycle refutations via `rfl`. -/
+    `Before`, `<`, `≤`, `<ₗₑₓ`, `≤ₗₑₓ` chains and synthesizing strict-cycle refutations from checked certificates. -/
 elab "before_rank" : tactic => do
   let goal ← getMainGoal
   let remaining ← beforeRankCore goal
@@ -1186,7 +1170,7 @@ theorem extractPermAt_perm {α : Type u} [BEq α] [LawfulBEq α] {x : α} :
       exact (List.Perm.swap y x rest).trans ((extractPermAt_perm idx ys hSub).cons y)
 
 /-- Kernel-reducible permutation witness verifier: checks that `w` extracts `xs` element-by-element from `ys`. -/
-@[expose] def checkPermWitness {α : Type u} [BEq α] : List α → List α → List Nat → Bool
+def checkPermWitness {α : Type u} [BEq α] : List α → List α → List Nat → Bool
   | [], [], [] => true
   | x :: xs, ys, idx :: ws =>
     match extractPermAt x idx ys with
@@ -1248,28 +1232,26 @@ inductive SymListExpr where
   | nil | cons (elemIdx : Nat) (tail : SymListExpr) | append (l r : SymListExpr) | chunk (chunkIdx : Nat)
   deriving Repr
 
-@[expose] def prependSymElem {α : Type u} : List α → Nat → List α → List α
-  | x :: _, 0, acc => x :: acc | _ :: xs, idx + 1, acc => prependSymElem xs idx acc | [], _, acc => acc
-@[expose] def lookupSymChunk {α : Type u} : List (List α) → Nat → List α
-  | c :: _, 0 => c | _ :: cs, idx + 1 => lookupSymChunk cs idx | [], _ => []
+abbrev prependSymElem {α : Type u} (elems : List α) (i : Nat) (tail : List α) : List α :=
+  elems[i]?.elim tail (· :: tail)
+abbrev lookupSymChunk {α : Type u} (chunks : List (List α)) (i : Nat) : List α := chunks.getD i []
 @[expose] def evalSymListExpr {α : Type u} (elems : List α) (chunks : List (List α)) : SymListExpr → List α
   | .nil => []
   | .cons idx tl => prependSymElem elems idx (evalSymListExpr elems chunks tl)
   | .append l r => evalSymListExpr elems chunks l ++ evalSymListExpr elems chunks r
   | .chunk idx => lookupSymChunk chunks idx
-@[expose] def evalSymToken {α : Type u} (elems : List α) (chunks : List (List α)) : SymPermToken → List α
+def evalSymToken {α : Type u} (elems : List α) (chunks : List (List α)) : SymPermToken → List α
   | .elem idx => prependSymElem elems idx [] | .chunk idx => lookupSymChunk chunks idx
-@[expose] def evalSymTokens {α : Type u} (elems : List α) (chunks : List (List α)) : List SymPermToken → List α
+def evalSymTokens {α : Type u} (elems : List α) (chunks : List (List α)) : List SymPermToken → List α
   | [] => [] | t :: ts => evalSymToken elems chunks t ++ evalSymTokens elems chunks ts
-@[expose] def flattenSymListExpr : SymListExpr → List SymPermToken
+def flattenSymListExpr : SymListExpr → List SymPermToken
   | .nil => [] | .cons idx tl => .elem idx :: flattenSymListExpr tl
   | .append l r => flattenSymListExpr l ++ flattenSymListExpr r | .chunk idx => [.chunk idx]
 
 theorem prependSymElem_eq_append {α : Type u} (elems : List α) (idx : Nat) (acc : List α) :
     prependSymElem elems idx acc = prependSymElem elems idx [] ++ acc := by
-  induction elems generalizing idx with
-  | nil => rfl
-  | cons _ _ ih => cases idx with | zero => rfl | succ k => exact ih k
+  unfold prependSymElem
+  cases elems[idx]? <;> rfl
 
 theorem evalSymTokens_append {α : Type u} (elems : List α) (chunks : List (List α))
     (t₁ t₂ : List SymPermToken) :
@@ -1301,7 +1283,7 @@ theorem evalSymTokens_perm_of_perm {α : Type u} (elems : List α) (chunks : Lis
     exact List.Perm.append_right _ List.perm_append_comm
   | trans _ _ ih₁ ih₂ => exact ih₁.trans ih₂
 
-@[expose] def checkSymPermWitness (lhs rhs : SymListExpr) (w : List Nat) : Bool :=
+def checkSymPermWitness (lhs rhs : SymListExpr) (w : List Nat) : Bool :=
   checkPermWitness (flattenSymListExpr lhs) (flattenSymListExpr rhs) w
 
 theorem checkSymPermWitness_sound {α : Type u} (elems : List α) (chunks : List (List α))
@@ -1311,6 +1293,37 @@ theorem checkSymPermWitness_sound {α : Type u} (elems : List α) (chunks : List
   exact evalSymTokens_perm_of_perm elems chunks (checkPermWitness_sound h)
 
 example : checkSymPermWitness (.append (.cons 0 .nil) (.chunk 0)) (.append (.chunk 0) (.cons 0 .nil)) [1, 0] = true := rfl
+
+@[cbv_eval] theorem checkDiffPath_eval (es : List DiffConstraint) (src dst slack : Nat) (path : List Nat) :
+    checkDiffPath es src dst slack path =
+      (traceDiffPath es src 0 path).any (fun (v, w) => v.beq dst && slack.ble w) := by
+  unfold checkDiffPath; cases traceDiffPath es src 0 path with
+  | none => rfl
+  | some pair => cases pair; rfl
+@[cbv_eval] theorem checkDiffCycle_eval (es : List DiffConstraint) (v : Nat) (path : List Nat) :
+    checkDiffCycle es v path = checkDiffPath es v v 1 path := by rfl
+@[cbv_eval] theorem checkLexChain_eval (es : List DiffConstraint) (les : List LexConstraint)
+    (sk sj dk dj : Nat) (strict : Bool) (hops : List LexHop) :
+    checkLexChain es les sk sj dk dj strict hops = (traceLexChain es les sk sj false hops).any
+      (fun (k, j, s) => k.beq dk && j.beq dj && (!strict || s)) := by
+  unfold checkLexChain; cases traceLexChain es les sk sj false hops with
+  | none => rfl
+  | some triple => rcases triple with ⟨_, _, _⟩; rfl
+@[cbv_eval] theorem checkLexCycle_eval (es : List DiffConstraint) (les : List LexConstraint) (k j : Nat) (hops : List LexHop) :
+    checkLexCycle es les k j hops = checkLexChain es les k j k j true hops := by rfl
+@[cbv_eval] theorem checkPermWitness_nil {α : Type u} [BEq α] (ys : List α) (w : List Nat) :
+    checkPermWitness [] ys w = (ys.isEmpty && w.isEmpty) := by cases ys <;> cases w <;> rfl
+@[cbv_eval] theorem checkPermWitness_missing {α : Type u} [BEq α] (x : α) (xs ys : List α) :
+    checkPermWitness (x :: xs) ys [] = false := by rfl
+@[cbv_eval] theorem checkPermWitness_cons {α : Type u} [BEq α] (x : α) (xs ys : List α) (i : Nat) (w : List Nat) :
+    checkPermWitness (x :: xs) ys (i :: w) = (extractPermAt x i ys).any (fun rem => checkPermWitness xs rem w) := by
+  rw [checkPermWitness]; cases extractPermAt x i ys <;> rfl
+@[cbv_eval] theorem flattenSymListExpr_eval (e : SymListExpr) : flattenSymListExpr e =
+    SymListExpr.rec (motive := fun _ => List SymPermToken) [] (fun i _ ts => .elem i :: ts)
+      (fun _ _ ls rs => ls ++ rs) (fun i => [.chunk i]) e := by
+  induction e <;> simp_all [flattenSymListExpr]
+@[cbv_eval] theorem checkSymPermWitness_eval (l r : SymListExpr) (w : List Nat) :
+    checkSymPermWitness l r w = checkPermWitness (flattenSymListExpr l) (flattenSymListExpr r) w := by rfl
 
 private meta structure SymPermReifyState where
   elems  : Array Expr := #[]
@@ -1395,36 +1408,18 @@ private meta partial def extractWhnfListElems? (e : Expr) : MetaM (Option (Array
 
 private meta def findDefEqPermWitness? (xs ys : Array Expr) : MetaM (Option (List Nat)) := do
   if xs.size != ys.size then return none
-  let mut rem := ys.toList
-  let mut wit : Array Nat := #[]
+  let mut remaining := ys
+  let mut witness := #[]
   for x in xs do
-    let mut foundIdx? : Option Nat := none
-    let mut prefixRev : List Expr := []
-    let mut cur := rem
-    let mut idx := 0
-    while !cur.isEmpty && foundIdx?.isNone do
-      match cur with
-      | [] => break
-      | y :: tail =>
-        if ← withoutModifyingState (isDefEq x y) then
-          foundIdx? := some idx; rem := prefixRev.reverse ++ tail
-        else
-          prefixRev := y :: prefixRev; cur := tail; idx := idx + 1
-    match foundIdx? with
-    | some i => wit := wit.push i
-    | none => return none
-  return some wit.toList
+    let some i ← remaining.findIdxM? (fun y => withoutModifyingState (isDefEq x y)) | return none
+    remaining := remaining.eraseIdx! i
+    witness := witness.push i
+  return some witness.toList
 
 meta partial def permCertCore (goal : MVarId) : TacticM (List MVarId) :=
   goal.withContext do
     if ← goal.isAssigned then return []
-    let mut g := goal
-    let mut keepIntro := true
-    while keepIntro do
-      let tgt ← g.withContext do pure (stripMData (← instantiateMVars (← g.getType)))
-      if tgt.isForall then
-        let (_, g') ← g.intro1P; g := g'
-      else keepIntro := false
+    let (_, g) ← goal.intros
     g.withContext do
       if ← tryCloseFromLCtx g then return []
       let rawTgt := stripMData (← instantiateMVars (← g.getType))
@@ -1449,23 +1444,21 @@ meta partial def permCertCore (goal : MVarId) : TacticM (List MVarId) :=
           let listAlphaTy ← mkAppM ``List #[alphaTy]
           let chunksListE ← mkListLit listAlphaTy st2.chunks.toList
           let wE ← mkListLit (mkConst ``Nat) (w.map toExpr)
-          let reflTrue ← mkEqRefl (mkConst ``true)
-          let prf ← mkAppOptM ``checkSymPermWitness_sound
+          let prf ← applyCertificate ``checkSymPermWitness_sound
             #[some alphaTy, some elemsListE, some chunksListE,
               some (symListExprToExpr lhsSym), some (symListExprToExpr rhsSym),
-              some wE, some reflTrue]
+              some wE]
           if ← isDefEq (← inferType prf) tgt then
             g.assign prf; return []
         if let (some xsArr, some ysArr) ← (return (← extractWhnfListElems? lhsE, ← extractWhnfListElems? rhsE)) then
           if let some w ← findDefEqPermWitness? xsArr ysArr then
             let wE ← mkListLit (mkConst ``Nat) (w.map toExpr)
-            let reflTrue ← mkEqRefl (mkConst ``true)
             let saved ← saveState
             try
               let beqInst ← synthInstance (← mkAppM ``BEq #[alphaTy])
               let lawfulInst ← synthInstance (← mkAppOptM ``LawfulBEq #[some alphaTy, some beqInst])
-              let prf ← mkAppOptM ``checkPermWitness_sound
-                #[some alphaTy, some beqInst, some lawfulInst, some lhsE, some rhsE, some wE, some reflTrue]
+              let prf ← applyCertificate ``checkPermWitness_sound
+                #[some alphaTy, some beqInst, some lawfulInst, some lhsE, some rhsE, some wE]
               if ← isDefEq (← inferType prf) tgt then
                 g.assign prf; return []
             catch _ => restoreState saved
@@ -1478,16 +1471,16 @@ meta partial def permCertCore (goal : MVarId) : TacticM (List MVarId) :=
               let elemsE ← mkListLit alphaTy s2.elems.toList
               let chunksE ← mkListLit (← mkAppM ``List #[alphaTy]) s2.chunks.toList
               let wSymE ← mkListLit (mkConst ``Nat) (wSym.map toExpr)
-              let prf ← mkAppOptM ``checkSymPermWitness_sound
+              let prf ← applyCertificate ``checkSymPermWitness_sound
                 #[some alphaTy, some elemsE, some chunksE,
                   some (symListExprToExpr lSym2), some (symListExprToExpr rSym2),
-                  some wSymE, some reflTrue]
+                  some wSymE]
               if ← isDefEq (← inferType prf) tgt then
                 g.assign prf; return []
         throwError "perm_cert: lists are not certified permutations of each other:\n  lhs: {lhsE}\n  rhs: {rhsE}"
 
 /-- **`by perm_cert`**: constructive `List.Perm` & `LinMemBalance` reflection tactic computing an
-    extraction witness in `MetaM` and verifying `checkPermWitness` / `checkSymPermWitness` by `rfl`
+    extraction witness in `MetaM` and replaying the verified permutation checkers
     in Lean's kernel (zero `native_decide`). -/
 elab "perm_cert" : tactic => do
   let goal ← getMainGoal

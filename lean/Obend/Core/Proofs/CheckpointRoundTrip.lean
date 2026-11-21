@@ -3,6 +3,7 @@ module
 quiescent yielded activity, is restored exactly from its token encoding.
 Fuel is the token count, so no separate depth bound is assumed. -/
 public import Obend.Core.Checkpoint
+import all Obend.Core.Checkpoint
 public import Obend.Tactic.Cases
 namespace Obend.Core.Proofs.CheckpointRoundTrip
 open Obend.Core.Term Obend.Core.Machine Obend.Core.Checkpoint
@@ -286,7 +287,7 @@ theorem state_roundTrip (state : State) : decodeState (encodeState state) = some
   simp only []
   generalize (encodeState ⟨heap,control,stack⟩).length + 1 = fuel at heapDecoded stackDecoded controlOk ⊢
   rw [shape]
-  simp only [checkpointEdition,bne_self_eq_false,Bool.false_eq_true,if_false]
+  simp only [checkpointEdition,bne_self_eq_false,Bool.false_eq_true,ite_false]
   rw [show heap.size = heap.toList.length by simp,heapDecoded]
   simp [controlOk,stackDecoded]
 

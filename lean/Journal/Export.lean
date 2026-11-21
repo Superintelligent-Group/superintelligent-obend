@@ -23,7 +23,7 @@ with one memo shared across every row instead of one per call.
 -/
 public import Lean
 public import Journal.Journal
-@[expose] public section
+public section
 
 namespace Journal.Export
 

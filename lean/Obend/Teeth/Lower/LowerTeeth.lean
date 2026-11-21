@@ -24,7 +24,7 @@ import all Obend.Lower.Transport
 import all Obend.Hardware.Compiler
 public import Obend.Lower.Transport
 public import Obend.Lower.Proofs.Hardware
-@[expose] public section
+public section
 
 namespace Obend.Teeth.Lower
 open Obend.Core.Term Obend.Core.Ty
@@ -52,14 +52,9 @@ def reflNatObj : TransportObj := ⟨reflNatDecider, [.natural]⟩
 def reflNatCert : TransportCert :=
   ⟨sourceDigest reflNatDecider, lowerProp reflNatDecider, [.natural], []⟩
 
-theorem checkL_reflNatDecider :
-    checkL [] reflNatDecider (curry [.natural] .boolean) = true ∧
-    nonEmptySplits reflNatDecider = true := by
-  decide +kernel
-
 /-- `transportCheck` accepts `reflNatCert` and exercises all 5 refusal clauses (`notTheLowering`,
 `otherSource`, `wrongArgTys`, `emptySplit`, `illTyped`). -/
-theorem transportCheck_all_clauses_exercised :
+example :
     transportCheck 0 reflNatObj reflNatCert = .ok ∧
     transportCheck 0 reflNatObj { reflNatCert with claim := .boolean false } =
       .refused .notTheLowering [] ∧
@@ -75,8 +70,8 @@ theorem transportCheck_all_clauses_exercised :
      transportCheck 0 ⟨illTypedExpr, []⟩
        ⟨sourceDigest illTypedExpr, lowerProp illTypedExpr, [], []⟩ =
        .refused .illTyped []) := by
-  have h1 := checkL_reflNatDecider.1
-  have h2 := checkL_reflNatDecider.2
+  have h1 : checkL [] reflNatDecider (curry [.natural] .boolean) = true := by decide +kernel
+  have h2 : nonEmptySplits reflNatDecider = true := by decide +kernel
   have hterm_false : Obend.Law.termEq (lowerProp reflNatDecider) (.boolean false) = false := by
     decide +kernel
   have hty_false : (([] : List Ty) == [.natural]) = false := by
@@ -99,7 +94,7 @@ theorem transportCheck_all_clauses_exercised :
   · simp [transportCheck, Obend.Logic.termEq_refl', hempty_split]
   · simp [transportCheck, Obend.Logic.termEq_refl', hill_split, hill_check]
 
-/-! ## 2. `#tooth` Kernel Mutation Suite (9 Mutations Across `Lower` and `Hardware.Compiler`) -/
+/-! ## 2. `#tooth` Kernel Mutation Suite (11 Mutations Across `Lower` and `Hardware.Compiler`) -/
 
 /-- 1. Broken `lowerT` that maps every `LExpr` to `.nat 0`. -/
 def lowerConstZero (_ : LExpr) : Term := .nat 0
@@ -113,13 +108,13 @@ def lowerConstZero (_ : LExpr) : Term := .nat 0
 #tooth Obend.Lower.checkL_sound by mutation Obend.Lower.checkL := fun _ _ _ => true
 
 -- 4. Broken `lower@1` judge that accepts every certificate without checking `termEq` or `digest`.
-#tooth Obend.Lower.bad_refused by mutation Obend.Lower.check := fun _ _ _ => .ok
+#tooth Obend.Lower.check_ok by mutation Obend.Lower.check := fun _ _ _ => .ok
 
 /-- 5. Broken `transport@1` judge that accepts every certificate. -/
 def transportCheckAcceptAll (_ : Nat) (_ : TransportObj) (_ : TransportCert) :
     Obend.Judge.Verdict TransportClause := .ok
 
-#tooth Obend.Lower.badTransport_refused by mutation Obend.Lower.transportCheck := transportCheckAcceptAll
+#tooth Obend.Lower.transportCheck_ok by mutation Obend.Lower.transportCheck := transportCheckAcceptAll
 
 /-- 6. Broken `Support.holds` that ignores subclass overrides and always returns `true`. -/
 def supportHoldsAlwaysTrue (_ : Composition) (_ : Nat) (_ : Support) : Bool := true
@@ -154,7 +149,7 @@ def evalPrimHwSatWrappingSub (op : Primitive) (a b : BitVec 64) : Option (BitVec
 
 #tooth Obend.Hardware.Compiler.evalPrimHwSat_subtract_eq_ofNat_sub by mutation Obend.Hardware.Compiler.evalPrimHwSat := evalPrimHwSatWrappingSub
 
-/-- 9. Broken `compileTermSat` that refuses `box = .record []` (`none`), caught by `saturating_accepts_erased`. -/
+/-- 9. Broken `compileTermSat` that refuses `box = .record []` (`none`), caught in every compilation environment. -/
 def compileTermSatRefuseBox
     (slots : List String)
     (slotBodies : List RtlExpr)
@@ -162,7 +157,12 @@ def compileTermSatRefuseBox
     (varEnv : List RtlExpr) : Term → Option RtlExpr :=
   compileTerm slots slotBodies selfDepth varEnv
 
-#tooth Obend.Lower.saturating_accepts_erased by mutation Obend.Hardware.Compiler.compileTermSat := compileTermSatRefuseBox
+theorem compile_erased (slots : List String) (bodies : List RtlExpr) (depth : Nat)
+    (env : List RtlExpr) :
+    compileTermSat slots bodies depth env (lowerT .erased) = some (.const 0#64) := by
+  simp [lowerT, box, compileTermSat]
+
+#tooth compile_erased by mutation Obend.Hardware.Compiler.compileTermSat := compileTermSatRefuseBox
 
 -- 10. Broken `checkL` that refuses every expression (`false`), caught by `checkL_complete`.
 #tooth Obend.Lower.checkL_complete by mutation Obend.Lower.checkL := fun _ _ _ => false

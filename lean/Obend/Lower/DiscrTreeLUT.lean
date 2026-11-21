@@ -24,7 +24,7 @@ Implements `WS 28` Stage 5 & 6 (`SILICON-ELABORATOR.md` §5.2–7):
 -/
 public import Obend.Lower.MetaUnify
 public import Obend.Lower.Proofs.SiliconKernel
-@[expose] public section
+public section
 
 namespace Obend.Lower.DiscrTreeLUT
 open Obend.Core.Term
@@ -801,7 +801,7 @@ theorem evalSlotGuardedDiscrTile_moved_pin_blocks
 
 /-- Synthesize a combinational priority-encoder `.mux` cascade (`RtlExpr`) for a priority-ordered list
 of `(patternTag, gain, offset)` rules over `inputPort tagPort` and `inputPort argPort`. -/
-def compileDiscrRulesExprAt (tagPort argPort : Nat) : List (Nat × Nat × Nat) → RtlExpr
+@[expose] def compileDiscrRulesExprAt (tagPort argPort : Nat) : List (Nat × Nat × Nat) → RtlExpr
   | [] => .const 0#64
   | (patTag, gain, offset) :: rest =>
     let cond := .alu .eq (.inputPort tagPort) (.const (BitVec.ofNat 64 patTag))

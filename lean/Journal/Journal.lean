@@ -63,7 +63,7 @@ public import Obend.Slot
 import Obend.Tactic.Tooth
 public import Std.Data.HashMap
 public import Std.Data.HashSet
-@[expose] public section
+public section
 
 namespace Journal
 

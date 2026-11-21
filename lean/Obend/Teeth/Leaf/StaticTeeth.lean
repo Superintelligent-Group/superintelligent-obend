@@ -14,17 +14,17 @@ import all Obend.Leaf.Specialize
 import all Obend.Leaf.Served
 import all Obend.Leaf.Static
 public import Obend.Leaf.Static
-@[expose] public section
+public section
 open Obend.Core.Term Obend.Leaf Obend.Leaf.Static
 
 namespace Obend.Teeth.Leaf.Static
 
 /-! ## A pinned environment, read -/
 
-/-- Two declarations: `"Nat.zero"` holding `0` and `"Answer"` holding `42`. -/
-def sampleEnvPinTable : EnvPinTable :=
+/-- The environment binds `"Nat.zero"` to zero and `"Answer"` to the supplied natural. -/
+def sampleEnvPinTable (answer : Nat) : EnvPinTable :=
   [ ("Nat.zero", .inject "constInfo" (.nat 0))
-  , ("Answer", .inject "constInfo" (.nat 42)) ]
+  , ("Answer", .inject "constInfo" (.nat answer)) ]
 
 /-- A reader that selects `"Answer"`, cases on `"constInfo"`, and adds `8`. -/
 def sampleElabLookupTerm : Term :=
@@ -33,17 +33,20 @@ def sampleElabLookupTerm : Term :=
       [ ("constInfo", .binary .add (.bound 0) (.nat 8))
       , ("axiomInfo", .nat 0) ])
 
-/-- The reader at the environment folds to `50`. -/
-theorem envLookup_sample_folds :
-    dataPinSpecialize (.app sampleElabLookupTerm (pinTableToTerm sampleEnvPinTable)) = .nat 50 := by
+/-- The reader adds eight to the pinned answer. -/
+theorem envLookup_sample_folds (answer : Nat) :
+    dataPinSpecialize (.app sampleElabLookupTerm (pinTableToTerm (sampleEnvPinTable answer))) = .nat (answer + 8) := by
   simp [dataPinSpecialize, dataPinSteps, dataPinPass, resolveApp, resolveGet, resolveCase,
     resolveBinary, sampleElabLookupTerm, pinTableToTerm, sampleEnvPinTable,
     instantiate, Term.substitute, liftSubstitution, primitiveResult]
 
+example : dataPinSpecialize (.app sampleElabLookupTerm (pinTableToTerm (sampleEnvPinTable 42))) = .nat 50 :=
+  envLookup_sample_folds 42
+
 /-- A folder that folds nothing. -/
 def dataPinSpecializeNoOp (t : Term) : Term := t
 
-#tooth Obend.Teeth.Leaf.Static.envLookup_sample_folds by mutation
+#tooth envLookup_sample_folds by mutation
   Obend.Leaf.Static.dataPinSpecialize := dataPinSpecializeNoOp
 
 /-! ## A four-slot book, specialized -/
@@ -76,18 +79,22 @@ def sampleBookPins : List LeafPin :=
   , ⟨.layer "threshold", .nat 9⟩
   , ⟨.layer "helper", .lam (.binary .add (.bound 0) (.nat 16))⟩ ]
 
-/-- `dispatch` after specialization: `λself. λx. (x + 16) + 9`, reading no slot; at `5` it folds to `30`. -/
-theorem specializeBook_sample_folds :
+/-- `dispatch` after specialization: `λself. λx. (x + 16) + 9`, reading no slot; at any natural `n` it folds to `n + 16 + 9`. -/
+theorem specializeBook_sample_folds {n : Nat} :
     lookupBookCode (specializeBook sampleSpecializableBook sampleBookPins) "dispatch" =
       some (.lam (.lam (.binary .add (.binary .add (.bound 0) (.nat 16)) (.nat 9)))) ∧
     ((specializeBook sampleSpecializableBook sampleBookPins).defs.find? (·.member == "dispatch")).map (·.reads) =
       some [] ∧
-    evalResidualBookAt (specializeBook sampleSpecializableBook sampleBookPins) "dispatch" (.nat 5) =
-      some (.nat 30) ∧
+    evalResidualBookAt (specializeBook sampleSpecializableBook sampleBookPins) "dispatch" (.nat n) =
+      some (.nat (n + 16 + 9)) ∧
     evalBook (specializeBook sampleSpecializableBook sampleBookPins) "dispatch" =
       evalBook sampleSpecializableBook "dispatch" := by
-  refine ⟨optTermEq_sound (by decide +kernel), by decide +kernel,
-    optTermEq_sound (by decide +kernel), optTermEq_sound (by decide +kernel)⟩
+  have code : lookupBookCode (specializeBook sampleSpecializableBook sampleBookPins) "dispatch" =
+      some (.lam (.lam (.binary .add (.binary .add (.bound 0) (.nat 16)) (.nat 9)))) :=
+    optTermEq_sound (by decide +kernel)
+  refine ⟨code, by decide +kernel, ?_, optTermEq_sound (by decide +kernel)⟩
+  simp [evalResidualBookAt, code, dataPinSpecialize, dataPinSteps, dataPinPass, resolveApp,
+    resolveBinary, instantiate, Term.substitute, liftSubstitution, primitiveResult]
 
 /-- A specializer that returns the book unchanged. -/
 def specializeBookNoOp (B : Book) (_pins : List LeafPin) : Book := B
