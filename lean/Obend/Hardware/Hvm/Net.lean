@@ -16,7 +16,7 @@ single redex `nul v ~ K`. `callDef` is the same fact for a reference meeting its
 definition's outputs, as one tuple, meet the caller's continuation.
 -/
 public import Obend.Hardware.Hvm.Model
-@[expose] public section
+public section
 namespace Obend.Hardware.Hvm
 set_option autoImplicit false
 
@@ -43,7 +43,7 @@ structure FDef where
   body : FExp
   deriving DecidableEq, Repr
 
-def cons {α : Type} (x : α) (ρ : Nat → α) : Nat → α
+@[expose] def cons {α : Type} (x : α) (ρ : Nat → α) : Nat → α
   | 0 => x
   | i + 1 => ρ i
 
@@ -211,10 +211,15 @@ def many (os : List Nat) (N : HTree) : Nat → Option HTree := fun m => if m ∈
 /-- Two substitutions, the first one first. -/
 def merge (S T : Nat → Option HTree) : Nat → Option HTree := fun m => (S m).or (T m)
 
-@[simp] theorem bagVars_nil : bagVars [] = [] := rfl
+@[simp] theorem not_mem_bagVars_nil (v : Nat) : v ∉ bagVars [] := by
+  simp [bagVars]
+
 @[simp] theorem bagVars_cons (r : Redex) (l : List Redex) :
     bagVars (r :: l) = r.1.vars ++ r.2.vars ++ bagVars l := by
   simp [bagVars, redexVars]
+@[simp] theorem bagVars_singleton (r : Redex) : bagVars [r] = r.1.vars ++ r.2.vars := by
+  simp [bagVars, redexVars]
+
 @[simp] theorem bagVars_append (l₁ l₂ : List Redex) : bagVars (l₁ ++ l₂) = bagVars l₁ ++ bagVars l₂ := by
   simp [bagVars]
 
@@ -578,7 +583,7 @@ theorem comp_facts : ∀ (e : FExp) (K : HTree) (n : Nat),
   | .var _, K, n => by
     refine ⟨Nat.le_succ _, by simp [comp], by simp [comp], ?_⟩
     intro v hv
-    simp only [comp, bagVars_cons, HTree.vars, bagVars_nil, List.append_nil, List.mem_append,
+    simp only [comp, bagVars_singleton, HTree.vars, List.mem_append,
       List.mem_singleton] at hv
     rcases hv with rfl | hv
     · exact .inl ⟨Nat.le_refl _, Nat.lt_succ_self _⟩
@@ -701,7 +706,7 @@ theorem comp_facts : ∀ (e : FExp) (K : HTree) (n : Nat),
     simp only [comp]
     refine ⟨by omega, fun p hp => argOcc_mem hp, argOcc_nodup _ _, ?_⟩
     intro w hw
-    simp only [bagVars_cons, HTree.vars, List.nil_append, bagVars_nil, List.append_nil] at hw
+    simp only [bagVars_singleton, HTree.vars, List.nil_append] at hw
     rcases argChain_vars hw with h | h
     · exact .inl h
     · exact .inr h
@@ -1080,7 +1085,7 @@ theorem outSub_none (j : Nat) : ∀ (vs : List (Option Nat)) (m : Nat), (m < j �
   | v :: vs, m, h => by
     simp only [List.length_cons] at h
     simp only [outSub]
-    rw [if_neg (by omega), outSub_none (j + 1) vs m (by omega)]
+    rw [ite_eq_right (by omega), outSub_none (j + 1) vs m (by omega)]
 
 theorem closedImg_outSub (j : Nat) : ∀ vs : List (Option Nat), ClosedImg (outSub j vs)
   | [] => fun _ _ h => by simp [outSub] at h
@@ -1118,13 +1123,13 @@ theorem tup_outSub : ∀ (vs : List (Option Nat)) (j : Nat),
     have ih := tup_outSub (v' :: vs) (j + 1)
     simp only [List.length_cons] at ih ⊢
     simp only [outVars, tup, HTree.subst, List.map_cons] at ih ⊢
-    simp only [outSub, if_pos rfl, Option.getD_some]
+    simp only [outSub]
     congr 1
     rw [← ih]
     refine HTree.subst_congr _ (fun w hw => ?_)
     have := outVars_vars (k := vs.length + 1) (j := j + 1) (by simpa only [outVars] using hw)
     simp only [outSub]
-    rw [if_neg (by omega)]
+    rw [ite_eq_right (by omega)]
 
 theorem sLinkSplit {book : List HDef} {root : HTree} (A B : List Redex) (x : Nat) (t : HTree)
     (hr : x ∉ root.vars) :
@@ -1181,7 +1186,7 @@ theorem sOutputs (book : List HDef) (ρ : Nat → Option Nat) (S : Nat → Optio
       hS (by simp [HTree.subst, hSj]) (by
         refine fresh4_mk (fun w hw => ?_) (fun w hw => ?_) (fun w hw => ?_) (fun w hw => ?_)
         · have := Fr w hw; omega
-        · simp only [bagVars_append, bagVars_cons, bagVars_nil, List.append_nil, List.mem_append] at hw
+        · simp only [bagVars_append, bagVars_singleton, List.mem_append] at hw
           rcases hw with hw | hw | hw
           · have := Fp w hw; omega
           · have := hT w hw; omega
@@ -1347,7 +1352,7 @@ theorem bindEnv_revRange (ρ : Nat → Option Nat) : ∀ d, bindEnv (revRange d)
       · simp [h, h', show i < d + 1 by omega]
       · simp [h, h', show ¬ i < d + 1 by omega]
 
-theorem bindEnv_succ (ρ : Nat → Option Nat) (x : Option Nat) : ∀ (ps : List Nat) (vs : List (Option Nat)),
+theorem bindEnv_succ (x : Option Nat) : ∀ (ps : List Nat) (vs : List (Option Nat)),
     bindEnv (0 :: ps.map (· + 1)) (x :: vs) = cons x (bindEnv ps vs)
   | ps, vs => by
     funext i
@@ -1814,7 +1819,7 @@ theorem comp_reduces_aux (book : List HDef) (D : List FDef) (fuel : Nat)
       · have := Fq w hw; omega
     have preK : ∀ (N : HTree), N.vars = [] → ∀ w ∈ bagVars (pre ++ [(N, K)]), w < rz.next ∨ rs.next ≤ w := by
       intro N hN w hw
-      simp only [bagVars_append, bagVars_cons, hN, bagVars_nil, List.append_nil, List.nil_append,
+      simp only [bagVars_append, bagVars_singleton, hN, List.nil_append,
         List.mem_append] at hw
       rcases hw with hw | hw
       · have := Fp w hw; omega
@@ -1985,7 +1990,7 @@ theorem comp_reduces_aux (book : List HDef) (D : List FDef) (fuel : Nat)
       refine (steps_eq (by simp)).trans ((IHz (nul none) S root (pre ++ [(.era, K)]) _ zH1 zH2 hS (nul_subst _ _)
           (zfresh (nul none) (.inl (nul_vars _)) _ _ ?_ (seFresh _ _ (hS1 none) (nul_vars none)))).trans ?_)
       · intro w hw
-        simp only [bagVars_append, bagVars_cons, HTree.vars, bagVars_nil, List.append_nil, List.nil_append,
+        simp only [bagVars_append, bagVars_singleton, HTree.vars, List.nil_append,
           List.mem_append] at hw
         rcases hw with hw | hw
         · have := Fp w hw; omega
@@ -2022,15 +2027,15 @@ theorem comp_reduces_aux (book : List HDef) (D : List FDef) (fuel : Nat)
     have hargs : ∀ p ∈ argOcc (revRange d) n, S p.2 = some (nul (ρ p.1)) :=
       fun p hp => h1 p (List.mem_append_right _ hp)
     have hKa : K.subst Sa = K := HTree.subst_id_of _ (fun w hw => by
-      simp only [Sa]; rw [if_neg (by have := Fk w hw; omega)])
+      simp only [Sa]; rw [ite_eq_right (by have := Fk w hw; omega)])
     have hsplit := comp_subst_K v (.swi (.con (.ref nz) (.ref ns)) (argChain (revRange d) n K)) (n + d) Sa
-      (fun w hw1 _ => by simp only [Sa]; rw [if_neg (by omega)])
+      (fun w hw1 _ => by simp only [Sa]; rw [ite_eq_right (by omega)])
     have eKv : (HTree.swi (.con (.ref nz) (.ref ns)) (argChain (revRange d) n K)).subst Sa =
         .swi (.con (.ref nz) (.ref ns)) (argTree (((revRange d).map ρ).map nul) K) := by
       simp only [HTree.subst]
       rw [argChain_S Sa ρ K (revRange d) n (fun p hp => by
         have := argOcc_mem hp; simp only [revRange_length] at this
-        simp only [Sa]; rw [if_pos this]; exact hargs p hp), hKa]
+        simp only [Sa]; rw [ite_eq_left this]; exact hargs p hp), hKa]
     rw [eKv] at hsplit
     rw [← hmerge, ← bag_subst_merge _ hSa, hsplit]
     obtain ⟨i1, i2⟩ := comp_indep v (.swi (.con (.ref nz) (.ref ns)) (argTree (((revRange d).map ρ).map nul) K))
@@ -2108,7 +2113,7 @@ theorem comp_reduces_aux (book : List HDef) (D : List FDef) (fuel : Nat)
             cases i with
             | zero =>
               simp only [List.getElem?_cons_zero, Option.some.injEq] at hf hw
-              subst hf hw; rw [bindEnv_succ ρ, bindEnv_revRange]; exact IHs'
+              subst hf hw; rw [bindEnv_succ, bindEnv_revRange]; exact IHs'
             | succ i => simp at hf)
         simpa [tup, argTree, nul] using this
   | .call g idxs, ρ, v, _, he => hcall g idxs ρ v he
@@ -2156,5 +2161,5 @@ theorem main_reduces (book : List HDef) (m : String) (ps : List Nat) (fs : List 
   refine (steps_eq (by simp [mainCfgOf])).trans (h.trans ?_)
   refine (sSwap [] [] (a := tup (vs.map nul)) (b := .var 0) rfl rfl).trans ?_
   have := Step.link (book := book) (root := .var 0) (pre := []) (post := []) (x := 0) (t := tup (vs.map nul))
-  simp only [List.nil_append, List.map_nil, HTree.subst, one, if_pos rfl, Option.getD_some] at this
+  simp only [List.nil_append, List.map_nil, HTree.subst, one] at this
   exact Steps.single this
