@@ -96,6 +96,7 @@ imports changes; a new leaf added alone is caught at the next such rebuild, not 
 -/
 import Journal.Journal
 import Obend
+import Obend.Analysis.BuchbergerCompletion
 import Obend.Analysis.Cli
 import Obend.Analysis.Coverage
 import Obend.Analysis.Diff
@@ -309,6 +310,7 @@ import Obend.FFI.BridgeTypes
 import Obend.Fold
 import Obend.Fold.Collapse
 import Obend.Geometry.CochainAndGauge
+import Obend.Geometry.DeRhamHodgeComplex
 import Obend.Geometry.DiracDoubleCat
 import Obend.Hardware.Accelerators
 import Obend.Hardware.AwsF2Shell

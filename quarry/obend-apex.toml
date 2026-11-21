@@ -2066,6 +2066,34 @@ module = "Obend.Spec.Proofs.OpenObjectAlgebra"
 theorem = "around_intercepts_subclass_override"
 description = "C4 linearization parity (`c4_linearize_parity_and_nodup`), 2-band `[primary, around]` wrapper interception over subclass `override`, associative `+`/`*`/`and` `augment_c4_monoid_fold`, and `expandProtocols_unique_dispatch_keys`."
 
+[[apex]]
+id = "geometry-derham-hodge-orthogonal-decomposition"
+subsystem = "Geometry"
+module = "Obend.Geometry.DeRhamHodgeComplex"
+theorem = "verifyHodgeDecomposition1_sound"
+description = "Weighted discrete Hodge star, exact codifferential adjoints (`d0_delta1_adjoint`, `d1_delta2_adjoint`, `d2_delta3_adjoint`), harmonic characterization, Pythagorean norm balance, and unique 3-way Hodge decomposition."
+
+[[apex]]
+id = "geometry-whitney-feec-commuting-cochain-diagram"
+subsystem = "Geometry"
+module = "Obend.Geometry.DeRhamHodgeComplex"
+theorem = "whitney_tet_physical_grad_matches_feec"
+description = "Commuting polynomial Whitney–de Rham FEEC cochain reconstruction (`whitney_exterior_derivative_commutes`, `d ∘ W = W ∘ d`, `R ∘ W = id`, continuum Stokes) welded to physical 3D tetrahedral `SimplicialFeecFem.p1TetGrad3D`."
+
+[[apex]]
+id = "analysis-buchberger-completion-and-division"
+subsystem = "Analysis"
+module = "Obend.Analysis.BuchbergerCompletion"
+theorem = "buchbergerComplete_same_ideal_and_groebner"
+description = "Bounded Buchberger Gröbner basis completion (`buchbergerComplete_same_ideal_and_groebner`) preserving generated ideals and rational zero loci while certifying `checkGroebnerBasis = true`."
+
+[[apex]]
+id = "analysis-multivariate-divmod-and-coprime-criterion"
+subsystem = "Analysis"
+module = "Obend.Analysis.BuchbergerCompletion"
+theorem = "polyDivMod_zero_rem_cert"
+description = "Verified multivariate polynomial division with irreducible remainders (`polyDivMod_sound_and_irreducible`), `IdealMembershipCert` extraction, Lex/GrLex order laws, and Buchberger's coprime leading-monomial criterion (`buchberger_first_criterion_coprime`)."
+
 # ==============================================================================
 # Planned Wave 5+ Vertical Spine Apex Theorems (`master_interface_and_systems_architecture.md`)
 # ==============================================================================

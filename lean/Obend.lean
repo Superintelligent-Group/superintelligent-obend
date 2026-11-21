@@ -259,6 +259,7 @@ public import Obend.Analysis.TaylorModel
 public import Obend.Analysis.Diff
 public import Obend.Analysis.Flowpipe
 public import Obend.Analysis.Groebner
+public import Obend.Analysis.BuchbergerCompletion
 public import Obend.Analysis.SosLyapunov
 public import Obend.Analysis.Equitable
 public import Obend.Analysis.QuantumWalk
@@ -272,6 +273,7 @@ public import Obend.Analysis.NonlinearErrorTube
 public import Obend.Analysis.NonlinearPdeCli
 public import Obend.Analysis.SimplicialFeecFem
 public import Obend.Geometry.CochainAndGauge
+public import Obend.Geometry.DeRhamHodgeComplex
 public import Obend.Geometry.DiracDoubleCat
 public import Obend.Category.Refines
 public import Obend.Category.OpenSystem
