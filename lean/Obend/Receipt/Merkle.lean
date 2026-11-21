@@ -206,9 +206,10 @@ structure Opening where
 /-- The honest opening of position `j`. -/
 @[expose] def mapOpening (H : Hash) (vs : List Nat) (j : Nat) : Opening :=
   ⟨vs.length, j, vs.getD j 0, path H (leaves H vs) j⟩
-/-- **An opening opens against a root.** -/
+/-- **An opening opens against a root**, at a position inside the map: `climb` at size 1 ignores
+its index, so the bound is checked here. -/
 @[expose] def opens (H : Hash) (o : Opening) (r : Nat) : Bool :=
-  Small o.index && climb H o.size o.index (leaf H o.index o.value) o.path == some r
+  decide (o.index < o.size) && Small o.index && climb H o.size o.index (leaf H o.index o.value) o.path == some r
 theorem leaves_length (H : Hash) (vs : List Nat) : (leaves H vs).length = vs.length := by
   simp [leaves]
 theorem leaves_small {H : Hash} (hb : Bounded H) (vs : List Nat) : ∀ x ∈ leaves H vs, x < 2 ^ 256 := by
@@ -224,7 +225,7 @@ theorem opens_complete {H : Hash} (hb : Bounded H) (vs : List Nat) (j : Nat) (hj
     (hjs : j < 2 ^ 256) : opens H (mapOpening H vs j) (mapRoot H vs) = true := by
   have hc := climb_path hb (leaves H vs) (leaves_small hb vs) j (by rw [leaves_length]; exact hj)
   rw [leaves_length, leaves_getD H vs hj] at hc
-  simp only [opens, mapOpening, mapRoot, hc, Small, hjs, decide_true, Bool.true_and, beq_self_eq_true]
+  simp only [opens, mapOpening, mapRoot, hc, Small, hj, hjs, decide_true, Bool.true_and, beq_self_eq_true]
 /-- Finite list of `preimage` byte strings hashed when verifying `Opening` `o`. -/
 def openingPreimages (H : Hash) (o : Opening) : List (List UInt8) :=
   preimage o.index o.value :: climbPreimages H o.size o.index (leaf H o.index o.value) o.path
@@ -234,7 +235,7 @@ theorem opens_binds_scoped {H : Hash} (hb : Bounded H) {o o' : Opening} {r : Nat
   simp only [opens, Bool.and_eq_true, beq_iff_eq, Small, decide_eq_true_eq] at h h'
   have h'c := h'.2; rw [← hn, ← hi] at h'c
   rcases climb_binds hb o.path o'.path o.size o.index _ _ r (hb _ _) (hb _ _) h.2 h'c with he | c
-  · rcases binds_or_collides H (admissible_of_lt h.1) (admissible_of_lt h.1) he with ⟨_, hv⟩ | cLeaf
+  · rcases binds_or_collides H (admissible_of_lt h.1.2) (admissible_of_lt h.1.2) he with ⟨_, hv⟩ | cLeaf
     · exact .inl hv
     · exact .inr (cLeaf.mono fun m hm => by
         rcases hm with rfl | rfl
@@ -252,7 +253,7 @@ theorem opens_view {H : Hash} (hb : Bounded H) (vs : List Nat) {o : Opening}
     o.value = vs[o.index] ∨
       CollisionAmong H (fun m => m ∈ openingPreimages H o ++ openingPreimages H (mapOpening H vs o.index)) := by
   have hs : o.index < 2 ^ 256 := by
-    simp only [opens, Bool.and_eq_true, Small, decide_eq_true_eq] at h; exact h.1
+    simp only [opens, Bool.and_eq_true, Small, decide_eq_true_eq] at h; exact h.1.2
   have hc := opens_complete hb vs o.index hj hs
   rcases opens_binds_scoped hb h hc (by simp [mapOpening, hn]) rfl with he | c
   · left; rw [he]; simp [mapOpening, List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hj]
@@ -309,11 +310,10 @@ structure MerkleBatchProof where
   treeSize : Nat
   entries : List MerkleBatchEntry
   deriving DecidableEq, Repr
-/-- Single-leaf Merkle inclusion verifier for a `MerkleBatchEntry` against `expectedRoot`
-in a tree of `treeSize` leaves. -/
+/-- Single-leaf Merkle inclusion verifier against `expectedRoot`, at a position inside `treeSize`. -/
 @[expose] def verifySingleMerkleLeaf (H : Hash) (treeSize : Nat) (e : MerkleBatchEntry)
     (expectedRoot : Nat) : Bool :=
-  Small e.leafIndex && Small e.leafDigest &&
+  decide (e.leafIndex < treeSize) && Small e.leafIndex && Small e.leafDigest &&
     (climb H treeSize e.leafIndex e.leafDigest e.auditPath == some expectedRoot)
 /-- Check that a list of leaf indices is pairwise distinct (contains no duplicate index). -/
 def indicesPairwiseDistinct : List Nat → Bool
@@ -372,7 +372,7 @@ theorem verifySingleMerkleLeaf_honest {H : Hash} (hb : Bounded H) (l : List Nat)
   have hlt : l.getD i 0 < 2 ^ 256 := by
     rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hi]
     exact hl l[i] (List.getElem_mem hi)
-  simp only [verifySingleMerkleLeaf, honestBatchEntry, Small, his, hlt, decide_true,
+  simp only [verifySingleMerkleLeaf, honestBatchEntry, Small, hi, his, hlt, decide_true,
     Bool.true_and, hc, beq_self_eq_true]
 /-- Construct an honest `MerkleBatchProof` for a list of leaf positions `idxs` in leaf list `l`. -/
 @[expose] def honestBatchProof (H : Hash) (l : List Nat) (idxs : List Nat) : MerkleBatchProof :=

@@ -643,11 +643,20 @@ def obligationsCommand (spec entry : String) (receipts : Option String) : IO UIn
             let path := dir ++ "/" ++ full ++ ".json"
             if ← System.FilePath.pathExists path then pure (Json.parse (← IO.FS.readFile path)).toOption else pure none
           | none => pure none
-        let selected := receipt.bind fun j => (j.getObjVal? "certificate").toOption.bind fun c =>
-          (Obend.Logic.certificateOf c.compress).toOption
-        -- The slot is the certified claim's (its statement), read at this program's object.
-        let certified := (receipt.bind fun j => (j.getObjVal? "statement").toOption.bind fun st =>
-          (Obend.Logic.statementOf st.compress).toOption).getD o
+        -- The slot is the certified claim's (its statement), read at this program's object, when the
+        -- statement is this claim's (its code, arity and the layer `specKey` names; the layer's index
+        -- moves under composition) and the certificate is addressed to it. Any other receipt is no
+        -- candidate: the obligation stays a hole.
+        let bound : Option (Obend.Logic.ClaimObj × List Obend.Logic.RStep) := receipt.bind fun j => do
+          let cert ← (j.getObjVal? "certificate").toOption
+          let st ← (Obend.Logic.statementOf (← (j.getObjVal? "statement").toOption).compress).toOption
+          let steps ← (Obend.Logic.certificateOf cert.compress).toOption
+          let addr ← (cert.getObjValAs? String "address").toOption
+          if st.claim == o.claim && st.arity == o.arity && st.comp.layers[st.layer]?.map (·.name) == some specKey
+              && addr == toString (Obend.Core.Code.address o.claim) then some (st, steps) else none
+        let (certified, selected) := match bound with
+          | some (st, steps) => (st, some steps)
+          | none => (o, none)
         let status := Obend.Logic.readStatus certified 1000000 C selected none none
         let extra : List (String × Json) := match status with
           | .blocked ms => [("blocked", toJson ms)]

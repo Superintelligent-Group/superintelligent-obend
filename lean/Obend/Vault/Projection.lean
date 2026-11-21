@@ -40,7 +40,7 @@ public import Obend.Receipt.Merkle
 public import Obend.Core.Digest
 public import Obend.Digest.HashBytes
 
-@[expose] public section
+public section
 
 namespace Obend.Vault.Projection
 
@@ -321,8 +321,8 @@ structure BlindedOpening where
   deriving DecidableEq, Repr
 
 /-- Stranger verification of an individual opening against the unredacted vault root. -/
-def verifyBlindedOpening (H : Hash) (bo : BlindedOpening) (vaultRoot : Nat) : Bool :=
-  Small bo.index &&
+@[expose] def verifyBlindedOpening (H : Hash) (bo : BlindedOpening) (vaultRoot : Nat) : Bool :=
+  decide (bo.index < bo.size) && Small bo.index &&
   climb H bo.size bo.index (leaf H bo.index (projectedCommit H bo.cell)) bo.path == some vaultRoot
 
 /-- The batch entry of a blinded opening: the Merkle leaf of the projected commitment at its
@@ -441,7 +441,7 @@ theorem verifyBlindedMultiProof_sound {H : Hash} {bmp : BlindedMultiProof}
       (List.mem_map_of_mem (f := BlindedOpening.toBatchEntry H) hbo)
     simp only [verifySingleMerkleLeaf, BlindedOpening.toBatchEntry, Bool.and_eq_true] at hsingle
     simp only [opens, Bool.and_eq_true]
-    exact ⟨hsingle.1.1, hsingle.2⟩
+    exact ⟨⟨hsingle.1.1.1, hsingle.1.1.2⟩, hsingle.2⟩
 
 /-- **Multiproof binding**: against the unredacted root of `cells` with the right size, every
 opening a verifying multiproof carries commits to the vault's cell at its position, or `H`

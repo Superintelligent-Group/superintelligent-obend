@@ -18,7 +18,10 @@ Teeth (each red under its mutation):
     refuted;
   * statement: the receipt with a wrong statement address is refused `malformed`; with the
     certificate's address changed, `statementMismatch`; with the late-binding step naming Augmented,
-    `stepMismatch`; with a support relabelled, refused.
+    `stepMismatch`; with a support relabelled, refused;
+  * substitution: a valid rewrite@1 receipt of another claim (`ReviewMember.Twice.same`, which reads
+    `checked` in its own slot) placed in `repeated`'s slot leaves `repeated` `unchecked`, and so does
+    the recorded receipt with its certificate addressed to another claim.
 
 usage: python3 tests/run-logic.py [OBEND_BINARY]      (from lean/, after `lake build obend`)
 exit 0 when every check holds, 1 otherwise; a summary line last.
@@ -76,7 +79,9 @@ OVERRIDE = ORIGINAL.replace(
     "def review(inherited: Prior.Review)",
     "spec Override for Prior.Review:\n  def twice(value: Nat) -> Nat:\n    value\ndef review(inherited: Prior.Review)").replace(
     "compose(Prior.Base, Twice, Augmented)", "compose(Prior.Base, Twice, Augmented, Override)")
-assert PLUS_TWO != ORIGINAL and OVERRIDE != ORIGINAL
+SAME = ORIGINAL.replace(
+    "spec Augmented for", "  claim same(value: Nat): self.review(value) == self.review(value)\nspec Augmented for")
+assert PLUS_TWO != ORIGINAL and OVERRIDE != ORIGINAL and SAME != ORIGINAL
 
 with tempfile.TemporaryDirectory() as root:
     def sub(name):
@@ -162,6 +167,40 @@ with tempfile.TemporaryDirectory() as root:
     def wrong_support(r):
         r["supports"][0]["layer"] = "ReviewMember.Augmented"
     tampered("relabelled support refused", wrong_support, "supports")
+
+    # Tooth 4: substitution. The slot's file name does not make a receipt this claim's.
+    OTHER = "ReviewMember.Twice.same"
+    pkg4 = package(sub("same"), SAME)
+    other = os.path.join(root, "same.json")
+    rc, out = obend("prove", "--package", pkg4, OTHER, "--object", "twiceOfThree", "--out", other)
+    check("tooth substitution: the other claim is checked by rewrite@1", rc == 0 and "checked:" in out, out)
+
+    def statuses(rdir):
+        rc, out = obend("check", "--obligations", "--package", pkg4, "--object", "twiceOfThree", "--receipts", rdir)
+        lines = [json.loads(l) for l in out.strip().splitlines()] if rc == 0 else []
+        return {l.get("claim"): l.get("status") for l in lines}, out
+
+    def slot(name, claim, receipt_json):
+        d = sub(name)
+        with open(os.path.join(d, claim + ".json"), "w") as f:
+            json.dump(receipt_json, f)
+        return d
+
+    if os.path.exists(other):
+        got, out = statuses(slot("own-slot", OTHER, json.load(open(other))))
+        check("tooth substitution: in its own slot the other receipt reads checked",
+              got.get(OTHER) == "checked" and got.get(CLAIM) == "unchecked", out)
+        got, out = statuses(slot("substituted", CLAIM, json.load(open(other))))
+        check("tooth substitution: another claim's receipt leaves repeated unchecked",
+              got.get(CLAIM) == "unchecked" and got.get(OTHER) == "unchecked", out)
+    got, out = statuses(slot("honest", CLAIM, json.load(open(RECORDED))))
+    check("tooth substitution: the recorded receipt still reads checked beside the new claim",
+          got.get(CLAIM) == "checked", out)
+    readdressed = json.load(open(RECORDED))
+    cert_address(readdressed)
+    got, out = statuses(slot("readdressed", CLAIM, readdressed))
+    check("tooth substitution: a certificate addressed to another claim leaves repeated unchecked",
+          got.get(CLAIM) == "unchecked", out)
 
 print(f"{count - len(failures)}/{count} checks hold")
 sys.exit(1 if failures else 0)
