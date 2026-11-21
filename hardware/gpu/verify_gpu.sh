@@ -251,7 +251,119 @@ if run_stage 5; then
       }
     "${dir}/obj_dir/V${name}"
   done < "${WORK}/rtl/modules.txt"
-  echo '[PASS] nonlinear PDE shaders, planted faults, and six systolic RTL modules'
+
+  echo '=== [5/lec] Yosys + Z3 Logic Equivalence Check (LEC) + planted bit-0 fault ==='
+  YOSYS="${YOSYS_BIN:-$([[ -x /tmp/oss-cad-suite/bin/yosys ]] && echo /tmp/oss-cad-suite/bin/yosys || command -v yosys || true)}"
+  Z3="${Z3_BIN:-$([[ -x /tmp/oss-cad-suite/bin/z3 ]] && echo /tmp/oss-cad-suite/bin/z3 || command -v z3 || true)}"
+  BITWUZLA="${BITWUZLA_BIN:-$([[ -x /tmp/oss-cad-suite/bin/bitwuzla ]] && echo /tmp/oss-cad-suite/bin/bitwuzla || command -v bitwuzla || true)}"
+  SMT_SHARE="${REPO_ROOT}/hardware/lec/smt_share.py"
+  [[ -x "${YOSYS}" ]] || { echo '[FAIL] Stage 5 LEC requires yosys (/tmp/oss-cad-suite/bin/yosys)' >&2; exit 1; }
+  [[ -x "${Z3}" ]] || { echo '[FAIL] Stage 5 LEC requires z3 (/tmp/oss-cad-suite/bin/z3)' >&2; exit 1; }
+  [[ -f "${SMT_SHARE}" ]] || { echo "[FAIL] Stage 5 LEC missing ${SMT_SHARE}" >&2; exit 1; }
+
+  pde_yosys_smt2() { # $1 = top, $2 = .sv, $3 = out .smt2
+    "${YOSYS}" -q -p "read_verilog -sv $2; hierarchy -check -top $1; proc; flatten; setattr -set keep 1 t:\$dff %co w:* %i; opt_clean; write_smt2 $3"
+  }
+  pde_lec_query() { # $1 = workdir, $2.. = z3 args
+    local wdir="$1"; shift
+    cat > "${wdir}/query.raw.smt2"
+    if ! python3 "${SMT_SHARE}" "${wdir}/query.raw.smt2" "${wdir}/query.shared.smt2" \
+        --yosys "${YOSYS}" >"${wdir}/query.prepare.log" 2>&1; then
+      cat "${wdir}/query.prepare.log" >&2
+      return 1
+    fi
+    "${Z3}" "$@" -in < "${wdir}/query.shared.smt2"
+  }
+  pde_solver_verdict() {
+    if grep -q '(error' <<< "$1"; then echo error; else head -1 <<< "$1"; fi
+  }
+  pde_lec_decide() { # $1 = workdir, $2 = yosys .smt2, $3 = lean half, $4 = with get-value (0/1)
+    local wdir="$1" ysmt="$2" lsmt="$3" with_val="$4"
+    local lean="${wdir}/lean.smt2"
+    if [[ "${with_val}" == 1 ]]; then cp "${lsmt}" "${lean}"; else sed '/^; --- counterexample/,$d' "${lsmt}" > "${lean}"; fi
+    local seed seed_answer seed_verdict
+    for seed in 0 1; do
+      awk -v seed="${seed}" '
+        /^\(define-fun (in|r)_[0-9]+ \(\) \(_ BitVec 64\) / { names[++n] = $2 }
+        /^\(declare-const r_[0-9]+ \(_ BitVec 64\)\)$/ { names[++n] = $2 }
+        /^\(check-sat\)$/ {
+          for (i = 1; i <= n; i++) printf "(assert (= %s (_ bv%s 64)))\n", names[i], seed
+        }
+        { print }
+      ' "${lean}" > "${wdir}/seed.lean.smt2"
+      sed '/^; --- counterexample/,$d' "${wdir}/seed.lean.smt2" > "${wdir}/seed.probe.smt2"
+      seed_answer="$(cat "${ysmt}" "${wdir}/seed.probe.smt2" | pde_lec_query "${wdir}" -T:"${LEC_SEED_SECS:-2}" 2>&1 || true)"
+      seed_verdict="$(pde_solver_verdict "${seed_answer}")"
+      if [[ "${seed_verdict}" == error ]]; then
+        LEC_ANSWER="${seed_answer}"; LEC_VERDICT=error; LEC_HOW="bit-precise seed query"; return
+      fi
+      if [[ "${seed_verdict}" == sat ]]; then
+        if [[ "${with_val}" == 1 ]]; then
+          seed_answer="$(cat "${ysmt}" "${wdir}/seed.lean.smt2" | pde_lec_query "${wdir}" -T:"${LEC_SEED_SECS:-2}" 2>&1 || true)"
+          seed_verdict="$(pde_solver_verdict "${seed_answer}")"
+        fi
+        LEC_ANSWER="${seed_answer}"; LEC_VERDICT="${seed_verdict}"; LEC_HOW="bit-precise, uniform carrier witness ${seed}"; return
+      fi
+    done
+    LEC_ANSWER="$(cat "${ysmt}" "${lean}" | pde_lec_query "${wdir}" -T:"${LEC_SECS:-10}" 2>&1 || true)"
+    LEC_HOW="bit-precise"; LEC_VERDICT="$(pde_solver_verdict "${LEC_ANSWER}")"
+    if [[ "${LEC_VERDICT}" == "unsat" || "${LEC_VERDICT}" == "sat" || "${LEC_VERDICT}" == error ]]; then return; fi
+    perl -pe 's/^(\(define-fun \S+ \(\(state \S+\)\) \(_ BitVec (\d+)\) )\(bvmul /$1(|lec_mul_$2| /' "${ysmt}" > "${wdir}/abs.yosys.smt2"
+    perl -pe 's/\(bvmul \(\(_ sign_extend 64\)/(|lec_mul_128| ((_ sign_extend 64)/g; s/\(bvmul /(|lec_mul_64| /g' "${lean}" > "${wdir}/abs.lean.smt2"
+    { grep -ohE 'lec_mul_[0-9]+' "${wdir}/abs.yosys.smt2" "${wdir}/abs.lean.smt2" | sort -u \
+        | sed -E 's/lec_mul_([0-9]+)/(declare-fun |&| ((_ BitVec \1) (_ BitVec \1)) (_ BitVec \1))/'
+      cat "${wdir}/abs.yosys.smt2" "${wdir}/abs.lean.smt2"; } > "${wdir}/abs.combined.smt2"
+    local z3_abs_t="${LEC_ABS_SECS:-$([[ -n "${BITWUZLA}" && -x "${BITWUZLA}" ]] && echo 15 || echo 30)}"
+    LEC_ANSWER="$(pde_lec_query "${wdir}" -T:"${z3_abs_t}" < "${wdir}/abs.combined.smt2" 2>&1 || true)"
+    LEC_HOW="multiplication uninterpreted"; LEC_VERDICT="$(pde_solver_verdict "${LEC_ANSWER}")"
+    if [[ "${LEC_VERDICT}" != "unsat" && "${LEC_VERDICT}" != error && -n "${BITWUZLA}" && -x "${BITWUZLA}" ]]; then
+      if python3 "${SMT_SHARE}" "${wdir}/abs.combined.smt2" "${wdir}/abs.bw.smt2" \
+          --yosys "${YOSYS}" --keep-defines >"${wdir}/query.prepare.log" 2>&1; then
+        local bw_answer bw_verdict bw_secs="${LEC_ABS_SECS:-30}"
+        if "${BITWUZLA}" --help 2>&1 | grep -q -- '--time-limit'; then
+          bw_answer="$("${BITWUZLA}" --time-limit="$((bw_secs * 1000))" "${wdir}/abs.bw.smt2" 2>&1 || true)"
+        else
+          bw_answer="$("${BITWUZLA}" -t "${bw_secs}" "${wdir}/abs.bw.smt2" 2>&1 || true)"
+        fi
+        bw_verdict="$(pde_solver_verdict "${bw_answer}")"
+        if [[ "${bw_verdict}" == "unsat" || "${bw_verdict}" == error ]]; then
+          LEC_ANSWER="${bw_answer}"; LEC_VERDICT="${bw_verdict}"; LEC_HOW="multiplication uninterpreted (bitwuzla)"
+        fi
+      fi
+    fi
+    if [[ "${LEC_VERDICT}" == "sat" || "${LEC_VERDICT}" == "timeout" || "${LEC_VERDICT}" == "unknown" ]]; then LEC_VERDICT="undecided"; fi
+  }
+
+  for top in EulerGas3D_axis0 BonaMassoZ4c1D_axis0; do
+    dir="${WORK}/rtl/${top}"
+    sv="${dir}/${top}.sv"
+    lec="${dir}/${top}_lec.smt2"
+    [[ -f "${sv}" && -f "${lec}" ]] || { echo "[FAIL] Stage 5 LEC missing ${sv} or ${lec}" >&2; exit 1; }
+    lec_work="${WORK}/lec-${top}"
+    mkdir -p "${lec_work}"
+    pde_yosys_smt2 "${top}" "${sv}" "${lec_work}/${top}.yosys.smt2"
+    pde_lec_decide "${lec_work}" "${lec_work}/${top}.yosys.smt2" "${lec}" 0
+    if [[ "${LEC_VERDICT}" != "unsat" ]]; then
+      echo "[FAIL] LEC ${top}: solver says ${LEC_VERDICT} (${LEC_HOW})" >&2
+      printf '%s\n' "${LEC_ANSWER}" >&2
+      exit 1
+    fi
+    echo "  LEC ${top}: unsat, ${LEC_HOW} (Yosys reading of ${top}.sv == Lean RtlModule model)"
+
+    awk '!done && /^    [A-Za-z_][A-Za-z0-9_]* = .*;$/ && !/^    w_[0-9]+ = / {
+           sub(/ = /, " = 64'"'"'d1 ^ ("); sub(/;$/, ");"); done = 1 }
+         { print }' "${sv}" > "${lec_work}/${top}.mut.sv"
+    mutline="$(diff "${sv}" "${lec_work}/${top}.mut.sv" | sed -n 's/^> *//p' | head -1 || true)"
+    [[ -n "${mutline}" ]] || { echo "[FAIL] LEC ${top}: no output line to mutate in ${sv}" >&2; exit 1; }
+    pde_yosys_smt2 "${top}" "${lec_work}/${top}.mut.sv" "${lec_work}/${top}.mut.yosys.smt2"
+    pde_lec_decide "${lec_work}" "${lec_work}/${top}.mut.yosys.smt2" "${lec}" 1
+    if [[ "${LEC_VERDICT}" != "sat" ]]; then
+      echo "[FAIL] LEC ${top}: planted mutation \`${mutline}\` was not caught (${LEC_VERDICT}, ${LEC_HOW})" >&2
+      exit 1
+    fi
+    echo "  LEC mutation ${top} \`${mutline}\`: sat, ${LEC_HOW}"
+  done
+  echo '[PASS] nonlinear PDE shaders, planted faults, seven systolic RTL modules, and Yosys/Z3 LEC'
 fi
 
 echo "[PASS] hardware/gpu${STAGE:+ (stage ${STAGE})}"
