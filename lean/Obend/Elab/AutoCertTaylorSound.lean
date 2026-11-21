@@ -15,7 +15,7 @@ the variable plus `sin`/`cos` of the variable (`polyTrig`), at center `0`:
 * `taylorModelJudge_semantic`: if the judge accepts `(q, tm)`, then for every `x` in `q.domain` the
   expression's value at `x` lies in `q.claimedBound`.
 -/
-@[expose] public section
+public section
 
 namespace Obend.Elab.AutoCert
 
@@ -24,7 +24,7 @@ open Obend.Analysis
 set_option autoImplicit false
 
 /-- Polynomial arithmetic in the variable, and `sin`/`cos` applied to the variable itself. -/
-def TaylorModelExpr.polyTrig : TaylorModelExpr → Bool
+@[expose] def TaylorModelExpr.polyTrig : TaylorModelExpr → Bool
   | .var => true
   | .const _ => true
   | .add a b => a.polyTrig && b.polyTrig
@@ -37,7 +37,7 @@ def TaylorModelExpr.polyTrig : TaylorModelExpr → Bool
 
 /-- The function a `polyTrig` expression denotes, with `sin`/`cos` from an `AnalyticModel`
 (`0` outside the fragment). -/
-def TaylorModelExpr.denote (R : Type) [M : AnalyticModel R] : TaylorModelExpr → CanonicalRat → CanonicalRat
+@[expose] def TaylorModelExpr.denote (R : Type) [M : AnalyticModel R] : TaylorModelExpr → CanonicalRat → CanonicalRat
   | .var => fun x => x
   | .const c => fun _ => c
   | .add a b => fun x => a.denote R x + b.denote R x

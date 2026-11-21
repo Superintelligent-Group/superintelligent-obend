@@ -20,7 +20,7 @@ least `headCost`), and across the waves a field reading `self` is evaluated at m
 2, after the field it reads (`knot_invariant`): the evaluated fields are closed under reading and
 their values are the chase's. -/
 public import Obend.Equiv.CostTests
-@[expose] public section
+public section
 namespace Obend.Equiv.Demand
 open Obend.Core.Term
 open Obend.Equiv
@@ -35,7 +35,7 @@ inductive FE where
   | ref (m : String)
 
 /-- The field as a term, `self` being `s`. -/
-def FE.at (s : Term) : FE → Term
+@[expose] def FE.at (s : Term) : FE → Term
   | .lit v => .nat v
   | .ref m => .get s m
 
@@ -47,7 +47,7 @@ theorem FE.at_rename (e : FE) (s : Term) (f : Nat → Nat) : (e.at s).rename f =
   cases e <;> simp [FE.at, Term.rename]
 
 /-- The record's fields, `self` being `s`. -/
-def entries (s : Term) (fs : List (String × FE)) : List (String × Term) := fs.map fun f => (f.1, f.2.at s)
+@[expose] def entries (s : Term) (fs : List (String × FE)) : List (String × Term) := fs.map fun f => (f.1, f.2.at s)
 
 theorem entries_substitute (s : Term) (fs : List (String × FE)) (σ : Nat → Term) :
     (entries s fs).map (fun f => (f.1, f.2.substitute σ)) = entries (s.substitute σ) fs := by
@@ -57,29 +57,29 @@ theorem entries_rename (s : Term) (fs : List (String × FE)) (r : Nat → Nat) :
     (entries s fs).map (fun f => (f.1, f.2.rename r)) = entries (s.rename r) fs := by
   simp [entries, FE.at_rename]
 
-def objLam (fs : List (String × FE)) : Term := .lam (.lam (.record (entries (.bound 1) fs)))
+@[expose] def objLam (fs : List (String × FE)) : Term := .lam (.lam (.record (entries (.bound 1) fs)))
 
 /-- The object. -/
-def obj (fs : List (String × FE)) : Term := .fix (objLam fs) (.record [])
+@[expose] def obj (fs : List (String × FE)) : Term := .fix (objLam fs) (.record [])
 
-def look (fs : List (String × FE)) (x : String) : Option FE := (fs.find? (·.1 == x)).map (·.2)
+@[expose] def look (fs : List (String × FE)) (x : String) : Option FE := (fs.find? (·.1 == x)).map (·.2)
 
 /-- Follow the chain from `x` to a literal: its value and the number of selections on the way. -/
-def chase (fs : List (String × FE)) : Nat → String → Option (Nat × Nat)
+@[expose] def chase (fs : List (String × FE)) : Nat → String → Option (Nat × Nat)
   | 0, _ => none
   | k + 1, x => match look fs x with
     | some (.lit v) => some (v, 0)
     | some (.ref m) => (chase fs k m).map fun p => (p.1, p.2 + 1)
     | none => none
 
-def hasRef (fs : List (String × FE)) : Bool := fs.any fun f => match f.2 with | .ref _ => true | .lit _ => false
+@[expose] def hasRef (fs : List (String × FE)) : Bool := fs.any fun f => match f.2 with | .ref _ => true | .lit _ => false
 
 /-- What settling the template costs: two β steps, and the head record unless it is a value. -/
-def headCost (fs : List (String × FE)) : Nat := if hasRef fs then 3 else 2
+@[expose] def headCost (fs : List (String × FE)) : Nat := if hasRef fs then 3 else 2
 
 /-- **The demand semantics**: the value of `x` and the cost of the selection, the template once,
 each selection on the chain once (2), the knot and the selection (2). -/
-def demand (fs : List (String × FE)) (x : String) : Option (Nat × Nat) :=
+@[expose] def demand (fs : List (String × FE)) (x : String) : Option (Nat × Nat) :=
   (chase fs fs.length x).map fun p => (p.1, headCost fs + 2 * p.2 + 2)
 
 /-! ## The chase -/
@@ -115,7 +115,7 @@ theorem chase_unique {fs : List (String × FE)} {k k' : Nat} {x : String} {a b :
   exact (Option.some.inj this).symm
 
 /-- `j` steps along the selections. -/
-def walk (fs : List (String × FE)) : Nat → String → Option String
+@[expose] def walk (fs : List (String × FE)) : Nat → String → Option String
   | 0, x => some x
   | j + 1, x => match look fs x with
     | some (.ref m) => walk fs j m
@@ -866,13 +866,13 @@ theorem demand_minimal {FS : List (String × FE)} (nd : (FS.map Prod.fst).Nodup)
 /-! ## Existence -/
 
 /-- An approximant built from known values of selections. -/
-def ent (κ : List (String × Nat)) : String × FE → Term
+@[expose] def ent (κ : List (String × Nat)) : String × FE → Term
   | (_, .lit v) => .nat v
   | (n, .ref _) => match κ.lookup n with
     | some u => .nat u
     | none => skipped
 
-def approxL (κ : List (String × Nat)) (fs : List (String × FE)) : List (String × Term) :=
+@[expose] def approxL (κ : List (String × Nat)) (fs : List (String × FE)) : List (String × Term) :=
   fs.map fun f => (f.1, ent κ f)
 
 theorem ent_settled (κ : List (String × Nat)) (f : String × FE) : Settled (ent κ f) := by
@@ -982,7 +982,7 @@ theorem find_of_look {fs : List (String × FE)} {x : String} {e : FE} (h : look 
   exact hf
 
 /-- The known values agree with the chase. -/
-def Good (FS : List (String × FE)) (κ : List (String × Nat)) : Prop :=
+abbrev Good (FS : List (String × FE)) (κ : List (String × Nat)) : Prop :=
   ∀ n u, κ.lookup n = some u → ∃ k d, chase FS k n = some (u, d)
 
 /-- From any good approximant, the waves make `x` known with its chase value, paying 2 for each
@@ -1111,10 +1111,10 @@ theorem demand_is_least {FS : List (String × FE)} (nd : (FS.map Prod.fst).Nodup
 /-- `{good = 7, bad = self.bad}`. -/
 def goodBadFields : List (String × FE) := [("good", .lit 7), ("bad", .ref "bad")]
 /-- `{a = 7, b = self.a}`. -/
-def selfFieldFields : List (String × FE) := [("a", .lit 7), ("b", .ref "a")]
+abbrev selfFieldFields : List (String × FE) := [("a", .lit 7), ("b", .ref "a")]
 
-theorem object_is_obj : FareTests.object = obj goodBadFields := rfl
-theorem selfField_is_obj : CostTests.selfField = obj selfFieldFields := rfl
+theorem object_is_obj : FareTests.object = obj goodBadFields := by rfl
+theorem selfField_is_obj : CostTests.selfField = obj selfFieldFields := by rfl
 
 /-- The demands: `.good` costs 5, `.b` costs 7, `.bad` is undefined. -/
 theorem measured_demands :

@@ -65,7 +65,7 @@ public meta import Obend.Leaf.Flatten
 public meta import Obend.Leaf.Emit
 public meta import Obend.Elab.Workbook
 
-@[expose] public section
+public section
 namespace Obend.Apps.ZkNtt
 
 open Lean (Json toJson Name Ident Syntax TSyntax Quote quote mkIdent)

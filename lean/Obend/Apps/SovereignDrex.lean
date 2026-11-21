@@ -35,7 +35,7 @@ import all Obend.Consensus.Finality
 meta import Lean
 public meta import Obend.Elab.Workbook
 
-@[expose] public section
+public section
 
 namespace Obend.Apps.SovereignDrex
 
