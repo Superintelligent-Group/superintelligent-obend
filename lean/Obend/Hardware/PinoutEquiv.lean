@@ -656,15 +656,15 @@ def EdaVaultPart.toLogicFamilySpec (p : EdaVaultPart) : LogicFamilySpec :=
   ⟨p.pageName, 3000, 3300, 3600, p.vihMinMv, p.vilMaxMv, p.vohMinMv, p.volMaxMv, 1, 1, 4000, 4000⟩
 def lvcmos33ReceiverSpec : LogicFamilySpec :=
   ⟨"LVCMOS33_Receiver", 3000, 3300, 3600, 2000, 800, 2900, 200, 1, 1, 4000, 4000⟩
-def goldenBaselinePart : EdaVaultPart := ⟨"U4_LDO", 2900, 2000, 200, 800, 3000, 3000, 16, 500, 72000, 1350, 0, 145⟩
-def goldenSecondSourcePart : EdaVaultPart :=
-  { goldenBaselinePart with vohMinMv := 2950, volMaxMv := 180, maxTempMc := 68000, vswrMilli := 1280, costCents := 120 }
-def overbudgetSecondSourcePart : EdaVaultPart := { goldenSecondSourcePart with costCents := 320 }
+def baselineLdoPart : EdaVaultPart := ⟨"U4_LDO", 2900, 2000, 200, 800, 3000, 3000, 16, 500, 72000, 1350, 0, 145⟩
+def secondSourceLdoPart : EdaVaultPart :=
+  { baselineLdoPart with vohMinMv := 2950, volMaxMv := 180, maxTempMc := 68000, vswrMilli := 1280, costCents := 120 }
+def overbudgetSecondSourcePart : EdaVaultPart := { secondSourceLdoPart with costCents := 320 }
 def defaultDatasheetCite256 : DatasheetCite256 :=
   ⟨"TI_TPS7A47", "elec_spec",
    0x9A4F2C019A4F2C019A4F2C019A4F2C019A4F2C019A4F2C019A4F2C019A4F2C01#256,
    0x9A4F2C019A4F2C019A4F2C019A4F2C019A4F2C019A4F2C019A4F2C019A4F2C01#256⟩
-def goldenEdaLaws : List (String × LawExpr) :=
+def defaultEdaLaws : List (String × LawExpr) :=
   [("drc_zero", .eqC (.field "drc_errors") 0), ("thermal_cap", .leC (.field "max_temp_mc") 85000),
    ("rf_vswr_cap", .leC (.field "vswr_milli") 1500), ("bom_budget", .leC (.field "cost_cents") 250)]
 def defaultEdaFacts : Facts := { caller := some 1, subject := some 1, height := 1, turn := 1 }
@@ -951,7 +951,7 @@ instance pinoutEquivJudge : Obend.Judge PinoutSwapObj PinoutSwapCert where
   mono := by intro _ _ _ _ _ _; rfl
 theorem pinoutEquivJudge_fragment_inhabited (pkg : FootprintPackageSpec) :
     ∃ o : PinoutSwapObj, PinoutSwapFragment o ∧ o.pkgA = pkg :=
-  ⟨⟨[], goldenBaselinePart, goldenSecondSourcePart, pkg, pkg, 400, 1000, defaultDatasheetCite256, "scout", defaultEdaFacts⟩, rfl, rfl⟩
+  ⟨⟨[], baselineLdoPart, secondSourceLdoPart, pkg, pkg, 400, 1000, defaultDatasheetCite256, "scout", defaultEdaFacts⟩, rfl, rfl⟩
 structure PinoutRevisionState where
   curPart        : EdaVaultPart
   curPkg         : FootprintPackageSpec

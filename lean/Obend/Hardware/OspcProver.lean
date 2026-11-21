@@ -200,7 +200,7 @@ def tile0_exprcam_face4 : RtlMemModule :=
       , ⟨4, "next_hi", .mux (.wireRef 0) (.alu .bitAnd (.regRead 1) (.inputPort 2))
           (.mux (.wireRef 1) (.alu .bitOr (.regRead 1) (.inputPort 2)) (.mux (.wireRef 2) (.inputPort 2) (.regRead 1))), 17⟩
       , ⟨5, "entails_lo", .alu .eq (.alu .bitAnd (.regRead 0) (.bitNot (.inputPort 1))) (.const 0#64), 1⟩
-      , ⟨6, "entails_hi", .alu .eq (.alu .bitAnd (.regRead 1) (.resize (.trunc 17) (.bitNot (.inputPort 2)))) (.const 0#64), 1⟩
+      , ⟨6, "entails_hi", .alu .eq (.alu .bitAnd (.regRead 1) (.resize (.trunc 17) (.alu .bitXor (.inputPort 2) (.const 0x1FFFF#64)))) (.const 0#64), 1⟩
       , ⟨7, "cam_hit", .alu .eq (.regRead 2) (.inputPort 6), 1⟩ ]
     , regs := [⟨0, "face_lo64", .coreClk, .syncReset 0#64, false, .wireRef 3, 64⟩, ⟨1, "face_hi17", .coreClk, .syncReset 0#64, false, .wireRef 4, 17⟩]
     , outputs := [⟨"out_face_lo64", .regRead 0, 64⟩, ⟨"out_face_hi17", .regRead 1, 17⟩, ⟨"out_entails", .alu .bitAnd (.wireRef 5) (.wireRef 6), 1⟩, ⟨"out_cam_hit", .wireRef 7, 1⟩, ⟨"out_cam_word", .regRead 2, 64⟩] }
@@ -243,8 +243,8 @@ def tile3_stream_lrat : RtlMemModule :=
     , inputNames := ["step_en", "clause_we", "clause_addr", "clause_wdata"], inputWidths := [1, 1, 8, 64]
     , wires :=
       [ ⟨0, "c_pos", .resize (.slice 31 0) (.regRead 3), 32⟩, ⟨1, "c_neg", .resize (.slice 63 32) (.regRead 3), 32⟩
-      , ⟨2, "rem_pos", .alu .bitAnd (.wireRef 0) (.resize (.trunc 32) (.bitNot (.regRead 1))), 32⟩
-      , ⟨3, "rem_neg", .alu .bitAnd (.wireRef 1) (.resize (.trunc 32) (.bitNot (.regRead 0))), 32⟩
+      , ⟨2, "rem_pos", .alu .bitAnd (.wireRef 0) (.resize (.trunc 32) (.alu .bitXor (.regRead 1) (.const 0xFFFFFFFF#64))), 32⟩
+      , ⟨3, "rem_neg", .alu .bitAnd (.wireRef 1) (.resize (.trunc 32) (.alu .bitXor (.regRead 0) (.const 0xFFFFFFFF#64))), 32⟩
       , ⟨4, "pos_zero", .alu .eq (.wireRef 2) (.const 0#64), 1⟩, ⟨5, "neg_zero", .alu .eq (.wireRef 3) (.const 0#64), 1⟩
       , ⟨6, "is_conflict", .alu .bitAnd (.wireRef 4) (.wireRef 5), 1⟩
       , ⟨7, "pos_pow2", .alu .bitAnd (.alu .ult (.const 0#64) (.wireRef 2)) (.alu .eq (.alu .bitAnd (.wireRef 2) (.resize (.trunc 32) (.alu .sub (.wireRef 2) (.const 1#64)))) (.const 0#64)), 1⟩
@@ -271,19 +271,22 @@ private theorem setWidth64_and17 (a b : BitVec 17) : a.setWidth 64 &&& b.setWidt
 private theorem setWidth64_or17 (a b : BitVec 17) : a.setWidth 64 ||| b.setWidth 64 = (a ||| b).setWidth 64 := by
   apply BitVec.eq_of_getLsbD_eq; intro i hi; simp [hi]
 private theorem setWidth64_implies17 (a b : BitVec 17) :
-    (a.setWidth 64 &&& truncToWidth 17 (~~~b.setWidth 64) == 0#64) = ((a &&& ~~~b) == 0#17) := by
+    (a.setWidth 64 &&& truncToWidth 17 (b.setWidth 64 ^^^ 0x1FFFF#64) == 0#64) = ((a &&& ~~~b) == 0#17) := by
+  have hOnes17 : (0x1FFFF#64 : BitVec 64) = BitVec.allOnes 64 >>> (64 - 17) := by decide
   apply Bool.eq_iff_iff.mpr; simp only [beq_iff_eq]; constructor
   · intro h; apply BitVec.eq_of_getLsbD_eq; intro i hi17
     have hi := congrArg (fun v => v.getLsbD i) h; have hi64 : i < 64 := by omega
     have hmask : (BitVec.allOnes 64 >>> (64 - 17)).getLsbD i = true := by
       rw [BitVec.getLsbD_ushiftRight, BitVec.getLsbD_allOnes]; simp; omega
-    simp only [truncToWidth, BitVec.getLsbD_and, BitVec.getLsbD_not, BitVec.getLsbD_setWidth,
-      BitVec.getLsbD_zero, hi17, hi64, decide_true, Bool.true_and, hmask, Bool.and_true] at hi ⊢; exact hi
+    simp only [truncToWidth, hOnes17, BitVec.getLsbD_and, BitVec.getLsbD_xor, BitVec.getLsbD_not, BitVec.getLsbD_setWidth,
+      BitVec.getLsbD_zero, hi17, hi64, decide_true, Bool.true_and, hmask, Bool.xor_true, Bool.and_true] at hi ⊢; exact hi
   · intro h; apply BitVec.eq_of_getLsbD_eq; intro i hi64
     by_cases hi17 : i < 17
     · have hi := congrArg (fun v => v.getLsbD i) h
-      simp only [truncToWidth, BitVec.getLsbD_and, BitVec.getLsbD_not, BitVec.getLsbD_setWidth,
-        BitVec.getLsbD_zero, hi17, hi64, decide_true, Bool.true_and] at hi ⊢
+      have hmask : (BitVec.allOnes 64 >>> (64 - 17)).getLsbD i = true := by
+        rw [BitVec.getLsbD_ushiftRight, BitVec.getLsbD_allOnes]; simp; omega
+      simp only [truncToWidth, hOnes17, BitVec.getLsbD_and, BitVec.getLsbD_xor, BitVec.getLsbD_not, BitVec.getLsbD_setWidth,
+        BitVec.getLsbD_zero, hi17, hi64, decide_true, Bool.true_and, hmask, Bool.xor_true] at hi ⊢
       have : (a.getLsbD i && !b.getLsbD i) = false := hi; rw [← Bool.and_assoc, this, Bool.false_and]
     · simp only [truncToWidth, BitVec.getLsbD_and, BitVec.getLsbD_setWidth, BitVec.getLsbD_zero, hi64, decide_true, Bool.true_and]
       have ha0 : a.getLsbD i = false := by
