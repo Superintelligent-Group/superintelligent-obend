@@ -181,6 +181,7 @@ public import Obend.Hardware.GeometryCAM
 public import Obend.Hardware.Kinematics
 public import Obend.Hardware.OpenUSD
 public import Obend.Hardware.OpenHypergraph
+public import Obend.Hardware.OpenHypergraphQuotient
 public import Obend.Hardware.Gpu
 public import Obend.Hardware.Square
 public import Obend.Hardware.SquareGraphs
@@ -215,6 +216,7 @@ public import Obend.Hardware.PipelinedRisc
 public import Obend.Hardware.PipelinedZkCrypto
 public import Obend.Hardware.DprStutter
 public import Obend.Hardware.SiliconOuroboros
+public import Obend.Hardware.HvmStrongConfluence
 public import Obend.Hardware.HvmConfluence
 public import Obend.Hardware.Tpu.Machine
 public import Obend.Hardware.Tpu.CryptoSystolic

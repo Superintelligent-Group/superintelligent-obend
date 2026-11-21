@@ -351,6 +351,7 @@ import Obend.Hardware.Hvm.Net
 import Obend.Hardware.Hvm.Lower
 import Obend.Hardware.Hvm.Inet
 import Obend.Hardware.HvmConfluence
+import Obend.Hardware.HvmStrongConfluence
 import Obend.Hardware.Judge
 import Obend.Hardware.Kinematics
 import Obend.Hardware.Magnetics
@@ -359,6 +360,7 @@ import Obend.Hardware.MultiDStencilGpuSource
 import Obend.Hardware.MultiDStencilTile
 import Obend.Hardware.NotebookProjection
 import Obend.Hardware.OpenHypergraph
+import Obend.Hardware.OpenHypergraphQuotient
 import Obend.Hardware.OpenUSD
 import Obend.Hardware.OspcProver
 import Obend.Hardware.PCB

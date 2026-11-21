@@ -2164,6 +2164,27 @@ module = "Obend.Analysis.RelativityBssnZ4c3D"
 theorem = "z4c3d_slab_reduction_matches_1d"
 description = "10-variable 3D `#pde_solver BssnZ4cConstraint3D` (`EndToEndPdeCert`), autonomous constraint-sector Jacobian linearization weld (`bssnZ4cConstraint3D_constraint_sector_eq_z4c3d`), and 1-step plus n-step planar `(y, z)`-slab reduction to `BonaMassoZ4c1D` (`z4c3d_slab_reduction_matches_1d`)."
 
+[[apex]]
+id = "hardware-open-hypergraph-quotient-adjoint"
+subsystem = "Hardware"
+module = "Obend.Hardware.OpenHypergraphQuotient"
+theorem = "adjoint_quotient_intertwines_general"
+description = "General equitable open-hypergraph quotient certificate intertwines forward DAG evaluation and reverse-mode `compileGraphAdjoint` cotangent propagation across arbitrary depths, fanouts, and K-lane reduction trees."
+
+[[apex]]
+id = "hardware-open-hypergraph-equivariant-zero-leakage"
+subsystem = "Hardware"
+module = "Obend.Hardware.OpenHypergraphQuotient"
+theorem = "equivariant_perturbation_preserves_orbit_subspace"
+description = "Arbitrary-dimension equivariant linear and hypergraph perturbations preserve class-constant orbit subspaces with identically zero orthogonal leakage."
+
+[[apex]]
+id = "hardware-ic-church-rosser-confluence"
+subsystem = "Hardware"
+module = "Obend.Hardware.HvmConfluence"
+theorem = "ic_strong_confluence_and_unique_nf"
+description = "Full Lafont interaction-combinator strong diamond, multi-step Church-Rosser confluence, unique normal forms up to alpha-renaming, and `ReductionMachine.Arena.Step` simulation over well-formed nets."
+
 # ==============================================================================
 # Planned Wave 5+ Vertical Spine Apex Theorems (`master_interface_and_systems_architecture.md`)
 # ==============================================================================
