@@ -159,6 +159,8 @@ import Obend.Core.AliasExposure
 import Obend.Core.Assumptions
 import Obend.Core.Bidirectional
 import Obend.Core.Brand
+import Obend.Core.Canonicity
+import Obend.Core.CanonicityDefs
 import Obend.Core.Capacity
 import Obend.Core.Check
 import Obend.Core.Checkpoint
@@ -290,6 +292,9 @@ import Obend.Equiv.ClairvoyantBook
 import Obend.Equiv.Cost
 import Obend.Equiv.CostTests
 import Obend.Equiv.Demand
+import Obend.Equiv.EffectHandlers
+import Obend.Equiv.LogicalRelation
+import Obend.Equiv.LogicalRelationDefs
 import Obend.Equiv.FareTests
 import Obend.Equiv.Fields
 import Obend.Equiv.Improvement
@@ -558,6 +563,7 @@ import Obend.Spec.Proofs.C4
 import Obend.Spec.Proofs.Ecosystem
 import Obend.Spec.Proofs.FrontEndAdequacy
 import Obend.Spec.Proofs.LawCompile
+import Obend.Spec.Proofs.OpenObjectAlgebra
 import Obend.Spec.Proofs.SpecificationClosure
 import Obend.Spec.Sha256
 import Obend.Spec.Syntax

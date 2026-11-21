@@ -21,6 +21,8 @@ public import Obend.Core.Code
 public import Obend.Core.Nominal
 public import Obend.Core.Brand
 public import Obend.Core.RangeSafe
+public import Obend.Core.CanonicityDefs
+public import Obend.Core.Canonicity
 public import Obend.Slot
 public import Obend.Slot.Core4
 public import Obend.Slot.World
@@ -77,6 +79,7 @@ public import Obend.Spec.CrossPackage
 public import Obend.Spec.LawDial
 public import Obend.Spec.Workspace
 public import Obend.Spec.BidirectionalSurfaceElab
+public import Obend.Spec.Proofs.OpenObjectAlgebra
 public import Obend.Run.Runner
 public import Obend.Run.Spec
 public import Obend.Run.Fold
@@ -238,6 +241,9 @@ public import Obend.Logic.MultiTurnHoare
 public import Obend.Logic.SeparationFrame
 public import Obend.Logic.EnvHarness
 public import Obend.Equiv.ClairvoyantBook
+public import Obend.Equiv.LogicalRelationDefs
+public import Obend.Equiv.LogicalRelation
+public import Obend.Equiv.EffectHandlers
 public import Obend.Paco.GPaco
 public import Obend.Lower.Transport
 public import Obend.Lower.Fragment
