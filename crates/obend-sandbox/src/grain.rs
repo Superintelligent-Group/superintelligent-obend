@@ -1552,6 +1552,20 @@ pub fn eval_policy_grain_prog<S: AsRef<str>>(
 mod tests {
     use super::*;
 
+    // Shared with Obend.Polis.SandboxDomainTags. Exercises entry order, an empty
+    // payload, a high-bit slot ID, and binary payload bytes.
+    #[test]
+    fn emitted_slots_wire_vector() {
+        let entries = [(0x8001_0203_0405_0607, vec![]), (1, vec![0, 255, 128])];
+        assert_eq!(
+            digest_slot_entries(b"OBEND.CUSTODY.EMITTED/v1", &entries),
+            [
+                0x8e, 0xf9, 0x5b, 0xb2, 0x80, 0xd8, 0xfb, 0xd3, 0x4d, 0x6d, 0x64, 0xf8, 0xeb, 0x6b, 0x1c, 0x5c,
+                0x84, 0x9c, 0x0e, 0xcd, 0x60, 0xba, 0x35, 0x99, 0xa3, 0xb1, 0xed, 0x3c, 0x89, 0x4a, 0xc8, 0xb4,
+            ]
+        );
+    }
+
     #[test]
     fn test_grain_deterministic_execution_and_receipt_commitment() {
         let prog = GrainProgram::new(

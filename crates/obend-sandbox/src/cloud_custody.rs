@@ -1198,6 +1198,19 @@ mod tests {
         h.install(package(), PrepaidLease::new(1, 0, 10, 100), FrozenGrain { grain: 1, refs: vec![] }, &Auth).unwrap();
         h
     }
+    // Parallel process-spawn tests can briefly inherit this test's file description
+    // between fork and exec. Reopen tests own their directory and have dropped the
+    // writer. Give that inherited descriptor time to close, but fail on a lasting lock.
+    fn reopen_after_drop(mut open: impl FnMut() -> Result<GrainCustodyHost, CustodyError>) -> GrainCustodyHost {
+        use std::time::{Duration, Instant};
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            match open() {
+                Err(CustodyError::Locked) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(1)),
+                result => return result.unwrap(),
+            }
+        }
+    }
     fn parent() -> ConfinedGrainSession {
         ConfinedGrainSession::new(
             PrepaidLease::new(1, 0, 10, 100),
@@ -1367,7 +1380,7 @@ mod tests {
                 a.transition = a.transition_digest();
                 a.anchor.receipt_head = a.transition;
             });
-            let mut h = GrainCustodyHost::open(&t.0, [7; 32], &Auth).unwrap();
+            let mut h = reopen_after_drop(|| GrainCustodyHost::open(&t.0, [7; 32], &Auth));
             assert_eq!(h.status(), &GrainCustodyStatus::Poisoned(CustodyPoisonReason::BrokenReceipt));
             assert!(h.recover_one_ahead(&Auth).is_err());
         }
@@ -1501,7 +1514,7 @@ mod tests {
             assert_eq!(receipt.tier, tier);
         }
         drop(h);
-        let h = GrainCustodyHost::open(&t.0, [7; 32], &Auth).unwrap();
+        let h = reopen_after_drop(|| GrainCustodyHost::open(&t.0, [7; 32], &Auth));
         assert_eq!(h.status(), &GrainCustodyStatus::Ready);
     }
     #[test]
@@ -1537,7 +1550,7 @@ mod tests {
         let mut h = host(&t);
         h.checkpoint([(b"x".to_vec(), vec![1])].into(), FrozenGrain { grain: 1, refs: vec![] }, &Auth).unwrap();
         drop(h);
-        let mut h = GrainCustodyHost::open(&t.0, [7; 32], &Auth).unwrap();
+        let mut h = reopen_after_drop(|| GrainCustodyHost::open(&t.0, [7; 32], &Auth));
         assert_eq!(h.status(), &GrainCustodyStatus::RecoveryRequired);
         h.recover_one_ahead(&Auth).unwrap();
         assert_eq!(h.status(), &GrainCustodyStatus::Ready);
@@ -1562,10 +1575,10 @@ mod tests {
         let r = SettlementRecord::new(h.lease().unwrap().clone(), 0).unwrap();
         durable_write(&t.0, "settlement.json", &r).unwrap();
         drop(h);
-        let mut h = GrainCustodyHost::open(&t.0, [7; 32], &Auth).unwrap();
+        let mut h = reopen_after_drop(|| GrainCustodyHost::open(&t.0, [7; 32], &Auth));
         assert_eq!(h.settle_or_replay(0, &Auth).unwrap(), r.receipt);
         drop(h);
-        let mut h = GrainCustodyHost::open(&t.0, [7; 32], &Auth).unwrap();
+        let mut h = reopen_after_drop(|| GrainCustodyHost::open(&t.0, [7; 32], &Auth));
         assert_eq!(h.settle_or_replay(0, &Auth).unwrap(), r.receipt);
         assert_eq!(h.lease().unwrap().remaining(), 90);
         h.settle_or_replay(1, &Auth).unwrap();
@@ -1582,7 +1595,7 @@ mod tests {
         a.settlements.push(r.clone());
         h.persist_archive(a, &Auth).unwrap();
         drop(h);
-        let mut h = GrainCustodyHost::open(&t.0, [7; 32], &Auth).unwrap();
+        let mut h = reopen_after_drop(|| GrainCustodyHost::open(&t.0, [7; 32], &Auth));
         assert_eq!(h.settle_or_replay(0, &Auth).unwrap(), r.receipt);
         assert_eq!(h.lease().unwrap().remaining(), 90);
     }
@@ -1630,7 +1643,7 @@ mod tests {
         drop(h);
         durable_write(&t.0, "archive.json", &old).unwrap();
         durable_write(&t.0, "anchor.json", &old.anchor).unwrap();
-        let h = GrainCustodyHost::open_at(&t.0, [7; 32], retained, &Auth).unwrap();
+        let h = reopen_after_drop(|| GrainCustodyHost::open_at(&t.0, [7; 32], retained.clone(), &Auth));
         assert_eq!(h.status(), &GrainCustodyStatus::Poisoned(CustodyPoisonReason::Rollback));
     }
     #[test]
