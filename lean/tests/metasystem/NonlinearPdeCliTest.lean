@@ -8,6 +8,7 @@ witnesses and the audit of `Obend.Analysis.NonlinearPdeCli`.
 -/
 import Lean
 import Obend.Analysis.NonlinearPdeCli
+import Obend.Hardware.PdeSolvers
 import Obend.Elab.PdeSolverElab
 import Obend.Tactic.Tooth
 import Obend.AssertAxioms
@@ -329,6 +330,50 @@ def statementA : PdeTrajectoryStatement :=
 example (H : Hash) (s : PdeTrajectoryStatement)
     (h : pdeTrajectoryDigest H s = pdeTrajectoryDigest H statementA) : s = statementA ∨ Collision H :=
   (pdeTrajectoryDigest_binding H s statementA h).imp id (·.global)
+
+/-! ## 7b. Canonical `"solver"` catalog lookup & Z4c active constraint damping -/
+
+def catalogRequest (solverName : String) (dims : List Nat) (steps : Nat)
+    (initial : List (List Rat)) (extra : List (String × Json) := []) : Json :=
+  Json.mkObj ([("format", toJson "nonlinear-conservation@1"), ("solver", toJson solverName),
+    ("dims", toJson dims), ("steps", toJson steps), ("initial", gridJson initial)] ++ extra)
+
+-- Catalog lookup succeeds on canonical solvers and refuses unknown names.
+#guard (solved (catalogRequest "Burgers1D" [8] 3 shock)).bind (exitCode false) == some 0
+#guard refusedAt true (catalogRequest "NoSuchSolver" [4] 1 [[1], [1], [1], [1]])
+  == some (1, "lookup-pde-solver")
+-- Supplying both `solver` and `sexpr` is rejected as malformed (exit 2).
+#guard (pdeNonlinear true (catalogRequest "Burgers1D" [8] 1 shock [("sexpr", toJson burgers)])).toOption.isNone
+
+-- `ShallowWater1D` from catalog: water depth `h` (component 0) is conserved on a reflective basin
+-- while bathymetry slope `bx` drives nonzero momentum `q`.
+def swBasinCatalog : Json :=
+  catalogRequest "ShallowWater1D" [4] 3
+    [[3/2, 0, 1/4], [3/2, 0, -1/4], [3/2, 0, 1/8], [3/2, 0, -1/8]]
+    [("boundary", toJson "reflective"), ("reflectNegVars", toJson [1]), ("strang", toJson true)]
+
+#guard (solved swBasinCatalog).bind (integral · "initialIntegrals" 0) == some 6
+#guard (solved swBasinCatalog).bind (integral · "finalIntegrals" 0) == some 6
+#guard (solved swBasinCatalog).bind (integral · "finalIntegrals" 1) != some 0
+#guard (solved swBasinCatalog).bind (exitCode false) == some 0
+
+-- `BonaMassoZ4c1D` from catalog: active Z4c constraint damping (`-kappa1 * alpha * Theta`)
+-- contracts a nonzero constraint violation `Theta = 1/8` in BOTH `rat` and `q32` backends!
+def z4cInit : List (List Rat) :=
+  List.replicate 4 [1, 2, 0, 0, 0, 1/8]
+
+def z4cRat : Json :=
+  catalogRequest "BonaMassoZ4c1D" [4] 4 z4cInit [("strang", toJson true), ("compareQ32", toJson true)]
+def z4cQ32 : Json :=
+  catalogRequest "BonaMassoZ4c1D" [4] 4 z4cInit [("strang", toJson true), ("backend", toJson "q32")]
+
+#guard (solved z4cRat).bind (exitCode false) == some 0
+#guard (solved z4cQ32).bind (exitCode false) == some 0
+-- Initial Theta integral over 4 cells is 4 * (1/8) = 1/2; after 4 damped steps it strictly shrinks!
+#guard ((solved z4cRat).bind (integral · "finalIntegrals" 5)).map
+  (fun th => decide (0 < th ∧ th < 1 / 2)) == some true
+#guard ((solved z4cRat).bind (ratAt · "q32VsRatMaxDiff")).map
+  (decide <| · < 1 / 100000) == some true
 
 /-! ## 8. Mutation witnesses -/
 

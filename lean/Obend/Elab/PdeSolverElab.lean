@@ -1,6 +1,5 @@
 module
 public meta import Lean
-public import Lean
 public import Obend.Analysis.NonlinearMultiDPde
 public meta import Obend.Analysis.NonlinearMultiDPde
 public import Obend.Hardware.MultiDStencilTile
@@ -13,6 +12,8 @@ public import Obend.Hardware.BalanceLawLowering
 public meta import Obend.Hardware.BalanceLawLowering
 public import Obend.Analysis.NonlinearErrorTube
 public meta import Obend.Analysis.NonlinearErrorTube
+public import Obend.Hardware.MultiDStencilCorrect
+public meta import Obend.Hardware.MultiDStencilCorrect
 
 /-!
 # Compile-Time `#pde_solver` Conservation-Law Elaborator (`Obend.Elab.PdeSolverElab`)
@@ -361,6 +362,8 @@ open Obend.Hardware.MultiDStencilTile
 open Obend.Tactic.SymDiffAndFlux
 open Obend.Analysis.HyperbolicBalanceLaws Obend.Hardware.BalanceLawLowering
 open Obend.Analysis.NonlinearErrorTube
+open Obend.Hardware.MultiDStencilCorrect (EndToEndPdeCert buildEndToEndPdeCert)
+export Obend.Hardware.MultiDStencilCorrect (EndToEndPdeCert)
 set_option autoImplicit false
 
 /-- Evaluate the single runtime parser in elaboration; generated declarations still carry
@@ -379,15 +382,17 @@ elab "pde_spec_from_sexpr% " s:str : term => do
 /-- Pure compile-time gate checking structural/domain/CFL validity, reflective `CanonPoly`
 two-state fluctuation conservation, topological SSA DAG well-formedness across every axis,
 pre-modulo Q32.32 constant representability, the Gershgorin certificate of the declared wavespeed
-on the state box, existence of the Q32 step error bound, and (with sources) the Q32 interval gate
-of the joint flux/source DAG. -/
+on the state box, constructive weighted flux & source Lipschitz bounds, existence of the Q32 step
+error bound, and (with sources) the Q32 interval gate of the joint flux/source DAG. -/
 def checkPdeSolverSpec (spec : ConservationLawSpec) : Bool :=
   spec.checkValid &&
   verifyFluctuationsReflective spec &&
   ((List.range spec.numDims).all fun d =>
     checkFluxSsaDag (getOr (specializeFluxSweep spec).axisFluxDags d ⟨[], []⟩)) &&
   ((checkPdeQ32Constants spec && checkPdeQ32Intervals spec) &&
-    (verifyWavespeedGershgorin spec && (computeStepQ32ErrorBound spec).isSome &&
+    (verifyWavespeedGershgorin spec &&
+      (verifyFluxLipschitz spec && (computeSourceLip spec).isSome) &&
+      (computeStepQ32ErrorBound spec).isSome &&
       (spec.sources.isEmpty || checkBalanceQ32Intervals spec)))
 
 /-- Pure S-expression parser and compile-time conservation/SSA gate backing `elabConservationLaw`. -/
@@ -405,6 +410,10 @@ def validatePdeSolverSexpr (rawText : String) :
       else if !checkPdeQ32Intervals parsedSpec then "Q32.32 state box cannot certify all intermediates"
       else if !verifyWavespeedGershgorin parsedSpec then
         "declared max wavespeed is not certified by the Gershgorin bound of the symbolic Jacobian on the state box"
+      else if !verifyFluxLipschitz parsedSpec then
+        "declared max wavespeed does not bound the constructive flux Lipschitz constant on the state box"
+      else if (computeSourceLip parsedSpec).isNone then
+        "state box cannot certify a constructive Lipschitz bound on `(sources ...)`"
       else if (computeStepQ32ErrorBound parsedSpec).isNone then
         "Q32.32 step error bound: a datapath word may leave its checked range"
       else if !(parsedSpec.sources.isEmpty || checkBalanceQ32Intervals parsedSpec) then
@@ -433,10 +442,21 @@ theorem checkPdeSolverSpec_q32Intervals (spec : ConservationLawSpec)
 
 theorem checkPdeSolverSpec_continuum (spec : ConservationLawSpec)
     (h : checkPdeSolverSpec spec = true) :
-    verifyWavespeedGershgorin spec = true ∧ (computeStepQ32ErrorBound spec).isSome = true ∧
+    verifyWavespeedGershgorin spec = true ∧
+    (verifyFluxLipschitz spec = true ∧ (computeSourceLip spec).isSome = true) ∧
+    (computeStepQ32ErrorBound spec).isSome = true ∧
       (spec.sources.isEmpty = true ∨ checkBalanceQ32Intervals spec = true) := by
   simp only [checkPdeSolverSpec, Bool.and_eq_true, Bool.or_eq_true] at h
-  exact ⟨h.2.2.1.1, h.2.2.1.2, h.2.2.2⟩
+  exact ⟨h.2.2.1.1.1, h.2.2.1.1.2, h.2.2.1.2, h.2.2.2⟩
+
+/-- **Single-Object Master Certificate Soundness (`checkPdeSolverSpec_endToEnd`)**:
+Any specification accepted by `checkPdeSolverSpec` inhabits the 6-rung `EndToEndPdeCert`. -/
+theorem checkPdeSolverSpec_endToEnd (spec : ConservationLawSpec)
+    (h : checkPdeSolverSpec spec = true) : EndToEndPdeCert spec := by
+  obtain ⟨hVal, hRefl, _⟩ := checkPdeSolverSpec_valid spec h
+  obtain ⟨hGersh, ⟨hFluxLip, hSrcLip⟩, hEps, _⟩ := checkPdeSolverSpec_continuum spec h
+  exact buildEndToEndPdeCert spec hVal hRefl (checkPdeSolverSpec_q32Intervals spec h)
+    hGersh hFluxLip hEps hSrcLip
 
 /-- **Kernel Soundness of `checkPdeSolverSpec` (`checkPdeSolverSpec_sound`)**:
 Every `ConservationLawSpec` accepted by `checkPdeSolverSpec` satisfies:
@@ -502,7 +522,7 @@ theorem checkPdeSolverSpec_sound (spec : ConservationLawSpec) (dims : List Nat)
         ∀ w ∈ evalFluxSsaDagQ32 inputs spec.paramEnv (compileJointFluxSourceDag spec d),
           -((2 : Int)^62) < w.toInt ∧ w.toInt < (2 : Int)^62) := by
   obtain ⟨hVal, hRefl, hDags⟩ := checkPdeSolverSpec_valid spec hCheck
-  obtain ⟨hGersh, hEps, hBal⟩ := checkPdeSolverSpec_continuum spec hCheck
+  obtain ⟨hGersh, _, hEps, hBal⟩ := checkPdeSolverSpec_continuum spec hCheck
   obtain ⟨ε, hε⟩ := Option.isSome_iff_exists.mp hEps
   refine ⟨hVal, checkValid_cfl_bounds spec hVal, ?_, ?_, ?_,
     checkPdeQ32Intervals_sound spec (checkPdeSolverSpec_q32Intervals spec hCheck),
@@ -608,12 +628,36 @@ meta def elabContinuumDecls (solverId : TSyntax `ident) (parsedSpec : Conservati
   let idSpec := mkSubId `spec
   let idSpecValid := mkSubId `spec_valid
   let idWaveOk := mkSubId `wavespeed_ok
+  let idFluxLipOk := mkSubId `fluxLipschitz_ok
+  let idSrcLip := mkSubId `sourceLipBound
+  let idSrcLipOk := mkSubId `sourceLipBound_ok
   let idQ32Err := mkSubId `q32ErrorBound
   let idQ32ErrOk := mkSubId `q32ErrorBound_ok
+  let idQ32IvOk := mkSubId `q32Intervals_ok
+  let idFluctRefl := mkSubId `fluctuation_reflective_ok
 
   elabCommand (← `(command|
     private theorem $idWaveOk :
         Obend.Analysis.HyperbolicBalanceLaws.verifyWavespeedGershgorin $idSpec = true := by
+      decide +kernel))
+
+  elabCommand (← `(command|
+    private theorem $idFluxLipOk :
+        Obend.Analysis.HyperbolicBalanceLaws.verifyFluxLipschitz $idSpec = true := by
+      decide +kernel))
+
+  elabCommand (← `(command|
+    def $idSrcLip : Rat :=
+      (Obend.Analysis.NonlinearErrorTube.computeSourceLip $idSpec).getD 0))
+
+  elabCommand (← `(command|
+    private theorem $idSrcLipOk :
+        Obend.Analysis.NonlinearErrorTube.computeSourceLip $idSpec = some $idSrcLip := by
+      decide +kernel))
+
+  elabCommand (← `(command|
+    private theorem $idQ32IvOk :
+        Obend.Tactic.SymDiffAndFlux.checkPdeQ32Intervals $idSpec = true := by
       decide +kernel))
 
   elabCommand (← `(command|
@@ -663,15 +707,13 @@ meta def elabContinuumDecls (solverId : TSyntax `ident) (parsedSpec : Conservati
     theorem $(mkSubId `nonlinear_error_tube)
         (b : Obend.Hardware.Gpu.StencilTile.StencilBoundary) (dims : List Nat) (axis : Nat)
         (haxis : axis < ($idSpec).numDims) (hdim : axis < dims.length)
-        (box : Nat → Obend.Analysis.HyperbolicBalanceLaws.Interval)
-        (hLip : FluxLipOn $idSpec axis box)
         (W0 : Nat → Nat → Obend.Hardware.ArrayHypergraph.Word) (U0 : MultiDGrid) (initErr : Rat)
         (hW : ∀ k idx j, j < ($idSpec).numVars →
           InBoxW $idSpec (q32Trajectory $idSpec b dims axis W0 k idx j) j)
         (hP : ∀ k,
-          (∀ idx, InBox ($idSpec).numVars box
+          (∀ idx, InBox ($idSpec).numVars (effectiveStateBox $idSpec)
             (decodeGrid (q32Trajectory $idSpec b dims axis W0 k) idx)) ∧
-          ∀ idx, InBox ($idSpec).numVars box
+          ∀ idx, InBox ($idSpec).numVars (effectiveStateBox $idSpec)
             (Obend.Analysis.PdeSexprAndApprox.exactTrajectory (evalAxisStepRat $idSpec b dims axis ($idSpec).cfl) U0 k idx))
         (h0 : GridClose ($idSpec).numVars (weightOf $idSpec) initErr (decodeGrid W0) U0)
         (K : Nat) :
@@ -680,10 +722,44 @@ meta def elabContinuumDecls (solverId : TSyntax `ident) (parsedSpec : Conservati
             (fun _ => $idQ32Err * maxTo ($idSpec).numVars (fun c => 1 / weightOf $idSpec c)) K)
           (decodeGrid (q32Trajectory $idSpec b dims axis W0 K))
           (Obend.Analysis.PdeSexprAndApprox.exactTrajectory (evalAxisStepRat $idSpec b dims axis ($idSpec).cfl) U0 K) :=
-      q32_trajectory_error_tube $idSpec b dims axis haxis hdim _ $idQ32ErrOk box hLip
+      q32_trajectory_error_tube_derived $idSpec b dims axis haxis hdim _ $idQ32ErrOk $idFluxLipOk
         (Rat.le_of_lt (checkValid_cfl_bounds $idSpec $idSpecValid).1)
         (checkValid_cfl_bounds $idSpec $idSpecValid).2.1
         (checkValid_cfl_bounds $idSpec $idSpecValid).2.2 W0 U0 initErr hW hP h0 K))
+
+  elabCommand (← `(command|
+    theorem $(mkSubId `scheme_q32_error_tube)
+        (b : Obend.Hardware.Gpu.StencilTile.StencilBoundary) (dims : List Nat)
+        (dt : Rat) (useStrang : Bool)
+        (hDims : dims.length ≤ ($idSpec).numDims) (hdt : 0 ≤ dt) (hcfl : dt * ($idSpec).aMax ≤ 1)
+        (εScheme : Rat)
+        (hεScheme : computeSchemeQ32ErrorBound $idSpec dims dt useStrang = some εScheme)
+        (W0 : Nat → Nat → Obend.Hardware.ArrayHypergraph.Word) (U0 : MultiDGrid) (initErr : Rat)
+        (hW : ∀ k, SchemeTurnInBoxW $idSpec b dims dt useStrang
+          (q32SchemeTrajectory $idSpec b dims dt useStrang W0 k))
+        (hExact : ∀ k, SchemeStepInBox $idSpec b dims dt useStrang
+          (Obend.Analysis.PdeSexprAndApprox.exactTrajectory
+            (evalSchemeStepRat $idSpec b dims dt useStrang) U0 k))
+        (h0 : GridClose ($idSpec).numVars (weightOf $idSpec) initErr (decodeGrid W0) U0)
+        (K : Nat) :
+        GridClose ($idSpec).numVars (weightOf $idSpec)
+          (nonlinearDefectTube (schemeLip $idSpec dims dt useStrang $idSrcLip) initErr
+            (fun _ => εScheme) K)
+          (decodeGrid (q32SchemeTrajectory $idSpec b dims dt useStrang W0 K))
+          (Obend.Analysis.PdeSexprAndApprox.exactTrajectory
+            (evalSchemeStepRat $idSpec b dims dt useStrang) U0 K) :=
+      q32_scheme_trajectory_error_tube $idSpec b dims dt useStrang hDims $idFluxLipOk
+        $idSrcLip $idSrcLipOk εScheme hεScheme
+        (Rat.le_of_lt (checkValid_cfl_bounds $idSpec $idSpecValid).1) hdt hcfl
+        W0 U0 initErr hW hExact h0 K))
+
+  elabCommand (← `(command|
+    theorem $(mkSubId `endToEnd_certified) :
+        Obend.Hardware.MultiDStencilCorrect.EndToEndPdeCert $idSpec :=
+      Obend.Hardware.MultiDStencilCorrect.buildEndToEndPdeCert $idSpec
+        $idSpecValid $idFluctRefl $idQ32IvOk $idWaveOk $idFluxLipOk
+        (Option.isSome_iff_exists.mpr ⟨$idQ32Err, $idQ32ErrOk⟩)
+        (Option.isSome_iff_exists.mpr ⟨$idSrcLip, $idSrcLipOk⟩)))
 
   if !parsedSpec.sources.isEmpty then
     let idSrcNe := mkSubId `sources_nonempty
@@ -751,6 +827,12 @@ meta def elabConservationLaw (solverId : TSyntax `ident) (sexprLit : TSyntax `st
   if !verifyWavespeedGershgorin parsedSpec then
     throwErrorAt sexprLit
       "[#pde_solver `{solverId.getId}`] declared max wavespeed {parsedSpec.aMax} is not certified by the Gershgorin bound of the symbolic Jacobian on the state box"
+  if !verifyFluxLipschitz parsedSpec then
+    throwErrorAt sexprLit
+      "[#pde_solver `{solverId.getId}`] declared max wavespeed {parsedSpec.aMax} does not bound the constructive flux Lipschitz constant on the state box"
+  if (computeSourceLip parsedSpec).isNone then
+    throwErrorAt sexprLit
+      "[#pde_solver `{solverId.getId}`] state box cannot certify a constructive Lipschitz bound on `(sources ...)`"
   if (computeStepQ32ErrorBound parsedSpec).isNone then
     throwErrorAt sexprLit
       "[#pde_solver `{solverId.getId}`] Q32.32 step error bound: a datapath word may leave its checked range"

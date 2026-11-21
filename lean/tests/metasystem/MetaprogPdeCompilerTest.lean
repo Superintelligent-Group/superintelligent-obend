@@ -15,11 +15,17 @@ import all Obend.Hardware.Gpu.SourceElem
 import all Obend.Hardware.Gpu.SourceOps
 public import Obend.Analysis.NonlinearMultiDPde
 public import Obend.Hardware.MultiDStencilTile
+public import Obend.Hardware.MultiDStencilCorrect
+public import Obend.Hardware.PdeSolvers
 public import Obend.Tactic.SymDiffAndFlux
 public import Obend.Elab.PdeSolverElab
 public import Obend.Hardware.YosysLec
 public import Obend.Tactic.Tooth
 public import Obend.AssertAxioms
+import all Obend.Analysis.NonlinearPdeCli
+import all Obend.Hardware.MultiDStencilGpuSource
+import all Obend.Hardware.MultiDStencilCorrect
+import all Obend.Hardware.PdeSolvers
 import all Obend.Analysis.Diff
 import all Obend.Analysis.HyperbolicPdeCert
 import all Obend.Analysis.NonlinearMultiDPde
@@ -331,283 +337,42 @@ open Obend.Tactic.SymDiffAndFlux
 open Obend.Elab.PdeSolverElab
 open Obend.Analysis.HyperbolicBalanceLaws Obend.Analysis.NonlinearErrorTube
 open Obend.Hardware.BalanceLawLowering
+open Obend.Hardware.MultiDStencilCorrect (EndToEndPdeCert buildEndToEndPdeCert)
+open Obend.Hardware.PdeSolvers
 set_option autoImplicit false
 
-/-! ## 1. Nonlinear & Multi-Dimensional Conservation-Law Systems via `#pde_solver` -/
+/-! ## 1. Canonical Library Catalog (`Obend.Hardware.PdeSolvers`) & Single-Object `EndToEndPdeCert` -/
 
--- 1.1: 1D Nonlinear Inviscid Burgers Equation: ∂_t u + ∂_x (1/2 u^2) = 0
-#pde_solver Burgers1D :=
-  "(conservation-law
-     (name Burgers1D)
-     (coords x)
-     (vars u)
-     (params)
-     (domain)
-     (fluxes
-       (x (* 1/2 (sq u))))
-     (wavespeed 2 1/4)
-     (state-box (u -2 2))
-     (limiter minmod))"
-
--- 1.2: 3D Compressible Euler Gas Dynamics: (rho, rhou, rhov, rhow, E) with rho > 0
-#pde_solver EulerGas3D :=
-  "(conservation-law
-     (name EulerGas3D)
-     (coords x y z)
-     (vars rho rhou rhov rhow E)
-     (params (gamma 7/5))
-     (domain (> rho 0))
-     (fluxes
-       (x (let ((ke (* 1/2 (/ (+ (sq rhou) (sq rhov) (sq rhow)) rho)))
-                (p (* (- gamma 1) (- E ke)))
-                (u (/ rhou rho)))
-            rhou
-            (+ (* rhou u) p)
-            (* rhov u)
-            (* rhow u)
-            (* (+ E p) u)))
-       (y (let ((ke (* 1/2 (/ (+ (sq rhou) (sq rhov) (sq rhow)) rho)))
-                (p (* (- gamma 1) (- E ke)))
-                (v (/ rhov rho)))
-            rhov
-            (* rhou v)
-            (+ (* rhov v) p)
-            (* rhow v)
-            (* (+ E p) v)))
-       (z (let ((ke (* 1/2 (/ (+ (sq rhou) (sq rhov) (sq rhow)) rho)))
-                (p (* (- gamma 1) (- E ke)))
-                (w (/ rhow rho)))
-            rhow
-            (* rhou w)
-            (* rhov w)
-            (+ (* rhow w) p)
-            (* (+ E p) w))))
-     (wavespeed 4 1/8)
-     (state-box (rho 1 2) (rhou -1/4 1/4) (rhov -1/4 1/4) (rhow -1/4 1/4) (E 1 3))
-     (wavespeed-weights 1 1 1 1 5/2)
-     (limiter minmod))"
-
--- 1.3: 2D 8-Wave GLM Divergence-Cleaned Ideal Magnetohydrodynamics (9 state variables, rho > 0)
-#pde_solver IdealMhd8Wave :=
-  "(conservation-law
-     (name IdealMhd8Wave)
-     (coords x y)
-     (vars rho rhou rhov rhow Bx By Bz E psi)
-     (params (gamma 5/3) (ch 2))
-     (domain (> rho 0))
-     (fluxes
-       (x (let ((u (/ rhou rho))
-                (v (/ rhov rho))
-                (w (/ rhow rho))
-                (ke (* 1/2 (/ (+ (sq rhou) (sq rhov) (sq rhow)) rho)))
-                (me (* 1/2 (+ (sq Bx) (sq By) (sq Bz))))
-                (pGas (* (- gamma 1) (- E (+ ke me))))
-                (pTot (+ pGas me))
-                (uDotB (+ (* u Bx) (* v By) (* w Bz))))
-            rhou
-            (- (+ (* rhou u) pTot) (sq Bx))
-            (- (* rhov u) (* Bx By))
-            (- (* rhow u) (* Bx Bz))
-            psi
-            (- (* u By) (* v Bx))
-            (- (* u Bz) (* w Bx))
-            (- (* (+ E pTot) u) (* Bx uDotB))
-            (* (sq ch) Bx)))
-       (y (let ((u (/ rhou rho))
-                (v (/ rhov rho))
-                (w (/ rhow rho))
-                (ke (* 1/2 (/ (+ (sq rhou) (sq rhov) (sq rhow)) rho)))
-                (me (* 1/2 (+ (sq Bx) (sq By) (sq Bz))))
-                (pGas (* (- gamma 1) (- E (+ ke me))))
-                (pTot (+ pGas me))
-                (uDotB (+ (* u Bx) (* v By) (* w Bz))))
-            rhov
-            (- (* rhou v) (* By Bx))
-            (- (+ (* rhov v) pTot) (sq By))
-            (- (* rhow v) (* By Bz))
-            (- (* v Bx) (* u By))
-            psi
-            (- (* v Bz) (* w By))
-            (- (* (+ E pTot) v) (* By uDotB))
-            (* (sq ch) By))))
-     (wavespeed 5 1/10)
-     (state-box (rho 1 2) (rhou -1/4 1/4) (rhov -1/4 1/4) (rhow -1/4 1/4) (Bx -1/4 1/4)
-       (By -1/4 1/4) (Bz -1/4 1/4) (E 1 3) (psi -2 2))
-     (wavespeed-weights 1 1 1 1 1/2 1/2 1/2 5/2 1)
-     (limiter minmod))"
-
--- 1.4: 3+1 Curved-Spacetime ADM Electrodynamics (lapse alpha > 0, shift beta^i)
-#pde_solver CurvedSpacetimeMaxwell :=
-  "(conservation-law
-     (name CurvedSpacetimeMaxwell)
-     (coords x y z)
-     (vars Dx Dy Dz Bx By Bz)
-     (params (alpha 4/5) (betax 1/10) (betay -1/10) (betaz 1/20))
-     (domain (> alpha 0))
-     (fluxes
-       (x (- (* betax Dx))
-          (- (* alpha Bz) (* betax Dy))
-          (- (- (* alpha By)) (* betax Dz))
-          (- (* betax Bx))
-          (- (- (* alpha Dz)) (* betax By))
-          (- (* alpha Dy) (* betax Bz)))
-       (y (- (- (* alpha Bz)) (* betay Dx))
-          (- (* betay Dy))
-          (- (* alpha Bx) (* betay Dz))
-          (- (* alpha Dz) (* betay Bx))
-          (- (* betay By))
-          (- (- (* alpha Dx)) (* betay Bz)))
-       (z (- (* alpha By) (* betaz Dx))
-          (- (- (* alpha Bx)) (* betaz Dy))
-          (- (* betaz Dz))
-          (- (- (* alpha Dy)) (* betaz Bx))
-          (- (* alpha Dx) (* betaz By))
-          (- (* betaz Bz))))
-     (wavespeed 2 1/5)
-     (limiter minmod))"
-
--- 1.5: 2D Phase-Space (1x1v) Vlasov-Poisson Kinetic Advection (mMass > 0)
-#pde_solver VlasovPoissonPhase :=
-  "(conservation-law
-     (name VlasovPoissonPhase)
-     (coords x vx)
-     (vars f Ex)
-     (params (qCharge -1) (mMass 1) (vChar 3/2) (jCoef -1/4))
-     (domain (> mMass 0))
-     (fluxes
-       (x (* vChar f) (* jCoef f))
-       (vx (* (/ qCharge mMass) (* Ex f)) 0))
-     (wavespeed 3 1/6)
-     (state-box (f -4 4) (Ex -5/2 5/2))
-     (wavespeed-weights 8 1)
-     (limiter minmod))"
-
--- 1.6: 1+1 Bona–Massó hyperbolic ADM relativity, principal part only.
--- `BonaMasso1D` models the source-free principal flux operator ∂_t U + ∂_x F^x(U) = 0 of the
--- Bona–Massó–Seidel–Stela (1995) 1+1 first-order hyperbolic ADM system, with
--- U = (alpha, gxx, Ax, Dx, Kxx), lapse alpha > 0, spatial metric gxx > 0, constant shift
--- beta = 1/5, slicing function fBM = 2, and the trace trK = Kxx / gxx shared by CSE between the
--- Ax and Dx fluxes. The inhomogeneous source terms S(U) of the full system (for example
--- -2 alpha Kxx in the gxx equation) are not part of this operator and are not modelled here.
--- The declared wavespeed 9 bounds |beta| + alpha sqrt(fBM / gxx) on the Q32 state box
--- alpha, gxx in [1/2, 4]; Lean takes it as a parameter and does not derive it.
-#pde_solver BonaMasso1D :=
-  "(conservation-law
-     (name BonaMasso1D)
-     (coords x)
-     (vars alpha gxx Ax Dx Kxx)
-     (params (fBM 2) (beta 1/5))
-     (domain (> alpha 0) (> gxx 0))
-     (fluxes
-       (x (let ((trK (/ Kxx gxx)))
-            (- (* beta alpha))
-            (- (* beta gxx))
-            (+ (- (* beta Ax)) (* fBM (* alpha trK)))
-            (+ (- (* beta Dx)) (* alpha trK))
-            (+ (- (* beta Kxx)) (* alpha Ax)))))
-     (wavespeed 9 1/10)
-     (wavespeed-weights 1/256 1/256 2 1 1)
-     (limiter minmod))"
-
--- 1.7: 1+1 Bona–Massó with lower-order terms. The lapse and metric sources are the first-order
--- form of `∂_t alpha = -alpha^2 f trK` and `∂_t gxx = -2 alpha Kxx` (Bona, Massó, Seidel, Stela
--- 1995; Alcubierre, *Introduction to 3+1 Numerical Relativity*, 2008, ch. 5), with constant
--- `f = fBM`. The `Kxx` source `alpha (Ax Dx - Kxx^2 / gxx)` is the lane brief's form of the
--- quadratic terms and has not been checked against the 1995 paper.
-#pde_solver BonaMasso1DFull :=
-  "(conservation-law
-     (name BonaMasso1DFull)
-     (coords x)
-     (vars alpha gxx Ax Dx Kxx)
-     (params (fBM 2) (beta 1/5))
-     (domain (> alpha 0) (> gxx 0))
-     (fluxes
-       (x (let ((trK (/ Kxx gxx)))
-            (- (* beta alpha))
-            (- (* beta gxx))
-            (+ (- (* beta Ax)) (* fBM (* alpha trK)))
-            (+ (- (* beta Dx)) (* alpha trK))
-            (+ (- (* beta Kxx)) (* alpha Ax)))))
-     (sources
-       (- (* (sq alpha) fBM (/ Kxx gxx)))
-       (- (* 2 alpha Kxx))
-       0
-       0
-       (* alpha (- (* Ax Dx) (/ (sq Kxx) gxx))))
-     (max-wavespeed 9) (cfl 1/10)
-     (state-box (alpha 1/2 2) (gxx 1 4) (Ax -1/2 1/2) (Dx -1/2 1/2) (Kxx -1/2 1/2))
-     (wavespeed-weights 1/4 1/4 1 1 1)
-     (limiter minmod))"
-
--- 1.8: 2D GLM MHD with the mixed hyperbolic/parabolic cleaning source `-damp psi` on `psi`
--- (Dedner, Kemm, Kröner, Munz, Schnitzer, Wesenberg 2002, eq. 24).
-#pde_solver DednerGlmMhd2D :=
-  "(conservation-law
-     (name DednerGlmMhd2D)
-     (coords x y)
-     (vars rho rhou rhov rhow Bx By Bz E psi)
-     (params (gamma 5/3) (ch 2) (damp 1/2))
-     (domain (> rho 0))
-     (fluxes
-       (x (let ((u (/ rhou rho)) (v (/ rhov rho)) (w (/ rhow rho))
-                (ke (* 1/2 (/ (+ (sq rhou) (sq rhov) (sq rhow)) rho)))
-                (me (* 1/2 (+ (sq Bx) (sq By) (sq Bz))))
-                (pGas (* (- gamma 1) (- E (+ ke me))))
-                (pTot (+ pGas me))
-                (uDotB (+ (* u Bx) (* v By) (* w Bz))))
-            rhou
-            (- (+ (* rhou u) pTot) (sq Bx))
-            (- (* rhov u) (* Bx By)) (- (* rhow u) (* Bx Bz))
-            psi
-            (- (* u By) (* v Bx)) (- (* u Bz) (* w Bx))
-            (- (* (+ E pTot) u) (* Bx uDotB))
-            (* (sq ch) Bx)))
-       (y (let ((u (/ rhou rho)) (v (/ rhov rho)) (w (/ rhow rho))
-                (ke (* 1/2 (/ (+ (sq rhou) (sq rhov) (sq rhow)) rho)))
-                (me (* 1/2 (+ (sq Bx) (sq By) (sq Bz))))
-                (pGas (* (- gamma 1) (- E (+ ke me))))
-                (pTot (+ pGas me))
-                (uDotB (+ (* u Bx) (* v By) (* w Bz))))
-            rhov
-            (- (* rhou v) (* By Bx)) (- (+ (* rhov v) pTot) (sq By))
-            (- (* rhow v) (* By Bz))
-            (- (* v Bx) (* u By))
-            psi
-            (- (* v Bz) (* w By)) (- (* (+ E pTot) v) (* By uDotB))
-            (* (sq ch) By))))
-     (sources 0 0 0 0 0 0 0 0 (- (* damp psi)))
-     (wavespeed 5 1/10)
-     (state-box (rho 1 2) (rhou -1/4 1/4) (rhov -1/4 1/4) (rhow -1/4 1/4) (Bx -1/4 1/4)
-       (By -1/4 1/4) (Bz -1/4 1/4) (E 1 3) (psi -2 2))
-     (wavespeed-weights 1 1 1 1 1/2 1/2 1/2 5/2 1)
-     (limiter minmod))"
-
--- 1.9: 1D shallow water over bathymetry, with the bed slope `bx` carried as a steady component
--- and the topography source `-g h bx` on the discharge (Audusse et al. 2004, eq. 1.1).
-#pde_solver ShallowWater1D :=
-  "(conservation-law
-     (name ShallowWater1D)
-     (coords x)
-     (vars h q bx)
-     (params (g 2))
-     (domain (> h 0))
-     (fluxes (x q (+ (/ (sq q) h) (* 1/2 g (sq h))) 0))
-     (sources 0 (- (* g h bx)) 0)
-     (max-wavespeed 4) (cfl 1/8)
-     (state-box (h 1 2) (q -1/2 1/2) (bx -1/2 1/2))
-     (wavespeed-weights 1 2 1)
-     (limiter minmod))"
+-- All 10 canonical conservation-law and balance-law solvers are compiled ONCE in
+-- `Obend.Hardware.PdeSolvers` (zero hand-duplicated ASTs) and synthesize `<Name>.endToEnd_certified`:
+example : EndToEndPdeCert Burgers1D.spec := Burgers1D.endToEnd_certified
+example : EndToEndPdeCert EulerGas3D.spec := EulerGas3D.endToEnd_certified
+example : EndToEndPdeCert IdealMhd8Wave.spec := IdealMhd8Wave.endToEnd_certified
+example : EndToEndPdeCert CurvedSpacetimeMaxwell.spec := CurvedSpacetimeMaxwell.endToEnd_certified
+example : EndToEndPdeCert VlasovPoissonPhase.spec := VlasovPoissonPhase.endToEnd_certified
+example : EndToEndPdeCert BonaMasso1DPrincipal.spec := BonaMasso1DPrincipal.endToEnd_certified
+example : EndToEndPdeCert BonaMasso1D.spec := BonaMasso1D.endToEnd_certified
+example : EndToEndPdeCert BonaMassoZ4c1D.spec := BonaMassoZ4c1D.endToEnd_certified
+example : EndToEndPdeCert DednerGlmMhd2D.spec := DednerGlmMhd2D.endToEnd_certified
+example : EndToEndPdeCert ShallowWater1D.spec := ShallowWater1D.endToEnd_certified
+#guard canonicalPdeSolvers.length == 10 &&
+  (lookupCanonicalPdeSolver "BonaMassoZ4c1D").isSome &&
+  (lookupCanonicalPdeSolver "EulerGas3D") == some EulerGas3D.spec
 
 /-! ## 2. Inhabitedness, Exact Symbolic Fréchet AD, Tadmor Entropy & Symmetrizer Proofs -/
 
--- Strict compile-time Futamura + CSE FLOP reduction on nonlinear multi-D Euler & 8-wave MHD:
+-- Strict compile-time Futamura + CSE FLOP reduction on nonlinear multi-D Euler, MHD & ADM/Z4c:
 #guard Burgers1D.spec.numDims == 1 && Burgers1D.spec.numVars == 1
 #guard EulerGas3D.spec.numDims == 3 && EulerGas3D.spec.numVars == 5
 #guard IdealMhd8Wave.spec.numDims == 2 && IdealMhd8Wave.spec.numVars == 9
 #guard CurvedSpacetimeMaxwell.spec.numDims == 3 && CurvedSpacetimeMaxwell.spec.numVars == 6
 #guard VlasovPoissonPhase.spec.numDims == 2 && VlasovPoissonPhase.spec.numVars == 2
-#guard BonaMasso1D.spec.numDims == 1 && BonaMasso1D.spec.numVars == 5
-#guard BonaMasso1D.specializedPlan.specializedTotalFlops < BonaMasso1D.specializedPlan.naiveTotalFlops
+#guard BonaMasso1DPrincipal.spec.numDims == 1 && BonaMasso1DPrincipal.spec.numVars == 5
+#guard BonaMassoZ4c1D.spec.numDims == 1 && BonaMassoZ4c1D.spec.numVars == 6
+#guard BonaMasso1DPrincipal.specializedPlan.specializedTotalFlops <
+  BonaMasso1DPrincipal.specializedPlan.naiveTotalFlops
+#guard BonaMassoZ4c1D.specializedPlan.specializedTotalFlops <
+  BonaMassoZ4c1D.specializedPlan.naiveTotalFlops
 #guard EulerGas3D.specializedPlan.specializedTotalFlops < EulerGas3D.specializedPlan.naiveTotalFlops
 #guard IdealMhd8Wave.specializedPlan.specializedTotalFlops < IdealMhd8Wave.specializedPlan.naiveTotalFlops
 #guard CurvedSpacetimeMaxwell.specializedPlan.specializedTotalFlops <
@@ -682,71 +447,71 @@ def bonaMassoTestPerturb : Vec
   | _ => 0
 
 theorem bonaMassoTestState_domainValid :
-    DomainValid BonaMasso1D.spec.domain ⟨bonaMassoTestState, BonaMasso1D.spec.paramEnv⟩ := by
+    DomainValid BonaMasso1DPrincipal.spec.domain ⟨bonaMassoTestState, BonaMasso1DPrincipal.spec.paramEnv⟩ := by
   intro t ht
   have htEq : t = .stateVar 0 ∨ t = .stateVar 1 := by
     revert ht; decide +kernel +revert
   rcases htEq with rfl | rfl <;> decide +kernel
 
 theorem bonaMassoTestShifted_domainValid :
-    DomainValid BonaMasso1D.spec.domain
-      (shiftVecEnv BonaMasso1D.spec.numVars
-        ⟨bonaMassoTestState, BonaMasso1D.spec.paramEnv⟩ (1 / 10) bonaMassoTestPerturb) := by
+    DomainValid BonaMasso1DPrincipal.spec.domain
+      (shiftVecEnv BonaMasso1DPrincipal.spec.numVars
+        ⟨bonaMassoTestState, BonaMasso1DPrincipal.spec.paramEnv⟩ (1 / 10) bonaMassoTestPerturb) := by
   intro t ht
   have htEq : t = .stateVar 0 ∨ t = .stateVar 1 := by
     revert ht; decide +kernel +revert
   rcases htEq with rfl | rfl <;> simp only [shiftVecEnv] <;> decide +kernel
 
--- `BonaMasso1D.jacobian_frechet_sound` on the nonlinear `Ax` flux `-beta Ax + fBM alpha Kxx / gxx`:
+-- `BonaMasso1DPrincipal.jacobian_frechet_sound` on the nonlinear `Ax` flux `-beta Ax + fBM alpha Kxx / gxx`:
 example :
-    let fluxX := getOr BonaMasso1D.spec.fluxes 0 []
-    let jacX := getOr BonaMasso1D.jacobians 0 []
+    let fluxX := getOr BonaMasso1DPrincipal.spec.fluxes 0 []
+    let jacX := getOr BonaMasso1DPrincipal.jacobians 0 []
     let h : Rat := 1 / 10
     evalFlux (getOr fluxX 2 (.const 0))
-        (shiftVecEnv BonaMasso1D.spec.numVars ⟨bonaMassoTestState, BonaMasso1D.spec.paramEnv⟩ h
+        (shiftVecEnv BonaMasso1DPrincipal.spec.numVars ⟨bonaMassoTestState, BonaMasso1DPrincipal.spec.paramEnv⟩ h
           bonaMassoTestPerturb) -
-      evalFlux (getOr fluxX 2 (.const 0)) ⟨bonaMassoTestState, BonaMasso1D.spec.paramEnv⟩ =
-      h * mulVec BonaMasso1D.spec.numVars
-        (evalSymJacobianMat jacX ⟨bonaMassoTestState, BonaMasso1D.spec.paramEnv⟩) bonaMassoTestPerturb 2 +
-      (h * h) * symDirectionalRem BonaMasso1D.spec.numVars
-        (getOr fluxX 2 (.const 0)) ⟨bonaMassoTestState, BonaMasso1D.spec.paramEnv⟩ bonaMassoTestPerturb h :=
-  BonaMasso1D.jacobian_frechet_sound 0 2 (by decide) (by decide)
+      evalFlux (getOr fluxX 2 (.const 0)) ⟨bonaMassoTestState, BonaMasso1DPrincipal.spec.paramEnv⟩ =
+      h * mulVec BonaMasso1DPrincipal.spec.numVars
+        (evalSymJacobianMat jacX ⟨bonaMassoTestState, BonaMasso1DPrincipal.spec.paramEnv⟩) bonaMassoTestPerturb 2 +
+      (h * h) * symDirectionalRem BonaMasso1DPrincipal.spec.numVars
+        (getOr fluxX 2 (.const 0)) ⟨bonaMassoTestState, BonaMasso1DPrincipal.spec.paramEnv⟩ bonaMassoTestPerturb h :=
+  BonaMasso1DPrincipal.jacobian_frechet_sound 0 2 (by decide) (by decide)
     bonaMassoTestState bonaMassoTestPerturb (1 / 10)
     bonaMassoTestState_domainValid bonaMassoTestShifted_domainValid
 
 /-- Every two-state Bona–Massó Rusanov fluctuation pair telescopes to the flux difference, for all
 states with positive lapse and metric. -/
-theorem bonaMasso_fluctuation_conservative (i : Nat) (hi : i < BonaMasso1D.spec.numVars)
+theorem bonaMasso_fluctuation_conservative (i : Nat) (hi : i < BonaMasso1DPrincipal.spec.numVars)
     (uL uR : Vec)
-    (hL : DomainValid BonaMasso1D.spec.domain ⟨uL, BonaMasso1D.spec.paramEnv⟩)
-    (hR : DomainValid BonaMasso1D.spec.domain ⟨uR, BonaMasso1D.spec.paramEnv⟩) :
-    let fluxX := getOr BonaMasso1D.spec.fluxes 0 []
-    rusanovFluctMinus fluxX BonaMasso1D.spec.paramEnv BonaMasso1D.spec.aMax uL uR i +
-        rusanovFluctPlus fluxX BonaMasso1D.spec.paramEnv BonaMasso1D.spec.aMax uL uR i =
-      evalFlux (getOr fluxX i (.const 0)) ⟨uR, BonaMasso1D.spec.paramEnv⟩ -
-        evalFlux (getOr fluxX i (.const 0)) ⟨uL, BonaMasso1D.spec.paramEnv⟩ :=
-  (BonaMasso1D.fluctuation_conservative 0 i (by decide) hi uL uR hL hR).1
+    (hL : DomainValid BonaMasso1DPrincipal.spec.domain ⟨uL, BonaMasso1DPrincipal.spec.paramEnv⟩)
+    (hR : DomainValid BonaMasso1DPrincipal.spec.domain ⟨uR, BonaMasso1DPrincipal.spec.paramEnv⟩) :
+    let fluxX := getOr BonaMasso1DPrincipal.spec.fluxes 0 []
+    rusanovFluctMinus fluxX BonaMasso1DPrincipal.spec.paramEnv BonaMasso1DPrincipal.spec.aMax uL uR i +
+        rusanovFluctPlus fluxX BonaMasso1DPrincipal.spec.paramEnv BonaMasso1DPrincipal.spec.aMax uL uR i =
+      evalFlux (getOr fluxX i (.const 0)) ⟨uR, BonaMasso1DPrincipal.spec.paramEnv⟩ -
+        evalFlux (getOr fluxX i (.const 0)) ⟨uL, BonaMasso1DPrincipal.spec.paramEnv⟩ :=
+  (BonaMasso1DPrincipal.fluctuation_conservative 0 i (by decide) hi uL uR hL hR).1
 
 /-- Lie and Strang Bona–Massó sweeps conserve every component integral on every nonempty ring. -/
 theorem bonaMasso_sweep_conserves (N : Nat) (hN : 0 < N) (ν : Rat) (U : MultiDGrid) (c : Nat) :
-    let axisFlux := fun d => rusanovNonlinearFlux (getOr BonaMasso1D.spec.fluxes d [])
-      BonaMasso1D.spec.paramEnv BonaMasso1D.spec.aMax
+    let axisFlux := fun d => rusanovNonlinearFlux (getOr BonaMasso1DPrincipal.spec.fluxes d [])
+      BonaMasso1DPrincipal.spec.paramEnv BonaMasso1DPrincipal.spec.aMax
     totalGridIntegral [N] (evalMultiDSweep [N] ν axisFlux U) c = totalGridIntegral [N] U c ∧
       totalGridIntegral [N] (evalStrangSweep [N] ν axisFlux U) c = totalGridIntegral [N] U c :=
-  (BonaMasso1D.sweep_conserves_integral [N]
+  (BonaMasso1DPrincipal.sweep_conserves_integral [N]
     (fun M hM => by rw [List.mem_singleton] at hM; omega)).1 ν U c
 
 /-- Q32.32 overflow-freedom for Bona–Massó: for every word state in the canonical box (lapse and
 metric in `[1/2, 4]`, the rest in `[-4, 4]`), every flux word, including the shared Newton
 reciprocal `1 / gxx`, stays strictly inside `(-2^62, 2^62)`. -/
 theorem bonaMasso_q32_flux_guarded (inputs : Nat → Word)
-    (hin : ∀ i, i < BonaMasso1D.spec.numVars →
-      (pdeQ32StateBox BonaMasso1D.spec i).lo ≤ (inputs i).toInt ∧
-      (inputs i).toInt ≤ (pdeQ32StateBox BonaMasso1D.spec i).hi) :
-    ∀ dag ∈ BonaMasso1D.specializedPlan.axisFluxDags,
-      ∀ w ∈ evalFluxSsaDagQ32 inputs BonaMasso1D.spec.paramEnv dag,
+    (hin : ∀ i, i < BonaMasso1DPrincipal.spec.numVars →
+      (pdeQ32StateBox BonaMasso1DPrincipal.spec i).lo ≤ (inputs i).toInt ∧
+      (inputs i).toInt ≤ (pdeQ32StateBox BonaMasso1DPrincipal.spec i).hi) :
+    ∀ dag ∈ BonaMasso1DPrincipal.specializedPlan.axisFluxDags,
+      ∀ w ∈ evalFluxSsaDagQ32 inputs BonaMasso1DPrincipal.spec.paramEnv dag,
         -((2 : Int)^62) < w.toInt ∧ w.toInt < (2 : Int)^62 :=
-  (checkPdeSolverSpec_sound BonaMasso1D.spec [] (by decide +kernel) (by simp)).2.2.2.2.2.1 inputs hin
+  BonaMasso1DPrincipal.endToEnd_certified.rung3_q32_guard_and_step_defect.1 inputs hin
 
 -- Concrete Tadmor Quadratic Entropy Dissipation for Nonlinear Burgers:
 -- η(u) = 1/2 u^2, v(u) = u, q(u) = 1/3 u^3, ψ(u) = v(u)f(u) - q(u) = 1/6 u^3,
@@ -950,18 +715,19 @@ def vpInitState : PdeRolloutState :=
        checkRtlModule (CurvedSpacetimeMaxwell.systolicRtl 2) &&
        checkRtlModule (VlasovPoissonPhase.systolicRtl 1)
 
--- The stronger compiler gate remains inhabited for every existing solver.
+-- The stronger compiler gate remains inhabited for every canonical solver.
 example : checkPdeSolverSpec Burgers1D.spec = true := by decide +kernel
 example : checkPdeSolverSpec EulerGas3D.spec = true := by decide +kernel
 example : checkPdeSolverSpec IdealMhd8Wave.spec = true := by decide +kernel
 example : checkPdeSolverSpec CurvedSpacetimeMaxwell.spec = true := by decide +kernel
 example : checkPdeSolverSpec VlasovPoissonPhase.spec = true := by decide +kernel
+example : checkPdeSolverSpec BonaMasso1DPrincipal.spec = true := by decide +kernel
 example : checkPdeSolverSpec BonaMasso1D.spec = true := by decide +kernel
-example : checkPdeSolverSpec BonaMasso1DFull.spec = true := by decide +kernel
+example : checkPdeSolverSpec BonaMassoZ4c1D.spec = true := by decide +kernel
 example : checkPdeSolverSpec DednerGlmMhd2D.spec = true := by decide +kernel
 example : checkPdeSolverSpec ShallowWater1D.spec = true := by decide +kernel
 -- Without the `gxx > 0` declaration the shared `trK = Kxx / gxx` is refused.
-example : checkPdeSolverSpec { BonaMasso1D.spec with domain := [.stateVar 0] } = false := by
+example : checkPdeSolverSpec { BonaMasso1DPrincipal.spec with domain := [.stateVar 0] } = false := by
   decide +kernel
 example : checkPdeSolverSpec { Burgers1D.spec with cfl := (2 : Rat)^32 } = false := by decide +kernel
 example : checkPdeSolverSpec { Burgers1D.spec with
@@ -1132,10 +898,21 @@ example : -(2 : Rat) ≤ 3 / 2 ∧ (3 / 2 : Rat) ≤ 2 := by
   rwa [ha] at h
 
 -- Concrete step error bounds: a few ulps for Burgers and shallow water, more through the
--- Bona–Massó reciprocal and the wavespeed-9 dissipation.
+-- Bona–Massó / Z4c reciprocal and the wavespeed-9 dissipation.
 #guard Burgers1D.q32ErrorBound ≤ 4 * ulp && ShallowWater1D.q32ErrorBound ≤ 4 * ulp
 #guard EulerGas3D.q32ErrorBound ≤ 6 * ulp && IdealMhd8Wave.q32ErrorBound ≤ 28 * ulp
-#guard BonaMasso1DFull.q32ErrorBound ≤ 48 * ulp && 0 < BonaMasso1D.q32ErrorBound
+#guard BonaMasso1D.q32ErrorBound ≤ 48 * ulp && BonaMassoZ4c1D.q32ErrorBound ≤ 48 * ulp &&
+  0 < BonaMasso1DPrincipal.q32ErrorBound
+-- Multi-step Lie & Strang scheme Q32 error bounds exist for inhomogeneous balance laws!
+#guard (computeSchemeQ32ErrorBound BonaMasso1D.spec [4] (1/10) true).isSome
+#guard (computeSchemeQ32ErrorBound BonaMassoZ4c1D.spec [4] (1/10) true).isSome
+#guard (computeSchemeQ32ErrorBound DednerGlmMhd2D.spec [4, 4] (1/10) true).isSome
+#guard (computeSchemeQ32ErrorBound ShallowWater1D.spec [4] (1/8) false).isSome
+-- Strict Z4c constraint-damping contraction: for Theta != 0 and 0 < dt * kappa1 * alpha < 2, Theta'^2 < Theta^2!
+example : ((1 / 8 : Rat) + (1 / 10) * (-((1 / 2) * 1 * (1 / 8)))) *
+    ((1 / 8 : Rat) + (1 / 10) * (-((1 / 2) * 1 * (1 / 8)))) < (1 / 8) * (1 / 8) :=
+  z4c_theta_constraint_strict_damped (1 / 8) (1 / 10) (1 / 2) 1
+    (by decide +kernel) (by decide +kernel) (by decide +kernel)
 -- The defect theorem at a concrete non-constant stencil (words 1/4, 1/2, 1, 3/4, 1/8).
 def burgersStencil (off : Int) (_ : Nat) : Word :=
   ratToQ32Word (if off = -2 then 1/4 else if off = -1 then 1/2 else if off = 0 then 1
@@ -1176,14 +953,18 @@ example := ShallowWater1D.source_frechet_sound swState swPerturb (1/10)
       subst htEq; simp only [shiftVecEnv]; decide +kernel) 1 (by decide +kernel)
 
 -- Joint flux/source lowering: shared DAG, guarded words, RTL, GPU source step.
-#guard [BonaMasso1DFull.spec, DednerGlmMhd2D.spec, ShallowWater1D.spec].all fun S =>
+#guard [BonaMasso1D.spec, BonaMassoZ4c1D.spec, DednerGlmMhd2D.spec, ShallowWater1D.spec].all fun S =>
   checkBalanceQ32Intervals S && checkFluxSsaDag (compileJointFluxSourceDag S 0) &&
   (compileJointFluxSourceDag S 0).roots.length == 2 * S.numVars
--- `trK = Kxx / gxx` is shared between the fluxes and the lapse source.
-#guard fluxSsaFlops (BonaMasso1DFull.jointDag 0) <
-  fluxSsaFlops (compileFluxSsaDag (some BonaMasso1DFull.spec.paramEnv)
-    (getOr BonaMasso1DFull.spec.fluxes 0 [])) +
-  fluxSsaFlops (compileFluxSsaDag (some BonaMasso1DFull.spec.paramEnv) BonaMasso1DFull.spec.sources)
+-- `trK = Kxx / gxx` and `kHat = trK - 2 Theta` are shared between the fluxes and the lapse source!
+#guard fluxSsaFlops (BonaMasso1D.jointDag 0) <
+  fluxSsaFlops (compileFluxSsaDag (some BonaMasso1D.spec.paramEnv)
+    (getOr BonaMasso1D.spec.fluxes 0 [])) +
+  fluxSsaFlops (compileFluxSsaDag (some BonaMasso1D.spec.paramEnv) BonaMasso1D.spec.sources)
+#guard fluxSsaFlops (BonaMassoZ4c1D.jointDag 0) <
+  fluxSsaFlops (compileFluxSsaDag (some BonaMassoZ4c1D.spec.paramEnv)
+    (getOr BonaMassoZ4c1D.spec.fluxes 0 [])) +
+  fluxSsaFlops (compileFluxSsaDag (some BonaMassoZ4c1D.spec.paramEnv) BonaMassoZ4c1D.spec.sources)
 example : checkBalanceQ32Intervals { ShallowWater1D.spec with
     sources := [.const 0, .invSafe (.var 1), .const 0] } = false := by decide +kernel
 
@@ -1205,7 +986,8 @@ theorem balanceSystolicRtl_faithful (S : ConservationLawSpec) (axis : Nat) :
 example : checkRtlModule (ShallowWater1D.balanceSystolicRtl 0) = true ∧
     Obend.Hardware.YosysLec.moduleFaithful (ShallowWater1D.balanceSystolicRtl 0) = true :=
   ⟨(ShallowWater1D.balanceSystolicRtl_ok 0).1, balanceSystolicRtl_faithful _ 0⟩
-#guard (BonaMasso1DFull.balanceSystolicRtl 0).regs.length == 10 &&
+#guard (BonaMasso1D.balanceSystolicRtl 0).regs.length == 10 &&
+  (BonaMassoZ4c1D.balanceSystolicRtl 0).regs.length == 12 &&
   (DednerGlmMhd2D.balanceSystolicRtl 1).regs.length == 18
 
 -- GPU source step: `q ← q + qmul32 dt (-g h bx)`; `h` and `bx` are unchanged.
@@ -1254,6 +1036,12 @@ example (U0 : MultiDGrid) (K : Nat) : GridClose 1 (fun _ => 1)
   fun _ _ U idx c => U idx c + 1
 #tooth checkBalanceQ32Intervals_sound by mutation checkBalanceQ32Intervals := fun _ => true
 #tooth checkPdeSolverSpec_sound by mutation verifyWavespeedGershgorin := fun _ => true
+#tooth evalFluxLip_sound by mutation evalFluxLip := fun _ _ _ _ _ => some (⟨0, 0⟩, 0)
+#tooth verifyFluxLipschitz_sound by mutation verifyFluxLipschitz := fun _ => true
+#tooth buildEndToEndPdeCert by mutation verifyFluxLipschitz := fun _ => true
+#tooth stepQ32Scheme_rat_defect_bound by mutation computeSchemeQ32ErrorBound := fun _ _ _ _ => some 0
+#tooth q32_scheme_trajectory_error_tube by mutation schemeLip := fun _ _ _ _ _ => 0
+#tooth checkPdeSolverSpec_endToEnd by mutation checkPdeSolverSpec := fun _ => true
 
 /-! ## 5. Mutation-Sensitivity `#tooth` Suite -/
 
@@ -1336,11 +1124,15 @@ run_cmd do
   let ownModules := [
     `Obend.Analysis.NonlinearMultiDPde,
     `Obend.Hardware.MultiDStencilTile,
+    `Obend.Hardware.MultiDStencilCorrect,
+    `Obend.Hardware.MultiDStencilGpuSource,
     `Obend.Tactic.SymDiffAndFlux,
     `Obend.Elab.PdeSolverElab,
     `Obend.Analysis.HyperbolicBalanceLaws,
     `Obend.Analysis.NonlinearErrorTube,
-    `Obend.Hardware.BalanceLawLowering
+    `Obend.Hardware.BalanceLawLowering,
+    `Obend.Analysis.NonlinearPdeCli,
+    `Obend.Hardware.PdeSolvers
   ]
   for (name, info) in env.constants.map₁.toList do
     let some idx := env.getModuleIdxFor? name | continue
@@ -1351,6 +1143,7 @@ run_cmd do
       throwError "Compiler trust dependency in {name}"
     if name.isInternal || name.isInternalDetail then continue
     if name.components.getLast? == some `sizeOf_spec then continue
+    if info.type.isAppOf ``Obend.Hardware.MultiDStencilCorrect.EndToEndPdeCert then continue
     if info matches .thmInfo _ then
       if ← Lean.Elab.Command.liftTermElabM (Obend.AssertAxioms.closedStatement info.type) then
         throwError "Closed theorem in owned module: {name}"
@@ -1364,10 +1157,18 @@ run_cmd do
       ``compileMultiDSweepFused,
       ``emitSystolicFluxCellRtlModule,
       ``verifyWavespeedGershgorin,
+      ``verifyFluxLipschitz,
       ``evalSchemeStepRat,
       ``computeStepQ32ErrorBound,
+      ``computeSourceLip,
+      ``computeSchemeQ32ErrorBound,
+      ``stepQ32Scheme,
       ``checkBalanceQ32Intervals,
-      ``compileBalanceSourceStepGpu
+      ``compileBalanceSourceStepGpu,
+      ``lookupCanonicalPdeSolver,
+      ``Obend.Analysis.NonlinearPdeCli.rolloutRat,
+      ``Obend.Analysis.NonlinearPdeCli.turnQ32,
+      ``Obend.Analysis.NonlinearPdeCli.pdeTrajectoryDigest
     ] do
     Lean.Elab.Command.liftTermElabM do
       let _ ← (auditComputationalChoice (Lean.mkConst name)).run {}

@@ -4,6 +4,7 @@ public import Obend.Analysis.HyperbolicBalanceLaws
 public import Obend.Hardware.BalanceLawLowering
 public import Obend.Analysis.NonlinearErrorTube
 public import Obend.Hardware.MultiDStencilTile
+public import Obend.Hardware.MultiDStencilCorrect
 meta import Obend.Elab.PdeSolverElab
 import all Obend.Analysis.HyperbolicPdeCert
 import all Obend.Analysis.PdeSexprAndApprox
@@ -13,6 +14,7 @@ import all Obend.Analysis.NonlinearErrorTube
 import all Obend.Hardware.Gpu.StencilTile
 import all Obend.Hardware.HDL
 import all Obend.Hardware.MultiDStencilTile
+import all Obend.Hardware.MultiDStencilCorrect
 import all Obend.Hardware.BalanceLawLowering
 import all Obend.Tactic.SymDiffAndFlux
 

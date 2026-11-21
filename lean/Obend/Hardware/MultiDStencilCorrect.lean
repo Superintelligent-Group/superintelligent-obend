@@ -2,8 +2,13 @@ module
 public import Obend.Tactic.SymDiffAndFlux
 public import Obend.Hardware.YosysLec
 public import Obend.Hardware.MultiDStencilGpuSource
+public import Obend.Analysis.NonlinearErrorTube
 import all Obend.Analysis.HyperbolicPdeCert
+import all Obend.Analysis.PdeSexprAndApprox
 import all Obend.Analysis.NonlinearMultiDPde
+import all Obend.Analysis.HyperbolicBalanceLaws
+import all Obend.Hardware.BalanceLawLowering
+import all Obend.Analysis.NonlinearErrorTube
 import all Obend.Hardware.ArrayFold
 import all Obend.Hardware.ArrayHypergraph
 import all Obend.Hardware.OpenHypergraph
@@ -784,5 +789,242 @@ theorem spec_brickTiled_stepQ32_eq (spec : ConservationLawSpec) (b : StencilBoun
       List.getElem?_range (encodeMultiIdx_lt _ _ hIn), Option.map_some, Option.getD_some,
       decode_encode_multiIdx _ _ hIn]
   · rfl
+
+/-! ## 5. Rung 7: Single-Object 6-Rung Master Certificate (`EndToEndPdeCert`) -/
+
+/-- **Master 6-Rung Single-Object Vertical PDE Certificate (`EndToEndPdeCert S`)**:
+Unites all six proved rungs on the exact same `S : ConservationLawSpec`:
+1. Continuum symbolic Fréchet AD, derived Gershgorin spectral bound `|λ| ≤ S.aMax`, and
+   constructive weighted flux Lipschitz bound `FluxLipOn S d (effectiveStateBox S)`,
+2. Conservative rational Lie/Strang `evalSchemeStepRat S` on sourceless components and exact
+   Rusanov two-state fluctuation conservation across `S.domain`,
+3. Q32.32 guard-bit interval safety `(-2^62, 2^62)` and quantitative per-step defect `ε_step`,
+4. Unconditional nonlinear multi-step `a posteriori` surrogate error tubes and Q32 `a priori`
+   error tubes (both single-axis `q32Trajectory` and multi-axis Lie/Strang + inhomogeneous source
+   `q32SchemeTrajectory`, with zero external `FluxLipOn` hypothesis),
+5. Bit-exact Vulkan/RDNA2 `evalFused = stepQ32Axis`, silicon constant-state preservation, and
+   radius-2 3D brick halo tiling with strict HBM read reduction,
+6. Universal 29-wire Newton–Raphson systolic RTL refinement across all `2^64` words and Yosys
+   SMT-LIB2 LEC miter faithfulness (`spec_systolicRtl_yosysLec_faithful`). -/
+structure EndToEndPdeCert (S : ConservationLawSpec) : Prop where
+  rung1_continuum_ad_and_wavespeed :
+    S.checkValid = true ∧
+    (0 < S.aMax ∧ 0 ≤ S.cfl ∧ S.cfl * S.aMax ≤ 1) ∧
+    (∀ d i, d < S.numDims → i < S.numVars → ∀ u V : Vec, ∀ h : Rat,
+      DomainValid S.domain ⟨u, S.paramEnv⟩ →
+      DomainValid S.domain (shiftVecEnv S.numVars ⟨u, S.paramEnv⟩ h V) →
+      let fluxD := getOr S.fluxes d []
+      let jacD := getOr (specJacobians S) d []
+      evalFlux (getOr fluxD i (.const 0)) (shiftVecEnv S.numVars ⟨u, S.paramEnv⟩ h V) -
+        evalFlux (getOr fluxD i (.const 0)) ⟨u, S.paramEnv⟩ =
+        h * mulVec S.numVars (evalSymJacobianMat jacD ⟨u, S.paramEnv⟩) V i +
+        (h * h) * symDirectionalRem S.numVars (getOr fluxD i (.const 0)) ⟨u, S.paramEnv⟩ V h) ∧
+    (∀ d, d < S.numDims → ∀ U : Vec,
+      (∀ i, i < S.numVars → (Obend.Analysis.HyperbolicBalanceLaws.effectiveStateBox S i).contains (U i)) →
+      (∀ v : Vec, Obend.Analysis.HyperbolicBalanceLaws.weightedLInf S
+          (mulVec S.numVars (Obend.Analysis.HyperbolicBalanceLaws.jacMat S d U) v) ≤
+        S.aMax * Obend.Analysis.HyperbolicBalanceLaws.weightedLInf S v) ∧
+      (∀ (lam : Rat) (v : Vec), (∃ k, k < S.numVars ∧ v k ≠ 0) →
+        (∀ i, i < S.numVars →
+          mulVec S.numVars (Obend.Analysis.HyperbolicBalanceLaws.jacMat S d U) v i = lam * v i) →
+        -S.aMax ≤ lam ∧ lam ≤ S.aMax)) ∧
+    (∀ d, d < S.numDims →
+      Obend.Analysis.NonlinearErrorTube.FluxLipOn S d
+        (Obend.Analysis.HyperbolicBalanceLaws.effectiveStateBox S))
+  rung2_scheme_and_fluctuation_conservation :
+    (∀ dims : List Nat, (∀ N ∈ dims, 0 < N) → ∀ dt : Rat, ∀ useStrang : Bool,
+      ∀ U : MultiDGrid, ∀ c : Nat,
+      (S.sources.isEmpty = true ∨ getOr S.sources c (.const 0) = .const 0) →
+      totalGridIntegral dims
+          (Obend.Analysis.HyperbolicBalanceLaws.evalSchemeStepRat S .periodic dims dt useStrang U) c =
+        totalGridIntegral dims U c) ∧
+    (∀ d i, d < S.numDims → i < S.numVars → ∀ uL uR : Vec,
+      DomainValid S.domain ⟨uL, S.paramEnv⟩ → DomainValid S.domain ⟨uR, S.paramEnv⟩ →
+      let fluxD := getOr S.fluxes d []
+      rusanovFluctMinus fluxD S.paramEnv S.aMax uL uR i +
+        rusanovFluctPlus fluxD S.paramEnv S.aMax uL uR i =
+        evalFlux (getOr fluxD i (.const 0)) ⟨uR, S.paramEnv⟩ -
+        evalFlux (getOr fluxD i (.const 0)) ⟨uL, S.paramEnv⟩)
+  rung3_q32_guard_and_step_defect :
+    (∀ inputs : Nat → Word,
+      (∀ i, i < S.numVars → (pdeQ32StateBox S i).lo ≤ (inputs i).toInt ∧
+        (inputs i).toInt ≤ (pdeQ32StateBox S i).hi) →
+      ∀ dag ∈ (specializeFluxSweep S).axisFluxDags,
+        ∀ w ∈ evalFluxSsaDagQ32 inputs S.paramEnv dag,
+          -((2 : Int)^62) < w.toInt ∧ w.toInt < (2 : Int)^62) ∧
+    (∃ εStep : Rat, Obend.Analysis.NonlinearErrorTube.computeStepQ32ErrorBound S = some εStep ∧
+      ∀ axis, axis < S.numDims → ∀ W : Int → Nat → Word,
+        (∀ off j, j < S.numVars → Obend.Analysis.NonlinearErrorTube.InBoxW S (W off j) j) →
+        ∀ c, c < S.numVars →
+          Obend.Analysis.PdeSexprAndApprox.ratAbs
+            (Obend.Hardware.BalanceLawLowering.decodeQ32
+              ((evalNonlinearFluxCellQ32 S (Obend.Analysis.NonlinearErrorTube.stepDag S axis) W).getD c 0#64) -
+              Obend.Analysis.HyperbolicBalanceLaws.evalAxisCellRat S axis S.cfl
+                (fun off => Obend.Analysis.NonlinearErrorTube.decV (W off)) c) ≤ εStep)
+  rung4_nonlinear_error_tubes :
+    (∃ εStep : Rat, Obend.Analysis.NonlinearErrorTube.computeStepQ32ErrorBound S = some εStep ∧
+      ∀ (b : StencilBoundary) (dims : List Nat) (axis : Nat),
+        axis < S.numDims → axis < dims.length →
+        ∀ (W0 : Nat → Nat → Word) (U0 : MultiDGrid) (initErr : Rat),
+        (∀ k idx j, j < S.numVars →
+          Obend.Analysis.NonlinearErrorTube.InBoxW S
+            (Obend.Analysis.NonlinearErrorTube.q32Trajectory S b dims axis W0 k idx j) j) →
+        (∀ k, (∀ idx, Obend.Analysis.HyperbolicBalanceLaws.InBox S.numVars
+            (Obend.Analysis.HyperbolicBalanceLaws.effectiveStateBox S)
+            (Obend.Analysis.NonlinearErrorTube.decodeGrid
+              (Obend.Analysis.NonlinearErrorTube.q32Trajectory S b dims axis W0 k) idx)) ∧
+          ∀ idx, Obend.Analysis.HyperbolicBalanceLaws.InBox S.numVars
+            (Obend.Analysis.HyperbolicBalanceLaws.effectiveStateBox S)
+            (Obend.Analysis.PdeSexprAndApprox.exactTrajectory
+              (Obend.Analysis.HyperbolicBalanceLaws.evalAxisStepRat S b dims axis S.cfl) U0 k idx)) →
+        Obend.Analysis.NonlinearErrorTube.GridClose S.numVars
+          (Obend.Analysis.HyperbolicBalanceLaws.weightOf S) initErr
+          (Obend.Analysis.NonlinearErrorTube.decodeGrid W0) U0 →
+        ∀ K : Nat,
+          Obend.Analysis.NonlinearErrorTube.GridClose S.numVars
+            (Obend.Analysis.HyperbolicBalanceLaws.weightOf S)
+            (Obend.Analysis.NonlinearErrorTube.nonlinearDefectTube
+              (Obend.Analysis.NonlinearErrorTube.axisLip S S.cfl) initErr
+              (fun _ => εStep * Obend.Analysis.HyperbolicBalanceLaws.maxTo S.numVars
+                (fun c => 1 / Obend.Analysis.HyperbolicBalanceLaws.weightOf S c)) K)
+            (Obend.Analysis.NonlinearErrorTube.decodeGrid
+              (Obend.Analysis.NonlinearErrorTube.q32Trajectory S b dims axis W0 K))
+            (Obend.Analysis.PdeSexprAndApprox.exactTrajectory
+              (Obend.Analysis.HyperbolicBalanceLaws.evalAxisStepRat S b dims axis S.cfl) U0 K)) ∧
+    (∃ Lsrc : Rat, Obend.Analysis.NonlinearErrorTube.computeSourceLip S = some Lsrc ∧
+      ∀ (b : StencilBoundary) (dims : List Nat) (dt : Rat) (useStrang : Bool),
+        dims.length ≤ S.numDims → 0 ≤ dt → dt * S.aMax ≤ 1 →
+        (∀ (surrogate : Nat → MultiDGrid) (U0 : MultiDGrid) (initErr : Rat) (defects : Nat → Rat),
+          (∀ k, Obend.Analysis.NonlinearErrorTube.SchemeStepInBox S b dims dt useStrang (surrogate k) ∧
+            Obend.Analysis.NonlinearErrorTube.SchemeStepInBox S b dims dt useStrang
+              (Obend.Analysis.PdeSexprAndApprox.exactTrajectory
+                (Obend.Analysis.HyperbolicBalanceLaws.evalSchemeStepRat S b dims dt useStrang) U0 k)) →
+          Obend.Analysis.NonlinearErrorTube.GridClose S.numVars
+            (Obend.Analysis.HyperbolicBalanceLaws.weightOf S) initErr (surrogate 0) U0 →
+          (∀ k, Obend.Analysis.NonlinearErrorTube.GridClose S.numVars
+            (Obend.Analysis.HyperbolicBalanceLaws.weightOf S) (defects k) (surrogate (k + 1))
+            (Obend.Analysis.HyperbolicBalanceLaws.evalSchemeStepRat S b dims dt useStrang (surrogate k))) →
+          ∀ K : Nat,
+            Obend.Analysis.NonlinearErrorTube.GridClose S.numVars
+              (Obend.Analysis.HyperbolicBalanceLaws.weightOf S)
+              (Obend.Analysis.NonlinearErrorTube.nonlinearDefectTube
+                (Obend.Analysis.NonlinearErrorTube.schemeLip S dims dt useStrang Lsrc) initErr defects K)
+              (surrogate K)
+              (Obend.Analysis.PdeSexprAndApprox.exactTrajectory
+                (Obend.Analysis.HyperbolicBalanceLaws.evalSchemeStepRat S b dims dt useStrang) U0 K)) ∧
+        (∀ εScheme : Rat,
+          Obend.Analysis.NonlinearErrorTube.computeSchemeQ32ErrorBound S dims dt useStrang = some εScheme →
+          ∀ (W0 : Nat → Nat → Word) (U0 : MultiDGrid) (initErr : Rat),
+          (∀ k, Obend.Analysis.NonlinearErrorTube.SchemeTurnInBoxW S b dims dt useStrang
+            (Obend.Analysis.NonlinearErrorTube.q32SchemeTrajectory S b dims dt useStrang W0 k)) →
+          (∀ k, Obend.Analysis.NonlinearErrorTube.SchemeStepInBox S b dims dt useStrang
+            (Obend.Analysis.PdeSexprAndApprox.exactTrajectory
+              (Obend.Analysis.HyperbolicBalanceLaws.evalSchemeStepRat S b dims dt useStrang) U0 k)) →
+          Obend.Analysis.NonlinearErrorTube.GridClose S.numVars
+            (Obend.Analysis.HyperbolicBalanceLaws.weightOf S) initErr
+            (Obend.Analysis.NonlinearErrorTube.decodeGrid W0) U0 →
+          ∀ K : Nat,
+            Obend.Analysis.NonlinearErrorTube.GridClose S.numVars
+              (Obend.Analysis.HyperbolicBalanceLaws.weightOf S)
+              (Obend.Analysis.NonlinearErrorTube.nonlinearDefectTube
+                (Obend.Analysis.NonlinearErrorTube.schemeLip S dims dt useStrang Lsrc) initErr
+                (fun _ => εScheme) K)
+              (Obend.Analysis.NonlinearErrorTube.decodeGrid
+                (Obend.Analysis.NonlinearErrorTube.q32SchemeTrajectory S b dims dt useStrang W0 K))
+              (Obend.Analysis.PdeSexprAndApprox.exactTrajectory
+                (Obend.Analysis.HyperbolicBalanceLaws.evalSchemeStepRat S b dims dt useStrang) U0 K)))
+  rung5_gpu_kernel_and_brick_tiling :
+    (∀ (b : StencilBoundary) (dims : List Nat) (axis : Nat) (grids : Nat → List Word),
+      axis < S.numDims →
+      evalFused grids (buildSpecFusedGpuKernel S b dims axis) =
+        MultiDStencilCorrect.stepQ32Axis S b dims axis grids) ∧
+    (∀ (b : StencilBoundary) (dims : List Nat) (axis : Nat) (grids : Nat → List Word)
+        (u0 : Nat → Word),
+      axis < S.numDims → (∀ N ∈ dims, 0 < N) →
+      (∀ c < S.numVars, grids c = List.replicate (gridCellCount dims) (u0 c)) →
+      evalFused grids (buildSpecFusedGpuKernel S b dims axis) =
+        (List.range S.numVars).map fun c => List.replicate (gridCellCount dims) (u0 c)) ∧
+    (S.numVars = 1 → ∀ (b : StencilBoundary) (brickDims dims : List Nat) (axis : Nat)
+        (grids : Nat → List Word),
+      axis < dims.length → brickDims.length = dims.length →
+      (∀ B ∈ brickDims, 0 < B) → (∀ N ∈ dims, 0 < N) →
+      [evalMultiDBrickTiled brickDims b dims 2 (pdeCellStencilFn S dims axis) (grids 0)] =
+        MultiDStencilCorrect.stepQ32Axis S b dims axis grids ∧
+      ((∀ B ∈ brickDims, 2 ≤ B) → (∀ d < dims.length, getOr brickDims d 0 ≤ getOr dims d 0) →
+        multiDBrickHbmReads brickDims 2 dims < (2 * 2 + 1) ^ dims.length * gridCellCount dims))
+  rung6_systolic_rtl_and_yosys_lec :
+    ∀ axis : Nat, axis < S.numDims →
+      checkRtlModule (buildSpecSystolicRtl S axis) = true ∧
+      Obend.Hardware.YosysLec.moduleFaithful (buildSpecSystolicRtl S axis) = true ∧
+      ∀ inputs nextInputs regState : Nat → Word,
+        (evalModuleOutputs (buildSpecSystolicRtl S axis) nextInputs
+          (stepModuleRegs (buildSpecSystolicRtl S axis) false inputs regState)).map Prod.snd =
+          evalFluxSsaDagQ32 inputs S.paramEnv
+            (getOr (specializeFluxSweep S).axisFluxDags axis ⟨[], []⟩)
+
+/-- **Master 6-Rung Assembler (`buildEndToEndPdeCert`)**: constructs `EndToEndPdeCert S` from the
+pure decidable compile-time gates on `S`. -/
+theorem buildEndToEndPdeCert (S : ConservationLawSpec)
+    (hValid : S.checkValid = true)
+    (hRefl : verifyFluctuationsReflective S = true)
+    (hQ32Iv : checkPdeQ32Intervals S = true)
+    (hGersh : Obend.Analysis.HyperbolicBalanceLaws.verifyWavespeedGershgorin S = true)
+    (hFluxLip : Obend.Analysis.HyperbolicBalanceLaws.verifyFluxLipschitz S = true)
+    (hEps : (Obend.Analysis.NonlinearErrorTube.computeStepQ32ErrorBound S).isSome = true)
+    (hSrcLip : (Obend.Analysis.NonlinearErrorTube.computeSourceLip S).isSome = true) :
+    EndToEndPdeCert S := by
+  obtain ⟨haPos, hcfl0, hcfl1⟩ := checkValid_cfl_bounds S hValid
+  have ha0 : 0 ≤ S.aMax := Rat.le_of_lt haPos
+  obtain ⟨εStep, hεStep⟩ := Option.isSome_iff_exists.mp hEps
+  obtain ⟨Lsrc, hLsrc⟩ := Option.isSome_iff_exists.mp hSrcLip
+  refine
+    { rung1_continuum_ad_and_wavespeed :=
+        ⟨hValid, ⟨haPos, hcfl0, hcfl1⟩,
+         fun d i hd hi u V h hd0 hd1 => spec_jacobian_frechet_sound S hValid d i hd hi u V h hd0 hd1,
+         fun d hd U hU => Obend.Analysis.HyperbolicBalanceLaws.verifyWavespeedGershgorin_sound S hGersh d hd U hU,
+         fun d hd => Obend.Analysis.NonlinearErrorTube.verifyFluxLipschitz_sound S hFluxLip d hd⟩
+      rung2_scheme_and_fluctuation_conservation :=
+        ⟨fun dims hPos dt useStrang U c hSrc =>
+           Obend.Analysis.HyperbolicBalanceLaws.evalSchemeStepRat_conserves_sourceless_component
+             S dims hPos dt useStrang U c hSrc,
+         fun d i hd hi uL uR hL hR =>
+           (fluctuationConservation_of_reflective S hRefl d i hd hi uL uR hL hR).1⟩
+      rung3_q32_guard_and_step_defect :=
+        ⟨checkPdeQ32Intervals_sound S hQ32Iv,
+         ⟨εStep, hεStep, fun axis haxis W hW c hc =>
+           Obend.Analysis.NonlinearErrorTube.stepQ32Axis_rat_defect_bound
+             S axis haxis εStep hεStep W hW c hc⟩⟩
+      rung4_nonlinear_error_tubes :=
+        ⟨⟨εStep, hεStep, fun b dims axis haxis hdim W0 U0 initErr hW hP h0 K =>
+           Obend.Analysis.NonlinearErrorTube.q32_trajectory_error_tube_derived
+             S b dims axis haxis hdim εStep hεStep hFluxLip ha0 hcfl0 hcfl1 W0 U0 initErr hW hP h0 K⟩,
+         ⟨Lsrc, hLsrc, fun b dims dt useStrang hDims hdt hcflDt =>
+           ⟨fun surrogate U0 initErr defects hBox h0 hdef K =>
+              Obend.Analysis.NonlinearErrorTube.nonlinear_aposteriori_error_tube
+                S.numVars (Obend.Analysis.HyperbolicBalanceLaws.weightOf S)
+                (Obend.Analysis.HyperbolicBalanceLaws.evalSchemeStepRat S b dims dt useStrang)
+                (Obend.Analysis.NonlinearErrorTube.SchemeStepInBox S b dims dt useStrang)
+                (Obend.Analysis.NonlinearErrorTube.schemeLip S dims dt useStrang Lsrc)
+                (fun δ U V hU hV h =>
+                  Obend.Analysis.NonlinearErrorTube.evalSchemeStepRat_lipschitz
+                    S b dims dt useStrang Lsrc δ hFluxLip hLsrc hDims ha0 hdt hcflDt U V hU hV h)
+                surrogate U0 initErr defects hBox h0 hdef K,
+            fun εScheme hεScheme W0 U0 initErr hW hExact h0 K =>
+              Obend.Analysis.NonlinearErrorTube.q32_scheme_trajectory_error_tube
+                S b dims dt useStrang hDims hFluxLip Lsrc hLsrc εScheme hεScheme ha0 hdt hcflDt
+                W0 U0 initErr hW hExact h0 K⟩⟩⟩
+      rung5_gpu_kernel_and_brick_tiling :=
+        ⟨fun b dims axis grids hAxis =>
+           spec_fusedGpuKernel_eq_stepQ32Axis S b dims axis grids hValid hAxis,
+         fun b dims axis grids u0 hAxis hPos hConst =>
+           spec_fusedGpuKernel_preserves_constant_state S b dims axis grids u0 hValid hAxis hPos hConst,
+         fun hOne b brickDims dims axis grids hAxis hLen hBPos hDPos =>
+           spec_brickTiled_stepQ32_eq S b brickDims dims axis grids hOne hAxis hLen hBPos hDPos⟩
+      rung6_systolic_rtl_and_yosys_lec :=
+        fun axis hAxis =>
+          ⟨spec_systolicRtl_ok S axis,
+           spec_systolicRtl_yosysLec_faithful S axis,
+           fun inputs nextInputs regState =>
+             spec_systolicRtl_refines_q32 S axis hQ32Iv hValid hAxis inputs nextInputs regState⟩ }
 
 end Obend.Hardware.MultiDStencilCorrect
