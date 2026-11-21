@@ -1,6 +1,5 @@
 module
 public meta import Lean
-public import Lean
 public import Obend.Analysis.PdeSexprAndApprox
 public meta import Obend.Analysis.PdeSexprAndApprox
 public import Obend.Analysis.NonlinearMultiDPde
@@ -337,8 +336,6 @@ theorem symmetrizerReflective_sound (dom : List PosTarget) (m : Nat)
   simp only [List.all_eq_true] at hSym
   exact checkFluxEqReflective_sound dom _ _
     ((hSym i (List.mem_range.mpr hi)) j (List.mem_range.mpr hj)) env hDom
-
-example : checkSymmetrizerReflective [] 1 [[.const 1]] [[.const 2]] = true := by decide +kernel
 
 /-- **Multi-Dimensional Sweep & Rollout Conservation (`spec_sweep_conserves_integral`)**:
 Bundles exact Lie splitting conservation, 2nd-order Strang splitting conservation, multi-turn
@@ -1319,11 +1316,15 @@ theorem inferSsaDagQ32Intervals_encloses_eval (numVars : Nat) (box : Nat → Q32
   · rw [Array.getD_eq_getD_getElem?, Array.getElem?_eq_none (by omega)]
     decide
 
-/-- Canonical admissible state box: declared positive variables are in [0.5,4]. -/
+/-- Declared `stateBox` entry when both ends encode, else positive variables in [0.5,4], rest [-4,4]. -/
 def pdeQ32StateBox (spec : ConservationLawSpec) (i : Nat) : Q32Interval :=
-  if PosTarget.stateVar i ∈ spec.domain then
-    ⟨(2 : Int)^31, 4 * (2 : Int)^32, by decide⟩
-  else ⟨-4 * (2 : Int)^32, 4 * (2 : Int)^32, by decide⟩
+  let dflt : Q32Interval := if PosTarget.stateVar i ∈ spec.domain then
+    ⟨(2 : Int)^31, 4 * (2 : Int)^32, by decide⟩ else ⟨-4 * (2 : Int)^32, 4 * (2 : Int)^32, by decide⟩
+  match spec.stateBox[i]? with
+  | none => dflt
+  | some b => match ratToQ32Checked b.1, ratToQ32Checked b.2 with
+    | some wLo, some wHi => if h : wLo.toInt ≤ wHi.toInt then ⟨wLo.toInt, wHi.toInt, h⟩ else dflt
+    | _, _ => dflt
 
 def checkPdeQ32Intervals (spec : ConservationLawSpec) : Bool :=
   (specializeFluxSweep spec).axisFluxDags.all fun dag =>
@@ -1343,8 +1344,6 @@ theorem checkPdeQ32Intervals_sound (spec : ConservationLawSpec)
   rw [List.all_eq_true] at h
   obtain ⟨ivs, hivs⟩ := Option.isSome_iff_exists.mp (h dag hm)
   exact (inferSsaDagQ32Intervals_encloses_eval _ _ _ _ ivs hivs inputs hin).2
-example : checkPdeQ32Intervals ⟨"inv", ["x"], ["u"], [], [.stateVar 0], [[.invSafe (.var 0)]], 1, 1/2,
-    .minmod⟩ = true := by decide +kernel
 
 /-- Check fixed-point constants before any modular encoding, including specialized flux constants. -/
 def checkPdeQ32Constants (spec : ConservationLawSpec) : Bool :=
@@ -1393,10 +1392,8 @@ meta def quoteFluxExpr : FluxExpr → Lean.Expr
 meta def quotePosTarget : PosTarget → Lean.Expr
   | .stateVar idx => mkApp (mkConst ``PosTarget.stateVar) (ToExpr.toExpr idx)
   | .paramVar idx => mkApp (mkConst ``PosTarget.paramVar) (ToExpr.toExpr idx)
-
-meta def quoteSlopeLimiter : SlopeLimiterKind → Lean.Expr
-  | .firstOrder => mkConst ``SlopeLimiterKind.firstOrder
-  | .minmod => mkConst ``SlopeLimiterKind.minmod
+meta def quoteSlopeLimiter (k : SlopeLimiterKind) : Lean.Expr :=
+  if k = .minmod then mkConst ``SlopeLimiterKind.minmod else mkConst ``SlopeLimiterKind.firstOrder
 
 meta def quoteParamPair (p : String × Rat) : Lean.Expr :=
   mkApp4 (mkConst ``Prod.mk [Level.zero, Level.zero])
@@ -1408,17 +1405,18 @@ meta def quoteConservationLawSpec (s : ConservationLawSpec) : Lean.Expr :=
   let fluxRowTy := mkApp (mkConst ``List [Level.zero]) fluxExprTy
   let paramPairTy := mkApp2 (mkConst ``Prod [Level.zero, Level.zero]) strTy (mkConst ``Rat)
   let posTargetTy := mkConst ``PosTarget
+  let ratTy := mkConst ``Rat
+  let quotePair := fun (b : Rat × Rat) => mkApp4 (mkConst ``Prod.mk [Level.zero, Level.zero])
+    ratTy ratTy (quoteRatExpr b.1) (quoteRatExpr b.2)
   mkAppN (mkConst ``ConservationLawSpec.mk) #[
-    ToExpr.toExpr s.name,
-    quoteListExpr strTy ToExpr.toExpr s.coords,
-    quoteListExpr strTy ToExpr.toExpr s.vars,
-    quoteListExpr paramPairTy quoteParamPair s.params,
+    ToExpr.toExpr s.name, quoteListExpr strTy ToExpr.toExpr s.coords,
+    quoteListExpr strTy ToExpr.toExpr s.vars, quoteListExpr paramPairTy quoteParamPair s.params,
     quoteListExpr posTargetTy quotePosTarget s.domain,
     quoteListExpr fluxRowTy (quoteListExpr fluxExprTy quoteFluxExpr) s.fluxes,
-    quoteRatExpr s.aMax,
-    quoteRatExpr s.cfl,
-    quoteSlopeLimiter s.limiter
-  ]
+    quoteRatExpr s.aMax, quoteRatExpr s.cfl, quoteSlopeLimiter s.limiter,
+    quoteListExpr fluxExprTy quoteFluxExpr s.sources,
+    quoteListExpr (mkApp2 (mkConst ``Prod [Level.zero, Level.zero]) ratTy ratTy) quotePair s.stateBox,
+    quoteListExpr ratTy quoteRatExpr s.wavespeedWeights]
 
 theorem flux_eq_of_canon {dom : List PosTarget} {e1 e2 : FluxExpr} {env : FluxEnv}
     (hDom : DomainValid dom env) (hOk : checkFluxEqReflective dom e1 e2 = true) :

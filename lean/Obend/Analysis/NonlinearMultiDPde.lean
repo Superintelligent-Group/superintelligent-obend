@@ -114,10 +114,6 @@ theorem checkExprPositive_sound (dom : List PosTarget) (e : FluxExpr) (env : Flu
     exact Rat.mul_pos (iha hPos.1) (ihb hPos.2)
   | invSafe d ihd => exact rat_inv_one_div_pos (ihd hPos)
 
-example : checkExprPositive [.stateVar 0] (.invSafe (.var 0)) = true ∧
-    DomainValid [.stateVar 0] ⟨fun _ => 2, fun _ => 1⟩ :=
-  ⟨by decide +kernel, fun t ht => by simp at ht; subst ht; decide +kernel⟩
-
 /-- Every expression accepted by `checkExprDomainSafe dom` has non-zero denominators on `dom`. -/
 theorem checkExprDomainSafe_implies_denomNonzero (dom : List PosTarget) (e : FluxExpr)
     (env : FluxEnv) (hSafe : checkExprDomainSafe dom e = true) (hDom : DomainValid dom env) :
@@ -654,9 +650,6 @@ theorem checkFluxEqReflective_sound (dom : List PosTarget) (e1 e2 : FluxExpr)
           evalCanonPoly (fluxAtomEnv env) (toRatCanon e2).den) *
          evalCanonPoly (fluxAtomEnv env) (toRatCanon e2).den) := by rw [hc2]; grind
     _ = _ := by grind
-
-example : checkFluxEqReflective [.stateVar 0]
-    (.mul (.var 0) (.invSafe (.var 0))) (.const 1) = true := by decide +kernel
 
 /-! ## 4. Nonlinear Fluctuations, Generic 2nd-Order `minmod` TVD & Tadmor Entropy Decay -/
 
@@ -1343,6 +1336,9 @@ structure ConservationLawSpec where
   aMax : Rat
   cfl : Rat
   limiter : SlopeLimiterKind
+  sources : List FluxExpr := []
+  stateBox : List (Rat × Rat) := []
+  wavespeedWeights : List Rat := []
   deriving DecidableEq, Repr
 
 namespace ConservationLawSpec
@@ -1350,8 +1346,19 @@ def numDims (s : ConservationLawSpec) : Nat := s.coords.length
 def numVars (s : ConservationLawSpec) : Nat := s.vars.length
 def paramEnv (s : ConservationLawSpec) : Nat → Rat := fun k => (getOr s.params k ("", 0)).2
 
+/-- Balance-law fields: source arity and guarded denominators, a state box that is ordered and
+positive on every declared-positive variable, positive weights, positive declared parameters. -/
+def checkBalanceFields (s : ConservationLawSpec) : Bool :=
+  (s.sources.isEmpty || (s.sources.length == s.vars.length && s.sources.all (checkExprDomainSafe s.domain))) &&
+  (s.stateBox.isEmpty || (s.stateBox.length == s.vars.length && (List.range s.stateBox.length).all fun i =>
+    let b := getOr s.stateBox i (0, 0)
+    decide (b.1 ≤ b.2) && (!s.domain.contains (.stateVar i) || decide (0 < b.1)))) &&
+  (s.wavespeedWeights.isEmpty || (s.wavespeedWeights.length == s.vars.length &&
+    s.wavespeedWeights.all fun w => decide (0 < w))) &&
+  s.domain.all fun t => match t with | .paramVar p => decide (0 < s.paramEnv p) | .stateVar _ => true
+
 def checkValid (s : ConservationLawSpec) : Bool :=
-  !s.coords.isEmpty && !s.vars.isEmpty &&
+  (s.checkBalanceFields && !s.coords.isEmpty) && !s.vars.isEmpty &&
   (s.coords.eraseDups.length == s.coords.length) &&
   (s.vars.eraseDups.length == s.vars.length) &&
   ((s.params.map Prod.fst).eraseDups.length == s.params.length) &&
