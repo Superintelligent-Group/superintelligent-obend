@@ -22,7 +22,7 @@ Implements Pillar 3A (`NEXT-MATHEMATICA.md` / `AMBITION.md`):
 -/
 public import Obend.Hardware.OpenHypergraph
 public import Obend.Analysis.Flowpipe
-@[expose] public section
+public section
 
 namespace Obend.Analysis
 open Obend.Hardware.OpenHypergraph
@@ -311,6 +311,17 @@ theorem findMulInNodes_sound
     env u = env x * env y := by
   obtain ⟨n, hnMem, hnVal⟩ := findMulInNodes_mem env (findClassNodes eg.classes u) x y hFind
   rw [← evalENode_of_mem_findClassNodes eg env hCons u n hnMem, hnVal]
+
+-- Constructive inhabitedness witnesses for pattern matchers (`lean/uninhabited-premise-risk`)
+example : matchNullaryConst ⟨.const 7, []⟩ = some 7 := rfl
+example : matchUnaryScale ⟨.scale 3, [0]⟩ = some (3, 0) := rfl
+example : matchBinaryAdd ⟨.add, [0, 1]⟩ = some (0, 1) := rfl
+example : matchBinarySub ⟨.sub, [0, 1]⟩ = some (0, 1) := rfl
+example : matchBinaryMul ⟨.mul, [0, 1]⟩ = some (0, 1) := rfl
+example : firstNode? [⟨.const 1, []⟩] = some ⟨.const 1, []⟩ := rfl
+example : findConstInNodes [⟨.const 5, []⟩] = some 5 := rfl
+example : findScaleInNodes [⟨.scale 2, [0]⟩] = some (2, 0) := rfl
+example : findMulInNodes [⟨.mul, [0, 1]⟩] = some (0, 1) := rfl
 
 /-! ## 3. Verified Equality Saturation Rules (`EqSatRule`, `applyEqSatRule`, `saturateHyperEGraph`) -/
 
@@ -754,6 +765,8 @@ theorem deriveRuleNode?_sound
           rw [hnVal, huVal, hvVal]
           rfl
 
+example : deriveRuleNode? .addComm [] ⟨.add, [0, 1]⟩ = some ⟨.add, [1, 0]⟩ := rfl
+
 /-- Expand a class's `nodes` list with any newly derived equivalent `HyperENode`s under rule `r`. -/
 def HypergraphOp.beq : HypergraphOp → HypergraphOp → Bool
   | .const a, .const b => a == b
@@ -1122,7 +1135,7 @@ def EGraphTopological (rank : Nat → Nat) (eg : HyperEGraph) : Prop :=
 
 /-- Computable topological SSA checker verifying strictly increasing output wire IDs and `w < e.dstWire`
 on all source wires (`rank := id`). -/
-def checkEdgesTopologicalAux : Option Nat → List HyperEdge → Bool
+@[expose] def checkEdgesTopologicalAux : Option Nat → List HyperEdge → Bool
   | _, [] => true
   | none, e :: rest =>
     e.srcWires.all (fun w => decide (w < e.dstWire)) &&
@@ -1133,7 +1146,7 @@ def checkEdgesTopologicalAux : Option Nat → List HyperEdge → Bool
     checkEdgesTopologicalAux (some e.dstWire) rest
 
 /-- Computable topological SSA well-formedness check for a `StrictOpenHypergraph`. -/
-def checkHypergraphTopologicalSSA (g : StrictOpenHypergraph) : Bool :=
+@[expose] def checkHypergraphTopologicalSSA (g : StrictOpenHypergraph) : Bool :=
   checkEdgesTopologicalAux none (extractHyperEdges g)
 
 private theorem checkEdgesTopologicalAux_lower (prev : Nat) (edges : List HyperEdge)
@@ -1751,20 +1764,14 @@ theorem mem_expandClassNodes_of_mem
     unfold expandClassNodes
     rcases List.mem_cons.mp hm with rfl | hmRest
     · cases hDerive : deriveRuleNode? r classes m with
-      | none => simp [hDerive]
-      | some n' =>
-        cases hEq : HyperENode.beq n' m <;> simp [hDerive, hEq]
+      | none => exact List.mem_cons_self
+      | some _ => dsimp only; split <;> exact List.mem_cons_self
     · cases hDerive : deriveRuleNode? r classes n with
-      | none =>
-        simp only [hDerive]
-        exact List.mem_cons_of_mem n (ih hmRest)
+      | none => exact List.mem_cons_of_mem n (ih hmRest)
       | some n' =>
-        simp only [hDerive]
-        cases hEq : HyperENode.beq n' n
-        · simp only [hEq, Bool.false_eq_true, ↓reduceIte]
-          exact List.mem_cons_of_mem n (List.mem_cons_of_mem n' (ih hmRest))
-        · simp only [hEq, ↓reduceIte]
-          exact List.mem_cons_of_mem n (ih hmRest)
+        dsimp only; split
+        · exact List.mem_cons_of_mem n (ih hmRest)
+        · exact List.mem_cons_of_mem n (List.mem_cons_of_mem n' (ih hmRest))
 
 theorem expandClassNodes_preserves_rank
     (rank : Nat → Nat) (r : EqSatRule) (classes : List EClass)
@@ -1877,7 +1884,7 @@ theorem saturateHyperEGraph_preserves_topological
     rw [ih, applyEqSatRules_classIds]
 
 @[simp] theorem applyEqSatRule_boundaryOut (r : EqSatRule) (eg : HyperEGraph) :
-    (applyEqSatRule r eg).boundaryOut = eg.boundaryOut := rfl
+    (applyEqSatRule r eg).boundaryOut = eg.boundaryOut := by rfl
 
 @[simp] theorem applyEqSatRules_boundaryOut (rules : List EqSatRule) (eg : HyperEGraph) :
     (applyEqSatRules rules eg).boundaryOut = eg.boundaryOut := by
@@ -2172,7 +2179,7 @@ theorem goldenDiamondAdjoint_eqSat_strict_cost_reduction :
   decide +kernel
 
 /-- Explicit 13-edge list of `compileGraphAdjoint goldenDiamondHypergraph`. -/
-def goldenDiamondAdjEdgesLiteral : List HyperEdge :=
+private def diamondAdjEdgesLiteral : List HyperEdge :=
   [ { opIdx := 0,  op := .add,     srcWires := [0, 1],  dstWire := 4 }
   , { opIdx := 1,  op := .add,     srcWires := [2, 3],  dstWire := 5 }
   , { opIdx := 2,  op := .mul,     srcWires := [4, 5],  dstWire := 6 }
@@ -2189,7 +2196,7 @@ def goldenDiamondAdjEdgesLiteral : List HyperEdge :=
 
 /-- Explicit 11-edge list of `optimizeAdjointHypergraph defaultRtlCostModel goldenDiamondHypergraph`
 after equality saturation (`.mulOneRight` wire-forwarding + dead-cotangent pruning of wires `10` and `11`). -/
-def goldenDiamondOptEdgesLiteral : List HyperEdge :=
+private def diamondOptEdgesLiteral : List HyperEdge :=
   [ { opIdx := 0,  op := .add,     srcWires := [0, 1], dstWire := 4 }
   , { opIdx := 1,  op := .add,     srcWires := [2, 3], dstWire := 5 }
   , { opIdx := 2,  op := .mul,     srcWires := [4, 5], dstWire := 6 }
@@ -2202,24 +2209,20 @@ def goldenDiamondOptEdgesLiteral : List HyperEdge :=
   , { opIdx := 9,  op := .scale 1, srcWires := [12],   dstWire := 16 }
   , { opIdx := 10, op := .scale 1, srcWires := [12],   dstWire := 17 } ]
 
--- fixture kept (2026-11-04): consumed by a proof in this file
-theorem extractHyperEdges_goldenDiamondAdj :
-    extractHyperEdges (compileGraphAdjoint goldenDiamondHypergraph) = goldenDiamondAdjEdgesLiteral := by
+private theorem extractHyperEdges_diamondAdj :
+    extractHyperEdges (compileGraphAdjoint goldenDiamondHypergraph) = diamondAdjEdgesLiteral := by
   decide +kernel
 
--- fixture kept (2026-11-04): consumed by a proof in this file
-theorem extractHyperEdges_goldenDiamondOpt :
+private theorem extractHyperEdges_diamondOpt :
     extractHyperEdges (optimizeAdjointHypergraph defaultRtlCostModel goldenDiamondHypergraph) =
-      goldenDiamondOptEdgesLiteral := by
+      diamondOptEdgesLiteral := by
   decide +kernel
 
--- fixture kept (2026-11-04): consumed by a proof in this file
-theorem boundaryOut_goldenDiamondAdj :
+private theorem boundaryOut_diamondAdj :
     (compileGraphAdjoint goldenDiamondHypergraph).boundaryOut.table = [8, 16, 17, 14, 15] := by
   decide +kernel
 
--- fixture kept (2026-11-04): consumed by a proof in this file
-theorem boundaryOut_goldenDiamondOpt :
+private theorem boundaryOut_diamondOpt :
     (optimizeAdjointHypergraph defaultRtlCostModel goldenDiamondHypergraph).boundaryOut.table =
       [8, 16, 17, 14, 15] := by
   decide +kernel
@@ -2249,9 +2252,9 @@ theorem optimizeAdjointHypergraph_preserves_cotangents (x0 x1 x2 x3 dOut : Int) 
       , (x0 + x1) * dOut ] := by
   dsimp only
   unfold evalHypergraphComb
-  rw [extractHyperEdges_goldenDiamondOpt, boundaryOut_goldenDiamondOpt,
-      extractHyperEdges_goldenDiamondAdj, boundaryOut_goldenDiamondAdj]
-  dsimp [goldenDiamondOptEdgesLiteral, goldenDiamondAdjEdgesLiteral,
+  rw [extractHyperEdges_diamondOpt, boundaryOut_diamondOpt,
+      extractHyperEdges_diamondAdj, boundaryOut_diamondAdj]
+  dsimp [diamondOptEdgesLiteral, diamondAdjEdgesLiteral,
     evalHyperEdgesComb, stepHyperEdge, evalHypergraphOp, List.foldl, List.map]
   grind
 
@@ -2280,75 +2283,89 @@ theorem eqSat_preserves_eval_and_adjoint
 
 /-! ## 6. Pipelined RTL Lowering of E-Graph Optimized Adjoint Hypergraphs (`eqSat_pipelined_rtl_sound`) -/
 
-/-- **Theorem (`eqSat_pipelined_rtl_sound`)**:
-Lowering the equality-saturated minimum-cost adjoint hypergraph
-`gOpt := optimizeAdjointHypergraph defaultRtlCostModel goldenDiamondHypergraph` through
-`compileHypergraphToRtlPipelined`:
-1. Produces a structurally valid synchronous `RtlModule` (`checkRtlModule = true`),
-2. Strictly reduces the pipeline wavefront stage depth from `5` cycles (`layerHypergraph gAdj`) to
-   `4` cycles (`layerHypergraph gOpt`) AND reduces the pipeline register count from `90` registers
-   (`5 × 18`) to `72` registers (`4 × 18`),
-3. After `4` synchronous clock cycles (`runModuleTrace`), latches the exact 64-bit forward output and
-   4 input cotangents `[87#64, 11#64, 11#64, 7#64, 7#64]` matching the unoptimized 5-cycle adjoint RTL! -/
-theorem eqSat_pipelined_rtl_sound :
+/-- **Universal Pipelined RTL Lowering Soundness of E-Graph Optimized Adjoint Hypergraphs (`eqSat_pipelined_rtl_sound`)**:
+For **EVERY** `costModel : HyperCostModel`, module name `modName`, `g : StrictOpenHypergraph` whose reverse-mode
+adjoint passes `checkHypergraphTopologicalSSA`, bounded source/output wires on `gOpt := optimizeAdjointHypergraph costModel g`,
+symbolic integer wire environment `initEnv : Nat → Int`, and 64-bit hardware port/register valuations `insBv, initRegs`:
+1. `gOpt` evaluates identically to `compileGraphAdjoint g` on `initEnv` with monotonically non-increasing RTL cost,
+2. Lowering `gOpt` via `compileHypergraphToRtlPipelined` latches the exact synchronous wavefront values
+   `gOpt.boundaryOut.table.map (evalLayeredStagesSyncBv insBv (layerHypergraph gOpt))` after `(layerHypergraph gOpt).length` clock cycles! -/
+theorem eqSat_pipelined_rtl_sound
+    (costModel : HyperCostModel) (modName : String) (g : StrictOpenHypergraph)
+    (hSsa : checkHypergraphTopologicalSSA (compileGraphAdjoint g) = true)
+    (hSrc : ∀ e ∈ extractHyperEdges (optimizeAdjointHypergraph costModel g),
+      ∀ u ∈ e.srcWires, u < (optimizeAdjointHypergraph costModel g).nodeTypes.length)
+    (hOut : ∀ w ∈ (optimizeAdjointHypergraph costModel g).boundaryOut.table,
+      w < (optimizeAdjointHypergraph costModel g).nodeTypes.length)
+    (initEnv : Nat → Int) (insBv initRegs : Nat → BitVec 64) :
+    let gAdj := compileGraphAdjoint g
+    let gOpt := optimizeAdjointHypergraph costModel g
+    let mOpt := compileHypergraphToRtlPipelined modName gOpt
+    let stages := layerHypergraph gOpt
+    let regsFinal := runModuleTrace mOpt initRegs (List.replicate stages.length (false, insBv))
+    evalHypergraphComb gOpt initEnv = evalHypergraphComb gAdj initEnv ∧
+    evalHypergraphCost costModel gOpt ≤ evalHypergraphCost costModel gAdj ∧
+    (evalModuleOutputs mOpt insBv regsFinal).map Prod.snd =
+      gOpt.boundaryOut.table.map (evalLayeredStagesSyncBv insBv stages) :=
+  ⟨ optimizeAdjointHypergraph_sound_universal costModel g initEnv hSsa
+  , extractMinCost_improves_cost costModel (compileGraphAdjoint g) 1 [.mulOneRight, .scaleFuse, .fuseAddMulToMac]
+  , compileHypergraphToRtlPipelined_sound modName _ hSrc hOut insBv initRegs ⟩
+
+/-- Concrete 4-cycle vs 5-cycle pipelined RTL stage/register reduction witness (`72 < 90` registers). -/
+example :
     let gAdj  := compileGraphAdjoint goldenDiamondHypergraph
     let gOpt  := optimizeAdjointHypergraph defaultRtlCostModel goldenDiamondHypergraph
     let mAdj  := compileHypergraphToRtlPipelined "diamond_adj_raw" gAdj
     let mOpt  := compileHypergraphToRtlPipelined "diamond_adj_opt" gOpt
-    let initEnvInt : Nat → Int := fun w =>
-      match w with | 0 => 3 | 1 => 4 | 2 => 5 | 3 => 6 | 9 => 1 | _ => 0
-    let insBv : Nat → BitVec 64 := fun u => BitVec.ofInt 64 (initEnvInt u)
+    let insBv : Nat → BitVec 64 := fun u =>
+      BitVec.ofInt 64 (match u with | 0 => 3 | 1 => 4 | 2 => 5 | 3 => 6 | 9 => 1 | _ => 0)
     let initRegs : Nat → BitVec 64 := fun _ => 0#64
-    let trace4 : List (Bool × (Nat → BitVec 64)) :=
-      [(false, insBv), (false, insBv), (false, insBv), (false, insBv)]
-    let trace5 : List (Bool × (Nat → BitVec 64)) :=
-      [(false, insBv), (false, insBv), (false, insBv), (false, insBv), (false, insBv)]
-    let regsOpt4 := runModuleTrace mOpt initRegs trace4
-    let regsAdj5 := runModuleTrace mAdj initRegs trace5
-    checkRtlModule mOpt = true ∧
-    (layerHypergraph gOpt).length = 4 ∧
-    (layerHypergraph gAdj).length = 5 ∧
-    mOpt.regs.length < mAdj.regs.length ∧
-    mOpt.regs.length = 72 ∧
-    mAdj.regs.length = 90 ∧
-    (evalModuleOutputs mOpt insBv regsOpt4).map Prod.snd =
-      [87#64, 11#64, 11#64, 7#64, 7#64] ∧
-    (evalModuleOutputs mOpt insBv regsOpt4).map Prod.snd =
-      (evalModuleOutputs mAdj insBv regsAdj5).map Prod.snd := by
+    let regsOpt4 := runModuleTrace mOpt initRegs (List.replicate 4 (false, insBv))
+    let regsAdj5 := runModuleTrace mAdj initRegs (List.replicate 5 (false, insBv))
+    checkRtlModule mOpt = true ∧ (layerHypergraph gOpt).length = 4 ∧ (layerHypergraph gAdj).length = 5 ∧
+    mOpt.regs.length = 72 ∧ mAdj.regs.length = 90 ∧
+    (evalModuleOutputs mOpt insBv regsOpt4).map Prod.snd = [87#64, 11#64, 11#64, 7#64, 7#64] ∧
+    (evalModuleOutputs mOpt insBv regsOpt4).map Prod.snd = (evalModuleOutputs mAdj insBv regsAdj5).map Prod.snd := by
   decide +kernel
 
 /-! ## 7. Coupled Discrete Pontryagin Flowpipe Adjoint Sensitivity (`pontryagin_flowpipe_adjoint_eqSat_sound`) -/
 
 /-- Discrete-time Euler–Pontryagin step hypergraph for the 2D coupled damped oscillator
-($x_{k+1} = x_k + v_k,\; v_{k+1} = v_k - (x_k + v_k)$ in scaled integer coordinates):
-* Wire `0`: state $x_k$,
-* Wire `1`: velocity $v_k$,
-* Wire `2`: $x_{k+1} = x_k + v_k$ (`.add [0, 1]`),
-* Wire `3`: $s = x_k + v_k$ (`.add [0, 1]`),
-* Wire `4`: $v_{k+1} = v_k - s$ (`.sub [1, 3]`),
-* Boundary inputs: `[0, 1]`, boundary outputs: `[2, 4]`. -/
-def coupledOscillatorStepHypergraph : StrictOpenHypergraph :=
+($x_{k+1} = x_k + v_k,\; v_{k+1} = v_k - (x_k + v_k)$ in scaled integer coordinates). -/
+@[expose] def coupledOscillatorStepHypergraph : StrictOpenHypergraph :=
   mkStrictOpenHypergraph 5 [0, 1] [2, 4]
     [ { opIdx := 0, op := .add, srcWires := [0, 1], dstWire := 2 }
     , { opIdx := 1, op := .add, srcWires := [0, 1], dstWire := 3 }
     , { opIdx := 2, op := .sub, srcWires := [1, 3], dstWire := 4 } ]
 
-/-- **Theorem (`pontryagin_flowpipe_adjoint_eqSat_sound`)**:
-Couples $N$-dimensional validated Picard–Lindelöf ODE flowpipes (`Flowpipe.lean`) with whole-DAG
-reverse-mode adjoint compilation (`compileGraphAdjoint_dag_sound`) and E-Graph equality saturation
-(`optimizeAdjointHypergraph`):
-1. **Continuous 2D Validated Picard–Lindelöf Enclosure**:
-   `stepPicardValidated coupledOscillatorOde` certifies the 2D state-velocity enclosure
-   `[("x", ⟨994/1000, 9965/10000⟩), ("v", ⟨-97/1000, -93/1000⟩)]` with off-diagonal coupled Lie
-   derivative $\mathcal{L}_f f_x(\tilde{X}) = [-6/5, -7/10]$,
-2. **Whole-DAG Pontryagin Adjoint Pullback (`compileGraphAdjoint` + EqSat Optimization)**:
-   Differentiating `coupledOscillatorStepHypergraph` via `compileGraphAdjoint` and optimizing via
-   `optimizeAdjointHypergraph defaultRtlCostModel` strictly reduces hardware cost (`28 < 30`),
-   eliminates dead cotangent hyperedges (`11 < 12`), and computes the exact discrete Pontryagin
-   costate sensitivities
-   $$\lambda_{x_k} = \lambda_{x_{k+1}} - \lambda_{v_{k+1}}, \qquad \lambda_{v_k} = \lambda_{x_{k+1}}$$
-   (`[13, -10, -3, 2]` at $x_k = 10, v_k = 3, \lambda_{x_{k+1}} = 2, \lambda_{v_{k+1}} = 5$)! -/
-theorem pontryagin_flowpipe_adjoint_eqSat_sound :
+example : checkHypergraphTopologicalSSA coupledOscillatorStepHypergraph = true := by decide +kernel
+
+private def coupledOscOptEdgesLiteral : List HyperEdge :=
+  [ { opIdx := 0,  op := .add,        srcWires := [0, 1],   dstWire := 2 }
+  , { opIdx := 1,  op := .add,        srcWires := [0, 1],   dstWire := 3 }
+  , { opIdx := 2,  op := .sub,        srcWires := [1, 3],   dstWire := 4 }
+  , { opIdx := 3,  op := .scale 1,    srcWires := [6],      dstWire := 7 }
+  , { opIdx := 4,  op := .scale (-1), srcWires := [6],      dstWire := 9 }
+  , { opIdx := 5,  op := .scale (-1), srcWires := [6],      dstWire := 10 }
+  , { opIdx := 6,  op := .add,        srcWires := [7, 10],  dstWire := 11 }
+  , { opIdx := 7,  op := .scale 1,    srcWires := [5],      dstWire := 12 }
+  , { opIdx := 8,  op := .add,        srcWires := [9, 12],  dstWire := 13 }
+  , { opIdx := 9,  op := .scale 1,    srcWires := [5],      dstWire := 14 }
+  , { opIdx := 10, op := .add,        srcWires := [11, 14], dstWire := 15 } ]
+
+private theorem extractHyperEdges_coupledOscOpt :
+    extractHyperEdges (optimizeAdjointHypergraph defaultRtlCostModel coupledOscillatorStepHypergraph) =
+      coupledOscOptEdgesLiteral := by decide +kernel
+
+private theorem boundaryOut_coupledOscOpt :
+    (optimizeAdjointHypergraph defaultRtlCostModel coupledOscillatorStepHypergraph).boundaryOut.table =
+      [2, 4, 13, 15] := by decide +kernel
+
+/-- **Universal Coupled Discrete Pontryagin Flowpipe & Symbolic Adjoint Sensitivity (`pontryagin_flowpipe_adjoint_eqSat_sound`)**:
+Couples 2D validated Picard–Lindelöf ODE flowpipes (`Flowpipe.lean`) with whole-DAG reverse-mode adjoint
+compilation and E-Graph equality saturation across **ALL** symbolic states & costates `(xk vk lamXNext lamVNext : Int)`:
+$$\text{evalHypergraphComb}(g_{\text{opt}}) = [x_k + v_k,\; -x_k,\; \lambda_{x_{k+1}} - \lambda_{v_{k+1}},\; \lambda_{x_{k+1}}].$$ -/
+theorem pontryagin_flowpipe_adjoint_eqSat_sound (xk vk lamXNext lamVNext : Int) :
     let oscX0 := [("x", (⟨1, 1⟩ : Interval)), ("v", (⟨0, 0⟩ : Interval))]
     let oscXTilde :=
       [ ("x", ⟨CanonicalRat.mk 9 10, CanonicalRat.mk 11 10⟩)
@@ -2357,7 +2374,7 @@ theorem pontryagin_flowpipe_adjoint_eqSat_sound :
     let gAdj := compileGraphAdjoint coupledOscillatorStepHypergraph
     let gOpt := optimizeAdjointHypergraph defaultRtlCostModel coupledOscillatorStepHypergraph
     let env : Nat → Int := fun w =>
-      match w with | 0 => 10 | 1 => 3 | 5 => 2 | 6 => 5 | _ => 0
+      match w with | 0 => xk | 1 => vk | 5 => lamXNext | 6 => lamVNext | _ => 0
     verifyPicardAPriori coupledOscillatorOde oscX0 oscXTilde oscH = true ∧
     stepPicardValidated coupledOscillatorOde oscX0 oscXTilde oscH =
       some [ ("x", ⟨CanonicalRat.mk 994 1000, CanonicalRat.mk 9965 10000⟩)
@@ -2365,8 +2382,14 @@ theorem pontryagin_flowpipe_adjoint_eqSat_sound :
     evalHypergraphCost defaultRtlCostModel gOpt < evalHypergraphCost defaultRtlCostModel gAdj ∧
     (extractHyperEdges gOpt).length < (extractHyperEdges gAdj).length ∧
     evalHypergraphComb gOpt env = evalHypergraphComb gAdj env ∧
-    evalHypergraphComb gOpt env = [13, -10, -3, 2] := by
-  decide +kernel
+    evalHypergraphComb gOpt env = [xk + vk, -xk, lamXNext - lamVNext, lamXNext] := by
+  dsimp only
+  refine ⟨by decide +kernel, by decide +kernel, by decide +kernel, by decide +kernel,
+    optimizeAdjointHypergraph_sound_universal defaultRtlCostModel coupledOscillatorStepHypergraph _ (by decide +kernel), ?_⟩
+  unfold evalHypergraphComb
+  rw [extractHyperEdges_coupledOscOpt, boundaryOut_coupledOscOpt]
+  dsimp [coupledOscOptEdgesLiteral, evalHyperEdgesComb, stepHyperEdge, evalHypergraphOp, List.foldl, List.map]
+  grind
 
 /-! ## 8. Differentiable Multi-Link Featherstone `RNEA` & Coupled Stator Multiphysics Adjoint Hypergraphs (`rnea2Link_adjoint_eqSat_sound`, `statorCoupledLoss_adjoint_eqSat_sound`) -/
 
@@ -2393,68 +2416,23 @@ Hypergraph (`rnea2LinkCostHypergraph`):
   - Wire `16`: $\tau_1^2 = \tau_1 \cdot \tau_1$ (`.mul [15, 15]`)
   - Wire `17`: $\tau_2^2 = \tau_2 \cdot \tau_2$ (`.mul [11, 11]`)
   - Wire `18`: quadratic actuator effort $J = \tau_1^2 + \tau_2^2$ (`.add [16, 17]`). -/
-def rnea2LinkFwdEdges : List HyperEdge :=
-  [ { opIdx := 0,  op := .add, srcWires := [2, 3],   dstWire := 8 }
-  , { opIdx := 1,  op := .mul, srcWires := [5, 8],   dstWire := 9 }
-  , { opIdx := 2,  op := .mul, srcWires := [7, 0],   dstWire := 10 }
-  , { opIdx := 3,  op := .add, srcWires := [9, 10],  dstWire := 11 }
-  , { opIdx := 4,  op := .mul, srcWires := [4, 2],   dstWire := 12 }
-  , { opIdx := 5,  op := .mul, srcWires := [6, 1],   dstWire := 13 }
-  , { opIdx := 6,  op := .add, srcWires := [12, 13], dstWire := 14 }
-  , { opIdx := 7,  op := .add, srcWires := [14, 11], dstWire := 15 }
-  , { opIdx := 8,  op := .mul, srcWires := [15, 15], dstWire := 16 }
-  , { opIdx := 9,  op := .mul, srcWires := [11, 11], dstWire := 17 }
+@[expose] def rnea2LinkFwdEdges : List HyperEdge :=
+  [ { opIdx := 0, op := .add, srcWires := [2, 3], dstWire := 8 },   { opIdx := 1, op := .mul, srcWires := [5, 8], dstWire := 9 }
+  , { opIdx := 2, op := .mul, srcWires := [7, 0], dstWire := 10 },  { opIdx := 3, op := .add, srcWires := [9, 10], dstWire := 11 }
+  , { opIdx := 4, op := .mul, srcWires := [4, 2], dstWire := 12 },  { opIdx := 5, op := .mul, srcWires := [6, 1], dstWire := 13 }
+  , { opIdx := 6, op := .add, srcWires := [12, 13], dstWire := 14 }, { opIdx := 7, op := .add, srcWires := [14, 11], dstWire := 15 }
+  , { opIdx := 8, op := .mul, srcWires := [15, 15], dstWire := 16 }, { opIdx := 9, op := .mul, srcWires := [11, 11], dstWire := 17 }
   , { opIdx := 10, op := .add, srcWires := [16, 17], dstWire := 18 } ]
 
 /-- **2-Link Featherstone `RNEA` Inverse-Dynamics & Trajectory Torque Cost Hypergraph (`rnea2LinkCostHypergraph`)**:
 Maps `(q1, dq1, ddq1, ddq2, I1, I2, m1, m2)` (wires `0..7`) to link wrenches $(\tau_1, \tau_2)$ and
 quadratic actuator effort $J = \tau_1^2 + \tau_2^2$ (wire `18`). -/
-def rnea2LinkCostHypergraph : StrictOpenHypergraph :=
+@[expose] def rnea2LinkCostHypergraph : StrictOpenHypergraph :=
   mkStrictOpenHypergraph 19 [0, 1, 2, 3, 4, 5, 6, 7] [18] (reindexHyperEdges rnea2LinkFwdEdges)
-
-/-- Explicit 37-edge list of `compileGraphAdjoint rnea2LinkCostHypergraph`. -/
-def rnea2LinkAdjEdgesLiteral : List HyperEdge :=
-  [ { opIdx := 0,  op := .add,     srcWires := [2, 3],   dstWire := 8 }
-  , { opIdx := 1,  op := .mul,     srcWires := [5, 8],   dstWire := 9 }
-  , { opIdx := 2,  op := .mul,     srcWires := [7, 0],   dstWire := 10 }
-  , { opIdx := 3,  op := .add,     srcWires := [9, 10],  dstWire := 11 }
-  , { opIdx := 4,  op := .mul,     srcWires := [4, 2],   dstWire := 12 }
-  , { opIdx := 5,  op := .mul,     srcWires := [6, 1],   dstWire := 13 }
-  , { opIdx := 6,  op := .add,     srcWires := [12, 13], dstWire := 14 }
-  , { opIdx := 7,  op := .add,     srcWires := [14, 11], dstWire := 15 }
-  , { opIdx := 8,  op := .mul,     srcWires := [15, 15], dstWire := 16 }
-  , { opIdx := 9,  op := .mul,     srcWires := [11, 11], dstWire := 17 }
-  , { opIdx := 10, op := .add,     srcWires := [16, 17], dstWire := 18 }
-  , { opIdx := 11, op := .scale 1, srcWires := [19],     dstWire := 20 }
-  , { opIdx := 12, op := .scale 1, srcWires := [19],     dstWire := 21 }
-  , { opIdx := 13, op := .mul,     srcWires := [11, 21], dstWire := 22 }
-  , { opIdx := 14, op := .mul,     srcWires := [11, 21], dstWire := 23 }
-  , { opIdx := 15, op := .add,     srcWires := [22, 23], dstWire := 24 }
-  , { opIdx := 16, op := .mul,     srcWires := [15, 20], dstWire := 25 }
-  , { opIdx := 17, op := .mul,     srcWires := [15, 20], dstWire := 26 }
-  , { opIdx := 18, op := .add,     srcWires := [25, 26], dstWire := 27 }
-  , { opIdx := 19, op := .scale 1, srcWires := [27],     dstWire := 28 }
-  , { opIdx := 20, op := .scale 1, srcWires := [27],     dstWire := 29 }
-  , { opIdx := 21, op := .add,     srcWires := [24, 29], dstWire := 30 }
-  , { opIdx := 22, op := .scale 1, srcWires := [28],     dstWire := 31 }
-  , { opIdx := 23, op := .scale 1, srcWires := [28],     dstWire := 32 }
-  , { opIdx := 24, op := .mul,     srcWires := [1, 32],  dstWire := 33 }
-  , { opIdx := 25, op := .mul,     srcWires := [6, 32],  dstWire := 34 }
-  , { opIdx := 26, op := .mul,     srcWires := [2, 31],  dstWire := 35 }
-  , { opIdx := 27, op := .mul,     srcWires := [4, 31],  dstWire := 36 }
-  , { opIdx := 28, op := .scale 1, srcWires := [30],     dstWire := 37 }
-  , { opIdx := 29, op := .scale 1, srcWires := [30],     dstWire := 38 }
-  , { opIdx := 30, op := .mul,     srcWires := [0, 38],  dstWire := 39 }
-  , { opIdx := 31, op := .mul,     srcWires := [7, 38],  dstWire := 40 }
-  , { opIdx := 32, op := .mul,     srcWires := [8, 37],  dstWire := 41 }
-  , { opIdx := 33, op := .mul,     srcWires := [5, 37],  dstWire := 42 }
-  , { opIdx := 34, op := .scale 1, srcWires := [42],     dstWire := 43 }
-  , { opIdx := 35, op := .add,     srcWires := [36, 43], dstWire := 44 }
-  , { opIdx := 36, op := .scale 1, srcWires := [42],     dstWire := 45 } ]
 
 /-- Explicit 28-edge list of `optimizeAdjointHypergraph defaultRtlCostModel rnea2LinkCostHypergraph`
 after E-Graph saturation (fusing 5 `.mul` + `.add` chains into `.mac` and pruning 9 dead cotangent wires). -/
-def rnea2LinkOptEdgesLiteral : List HyperEdge :=
+private def rnea2LinkOptEdgesLiteral : List HyperEdge :=
   [ { opIdx := 0,  op := .add,     srcWires := [2, 3],       dstWire := 8 }
   , { opIdx := 1,  op := .mul,     srcWires := [5, 8],       dstWire := 9 }
   , { opIdx := 2,  op := .mac,     srcWires := [7, 0, 9],    dstWire := 11 }
@@ -2484,25 +2462,12 @@ def rnea2LinkOptEdgesLiteral : List HyperEdge :=
   , { opIdx := 26, op := .add,     srcWires := [36, 43],     dstWire := 44 }
   , { opIdx := 27, op := .scale 1, srcWires := [42],         dstWire := 45 } ]
 
--- fixture kept (2026-11-04): consumed by a proof in this file
-theorem extractHyperEdges_rnea2LinkAdj :
-    extractHyperEdges (compileGraphAdjoint rnea2LinkCostHypergraph) = rnea2LinkAdjEdgesLiteral := by
-  decide +kernel
-
--- fixture kept (2026-11-04): consumed by a proof in this file
-theorem extractHyperEdges_rnea2LinkOpt :
+private theorem extractHyperEdges_rnea2LinkOpt :
     extractHyperEdges (optimizeAdjointHypergraph defaultRtlCostModel rnea2LinkCostHypergraph) =
       rnea2LinkOptEdgesLiteral := by
   decide +kernel
 
--- fixture kept (2026-11-04): consumed by a proof in this file
-theorem boundaryOut_rnea2LinkAdj :
-    (compileGraphAdjoint rnea2LinkCostHypergraph).boundaryOut.table =
-      [18, 40, 34, 44, 45, 35, 41, 33, 39] := by
-  decide +kernel
-
--- fixture kept (2026-11-04): consumed by a proof in this file
-theorem boundaryOut_rnea2LinkOpt :
+private theorem boundaryOut_rnea2LinkOpt :
     (optimizeAdjointHypergraph defaultRtlCostModel rnea2LinkCostHypergraph).boundaryOut.table =
       [18, 40, 34, 44, 45, 35, 41, 33, 39] := by
   decide +kernel
@@ -2523,7 +2488,19 @@ def rnea2LinkAdjointEnv (q1 dq1 ddq1 ddq2 I1 I2 m1 m2 dOut : Int) (w : Nat) : In
   | 19 => dOut
   | _ => 0
 
-set_option maxHeartbeats 800000 in
+private theorem eval_rnea2LinkOpt (q1 dq1 ddq1 ddq2 I1 I2 m1 m2 dOut : Int) :
+    let env := rnea2LinkAdjointEnv q1 dq1 ddq1 ddq2 I1 I2 m1 m2 dOut
+    let tau2 := I2 * (ddq1 + ddq2) + m2 * q1
+    let tau1 := I1 * ddq1 + m1 * dq1 + tau2
+    let dTau1 := (tau1 + tau1) * dOut
+    let dTau2 := (tau2 + tau2 + (tau1 + tau1)) * dOut
+    [18, 40, 34, 44, 45, 35, 41, 33, 39].map (evalHyperEdgesComb env rnea2LinkOptEdgesLiteral) =
+      [ tau1 * tau1 + tau2 * tau2, m2 * dTau2, m1 * dTau1, I1 * dTau1 + I2 * dTau2
+      , I2 * dTau2, ddq1 * dTau1, (ddq1 + ddq2) * dTau2, dq1 * dTau1, q1 * dTau2 ] := by
+  dsimp [rnea2LinkOptEdgesLiteral, evalHyperEdgesComb, stepHyperEdge, evalHypergraphOp,
+    rnea2LinkAdjointEnv, List.foldl, List.map]
+  grind
+
 /-- **2-Link Featherstone `RNEA` Adjoint E-Graph Saturation & Symbolic Gradient Soundness
 (`rnea2Link_adjoint_eqSat_sound`)**:
 Proves that differentiating `rnea2LinkCostHypergraph` via `compileGraphAdjoint` and optimizing via
@@ -2574,16 +2551,26 @@ theorem rnea2Link_adjoint_eqSat_sound
       , dq1 * dTau1
       , q1 * dTau2 ] := by
   dsimp only
-  refine ⟨by decide +kernel, by decide +kernel, by decide +kernel, by decide +kernel,
-    by decide +kernel, by decide +kernel, by decide +kernel, by decide +kernel,
-    by decide +kernel, by decide +kernel, ?_⟩
+  have hMeta :
+      (let gAdj := compileGraphAdjoint rnea2LinkCostHypergraph
+       let gOpt := optimizeAdjointHypergraph defaultRtlCostModel rnea2LinkCostHypergraph
+       gOpt.wf = true ∧
+       evalHypergraphCost defaultRtlCostModel gOpt = 117 ∧
+       evalHypergraphCost defaultRtlCostModel gAdj = 155 ∧
+       evalHypergraphCost defaultRtlCostModel gOpt < evalHypergraphCost defaultRtlCostModel gAdj ∧
+       (extractHyperEdges gOpt).length = 28 ∧
+       (extractHyperEdges gAdj).length = 37 ∧
+       (extractHyperEdges gOpt).length < (extractHyperEdges gAdj).length ∧
+       (layerHypergraph gOpt).length = 14 ∧
+       (layerHypergraph gAdj).length = 16 ∧
+       (layerHypergraph gOpt).length < (layerHypergraph gAdj).length) := by decide +kernel
+  refine ⟨hMeta.1, hMeta.2.1, hMeta.2.2.1, hMeta.2.2.2.1, hMeta.2.2.2.2.1,
+    hMeta.2.2.2.2.2.1, hMeta.2.2.2.2.2.2.1, hMeta.2.2.2.2.2.2.2.1, hMeta.2.2.2.2.2.2.2.2.1,
+    hMeta.2.2.2.2.2.2.2.2.2,
+    optimizeAdjointHypergraph_sound_universal defaultRtlCostModel rnea2LinkCostHypergraph _ (by decide +kernel), ?_⟩
   unfold evalHypergraphComb
-  rw [extractHyperEdges_rnea2LinkOpt, boundaryOut_rnea2LinkOpt,
-      extractHyperEdges_rnea2LinkAdj, boundaryOut_rnea2LinkAdj]
-  dsimp [rnea2LinkOptEdgesLiteral, rnea2LinkAdjEdgesLiteral,
-    evalHyperEdgesComb, stepHyperEdge, evalHypergraphOp, rnea2LinkAdjointEnv,
-    List.foldl, List.map]
-  grind
+  rw [extractHyperEdges_rnea2LinkOpt, boundaryOut_rnea2LinkOpt]
+  exact eval_rnea2LinkOpt q1 dq1 ddq1 ddq2 I1 I2 m1 m2 dOut
 
 /-- Forward `HyperEdge` list for the Coupled LC Drives Stator Electro-Thermal-Magnetic Loss
 Hypergraph (`statorCoupledLossHypergraph`):
@@ -2602,57 +2589,23 @@ Hypergraph (`statorCoupledLossHypergraph`):
   - Wire `10`: net thermal rise $\Delta T_{\text{net}} = P_{\text{tot}} - \Delta T_{\text{cool}}$ (`.sub [8, 9]`)
   - Wire `11`: coolant ambient temperature $T_{\text{amb}} = 25$ (`.const 25 []`)
   - Wire `12`: peak winding temperature $T_{\text{peak}} = \Delta T_{\text{net}} + 25$ (`.add [10, 11]`). -/
-def statorCoupledLossFwdEdges : List HyperEdge :=
-  [ { opIdx := 0, op := .mul,      srcWires := [0, 0],   dstWire := 4 }
-  , { opIdx := 1, op := .add,      srcWires := [1, 2],   dstWire := 5 }
-  , { opIdx := 2, op := .mul,      srcWires := [4, 5],   dstWire := 6 }
-  , { opIdx := 3, op := .mul,      srcWires := [1, 3],   dstWire := 7 }
-  , { opIdx := 4, op := .add,      srcWires := [6, 7],   dstWire := 8 }
-  , { opIdx := 5, op := .scale 2,  srcWires := [2],      dstWire := 9 }
-  , { opIdx := 6, op := .sub,      srcWires := [8, 9],   dstWire := 10 }
-  , { opIdx := 7, op := .const 25, srcWires := [],       dstWire := 11 }
-  , { opIdx := 8, op := .add,      srcWires := [10, 11], dstWire := 12 } ]
+@[expose] def statorCoupledLossFwdEdges : List HyperEdge :=
+  [ { opIdx := 0, op := .mul, srcWires := [0, 0], dstWire := 4 },   { opIdx := 1, op := .add, srcWires := [1, 2], dstWire := 5 }
+  , { opIdx := 2, op := .mul, srcWires := [4, 5], dstWire := 6 },   { opIdx := 3, op := .mul, srcWires := [1, 3], dstWire := 7 }
+  , { opIdx := 4, op := .add, srcWires := [6, 7], dstWire := 8 },   { opIdx := 5, op := .scale 2, srcWires := [2], dstWire := 9 }
+  , { opIdx := 6, op := .sub, srcWires := [8, 9], dstWire := 10 },  { opIdx := 7, op := .const 25, srcWires := [], dstWire := 11 }
+  , { opIdx := 8, op := .add, srcWires := [10, 11], dstWire := 12 } ]
 
 /-- **Coupled LC Drives Stator Electro-Thermal-Magnetic Loss Hypergraph (`statorCoupledLossHypergraph`)**:
 Maps `(currentA, toothWidthUm, channelAspect, fcmlFreqKhz)` (wires `0..3`) to $I^2 R(T)$ copper loss +
 Steinmetz core loss + peak winding temperature $T_{\text{peak}}$ (wire `12`). -/
-def statorCoupledLossHypergraph : StrictOpenHypergraph :=
+@[expose] def statorCoupledLossHypergraph : StrictOpenHypergraph :=
   mkStrictOpenHypergraph 13 [0, 1, 2, 3] [12] (reindexHyperEdges statorCoupledLossFwdEdges)
-
-/-- Explicit 27-edge list of `compileGraphAdjoint statorCoupledLossHypergraph`. -/
-def statorLossAdjEdgesLiteral : List HyperEdge :=
-  [ { opIdx := 0,  op := .mul,        srcWires := [0, 0],   dstWire := 4 }
-  , { opIdx := 1,  op := .add,        srcWires := [1, 2],   dstWire := 5 }
-  , { opIdx := 2,  op := .mul,        srcWires := [4, 5],   dstWire := 6 }
-  , { opIdx := 3,  op := .mul,        srcWires := [1, 3],   dstWire := 7 }
-  , { opIdx := 4,  op := .add,        srcWires := [6, 7],   dstWire := 8 }
-  , { opIdx := 5,  op := .scale 2,    srcWires := [2],      dstWire := 9 }
-  , { opIdx := 6,  op := .sub,        srcWires := [8, 9],   dstWire := 10 }
-  , { opIdx := 7,  op := .const 25,   srcWires := [],       dstWire := 11 }
-  , { opIdx := 8,  op := .add,        srcWires := [10, 11], dstWire := 12 }
-  , { opIdx := 9,  op := .scale 1,    srcWires := [13],     dstWire := 14 }
-  , { opIdx := 10, op := .scale 1,    srcWires := [13],     dstWire := 15 }
-  , { opIdx := 11, op := .scale 1,    srcWires := [14],     dstWire := 16 }
-  , { opIdx := 12, op := .scale (-1), srcWires := [14],     dstWire := 17 }
-  , { opIdx := 13, op := .scale 2,    srcWires := [17],     dstWire := 18 }
-  , { opIdx := 14, op := .scale 1,    srcWires := [16],     dstWire := 19 }
-  , { opIdx := 15, op := .scale 1,    srcWires := [16],     dstWire := 20 }
-  , { opIdx := 16, op := .mul,        srcWires := [3, 20],  dstWire := 21 }
-  , { opIdx := 17, op := .mul,        srcWires := [1, 20],  dstWire := 22 }
-  , { opIdx := 18, op := .mul,        srcWires := [5, 19],  dstWire := 23 }
-  , { opIdx := 19, op := .mul,        srcWires := [4, 19],  dstWire := 24 }
-  , { opIdx := 20, op := .scale 1,    srcWires := [24],     dstWire := 25 }
-  , { opIdx := 21, op := .add,        srcWires := [21, 25], dstWire := 26 }
-  , { opIdx := 22, op := .scale 1,    srcWires := [24],     dstWire := 27 }
-  , { opIdx := 23, op := .add,        srcWires := [18, 27], dstWire := 28 }
-  , { opIdx := 24, op := .mul,        srcWires := [0, 23],  dstWire := 29 }
-  , { opIdx := 25, op := .mul,        srcWires := [0, 23],  dstWire := 30 }
-  , { opIdx := 26, op := .add,        srcWires := [29, 30], dstWire := 31 } ]
 
 /-- Explicit 21-edge list of `optimizeAdjointHypergraph defaultRtlCostModel statorCoupledLossHypergraph`
 after E-Graph saturation (fusing `.mul` + `.add` into `.mac`, fusing `.scale 2 (.scale (-1) ...)` into
 `.scale (-2)`, and pruning 6 dead cotangent edges). -/
-def statorLossOptEdgesLiteral : List HyperEdge :=
+private def statorLossOptEdgesLiteral : List HyperEdge :=
   [ { opIdx := 0,  op := .mul,        srcWires := [0, 0],      dstWire := 4 }
   , { opIdx := 1,  op := .add,        srcWires := [1, 2],      dstWire := 5 }
   , { opIdx := 2,  op := .mul,        srcWires := [4, 5],      dstWire := 6 }
@@ -2675,24 +2628,12 @@ def statorLossOptEdgesLiteral : List HyperEdge :=
   , { opIdx := 19, op := .mul,        srcWires := [0, 23],     dstWire := 29 }
   , { opIdx := 20, op := .mac,        srcWires := [0, 23, 29], dstWire := 31 } ]
 
--- fixture kept (2026-11-04): consumed by a proof in this file
-theorem extractHyperEdges_statorLossAdj :
-    extractHyperEdges (compileGraphAdjoint statorCoupledLossHypergraph) = statorLossAdjEdgesLiteral := by
-  decide +kernel
-
--- fixture kept (2026-11-04): consumed by a proof in this file
-theorem extractHyperEdges_statorLossOpt :
+private theorem extractHyperEdges_statorLossOpt :
     extractHyperEdges (optimizeAdjointHypergraph defaultRtlCostModel statorCoupledLossHypergraph) =
       statorLossOptEdgesLiteral := by
   decide +kernel
 
--- fixture kept (2026-11-04): consumed by a proof in this file
-theorem boundaryOut_statorLossAdj :
-    (compileGraphAdjoint statorCoupledLossHypergraph).boundaryOut.table = [12, 31, 26, 28, 22] := by
-  decide +kernel
-
--- fixture kept (2026-11-04): consumed by a proof in this file
-theorem boundaryOut_statorLossOpt :
+private theorem boundaryOut_statorLossOpt :
     (optimizeAdjointHypergraph defaultRtlCostModel statorCoupledLossHypergraph).boundaryOut.table =
       [12, 31, 26, 28, 22] := by
   decide +kernel
@@ -2709,7 +2650,18 @@ def statorCoupledLossAdjointEnv (currentA toothWidthUm channelAspect fcmlFreqKhz
   | 13 => dOut
   | _ => 0
 
-set_option maxHeartbeats 800000 in
+private theorem eval_statorLossOpt (currentA toothWidthUm channelAspect fcmlFreqKhz dOut : Int) :
+    let env := statorCoupledLossAdjointEnv currentA toothWidthUm channelAspect fcmlFreqKhz dOut
+    let iSq := currentA * currentA
+    let rEff := toothWidthUm + channelAspect
+    let tPeak := iSq * rEff + toothWidthUm * fcmlFreqKhz - 2 * channelAspect + 25
+    [12, 31, 26, 28, 22].map (evalHyperEdgesComb env statorLossOptEdgesLiteral) =
+      [ tPeak, (currentA + currentA) * rEff * dOut, (iSq + fcmlFreqKhz) * dOut
+      , (iSq - 2) * dOut, toothWidthUm * dOut ] := by
+  dsimp [statorLossOptEdgesLiteral, evalHyperEdgesComb, stepHyperEdge, evalHypergraphOp,
+    statorCoupledLossAdjointEnv, List.foldl, List.map]
+  grind
+
 /-- **Coupled Stator Electro-Thermal-Magnetic Adjoint E-Graph Saturation & Symbolic Sensitivity Soundness
 (`statorCoupledLoss_adjoint_eqSat_sound`)**:
 Proves that differentiating `statorCoupledLossHypergraph` via `compileGraphAdjoint` and optimizing via
@@ -2752,16 +2704,26 @@ theorem statorCoupledLoss_adjoint_eqSat_sound
       , (iSq - 2) * dOut
       , toothWidthUm * dOut ] := by
   dsimp only
-  refine ⟨by decide +kernel, by decide +kernel, by decide +kernel, by decide +kernel,
-    by decide +kernel, by decide +kernel, by decide +kernel, by decide +kernel,
-    by decide +kernel, by decide +kernel, ?_⟩
+  have hMeta :
+      (let gAdj := compileGraphAdjoint statorCoupledLossHypergraph
+       let gOpt := optimizeAdjointHypergraph defaultRtlCostModel statorCoupledLossHypergraph
+       gOpt.wf = true ∧
+       evalHypergraphCost defaultRtlCostModel gOpt = 76 ∧
+       evalHypergraphCost defaultRtlCostModel gAdj = 96 ∧
+       evalHypergraphCost defaultRtlCostModel gOpt < evalHypergraphCost defaultRtlCostModel gAdj ∧
+       (extractHyperEdges gOpt).length = 21 ∧
+       (extractHyperEdges gAdj).length = 27 ∧
+       (extractHyperEdges gOpt).length < (extractHyperEdges gAdj).length ∧
+       (layerHypergraph gOpt).length = 10 ∧
+       (layerHypergraph gAdj).length = 12 ∧
+       (layerHypergraph gOpt).length < (layerHypergraph gAdj).length) := by decide +kernel
+  refine ⟨hMeta.1, hMeta.2.1, hMeta.2.2.1, hMeta.2.2.2.1, hMeta.2.2.2.2.1,
+    hMeta.2.2.2.2.2.1, hMeta.2.2.2.2.2.2.1, hMeta.2.2.2.2.2.2.2.1, hMeta.2.2.2.2.2.2.2.2.1,
+    hMeta.2.2.2.2.2.2.2.2.2,
+    optimizeAdjointHypergraph_sound_universal defaultRtlCostModel statorCoupledLossHypergraph _ (by decide +kernel), ?_⟩
   unfold evalHypergraphComb
-  rw [extractHyperEdges_statorLossOpt, boundaryOut_statorLossOpt,
-      extractHyperEdges_statorLossAdj, boundaryOut_statorLossAdj]
-  dsimp [statorLossOptEdgesLiteral, statorLossAdjEdgesLiteral,
-    evalHyperEdgesComb, stepHyperEdge, evalHypergraphOp, statorCoupledLossAdjointEnv,
-    List.foldl, List.map]
-  grind
+  rw [extractHyperEdges_statorLossOpt, boundaryOut_statorLossOpt]
+  exact eval_statorLossOpt currentA toothWidthUm channelAspect fcmlFreqKhz dOut
 
 end Obend.Analysis
 end
