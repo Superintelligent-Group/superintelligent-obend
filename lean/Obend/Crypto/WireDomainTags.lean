@@ -5,6 +5,7 @@ public import Obend.Judge.Clearing
 meta import Obend.Crypto.PCS
 meta import Obend.Judge.Clearing
 import Obend.Tactic.Tooth
+import all Obend.Law.AmendCli
 
 public section
 namespace Obend.Crypto.WireDomainTags
@@ -13,8 +14,9 @@ open Obend.Crypto Obend.Digest.Cshake256 Obend.Digest.HashBytes
 
 set_option autoImplicit false
 
-/-! The 24 additional labels used by the Rust crypto executor include cSHAKE customizations,
-two Fenzi protocol IDs, two fixed-size matrix seeds and one transcript context seed.
+/-! The labels the Rust crypto executor puts on the wire beyond those of `Transcript`, `PCS`,
+`Law.AmendCli` and `Polis.ZkBiscuit`: cSHAKE customizations, the two Fenzi protocol IDs, the two
+literal 32-byte matrix seeds and the two transcript context seeds.
 Only the cSHAKE calls place a label in the SP 800-185 customization slot. -/
 
 inductive CryptoWireDomain where
@@ -32,6 +34,7 @@ inductive CryptoWireDomain where
   | pikkufoldCrsV1
   | akitaParamsDigestV1
   | akitaRingChallengeV1
+  | darkBazaarSeed
   | darkBazaarSameOpeningV2
   | darkBazaarCanopyBindV1
   | darkBazaarLatBlindExtV1
@@ -60,6 +63,7 @@ def CryptoWireDomain.tag : CryptoWireDomain → String
   | .pikkufoldCrsV1 => "OBEND.CRYPTO.PIKKUFOLD.CRS/v1"
   | .akitaParamsDigestV1 => "OBEND.CRYPTO.AKITA.PARAMS_DIGEST/v1"
   | .akitaRingChallengeV1 => "OBEND.CRYPTO.AKITA.RING_CHALLENGE/v1"
+  | .darkBazaarSeed => "OBEND.DARKBAZAAR.SEED"
   | .darkBazaarSameOpeningV2 => "OBEND.DARKBAZAAR.SAMEOPENING/v2"
   | .darkBazaarCanopyBindV1 => "OBEND.DARKBAZAAR.CANOPY_BIND/v1"
   | .darkBazaarLatBlindExtV1 => "OBEND.DARKBAZAAR.LAT_BLIND_EXT/v1"
@@ -77,10 +81,11 @@ def CryptoWireDomain.ofTag? (s : String) : Option CryptoWireDomain :=
    .polisRootAuthorityV1, .polisHopMacV1, .amendLatticeCrsSeedV01,
    .amendLatticeCrsV10V001, .lawPriorV1, .amendTargetOrganV1,
    .canopyLeafSaltV1, .dualPcsSeedV1, .pikkufoldCrsV1,
-   .akitaParamsDigestV1, .akitaRingChallengeV1, .darkBazaarSameOpeningV2,
-   .darkBazaarCanopyBindV1, .darkBazaarLatBlindExtV1, .darkBazaarR1csCrsV1,
-   .darkBazaarBdlopCrsV1, .darkBazaarZkMaskV1, .darkBazaarGateLambdaV1,
-   .darkBazaarOrderSaltV1, .cryptoFsTernaryV1, .cryptoFsQueriesV1].find? (fun d : CryptoWireDomain => d.tag == s)
+   .akitaParamsDigestV1, .akitaRingChallengeV1, .darkBazaarSeed,
+   .darkBazaarSameOpeningV2, .darkBazaarCanopyBindV1, .darkBazaarLatBlindExtV1,
+   .darkBazaarR1csCrsV1, .darkBazaarBdlopCrsV1, .darkBazaarZkMaskV1,
+   .darkBazaarGateLambdaV1, .darkBazaarOrderSaltV1, .cryptoFsTernaryV1,
+   .cryptoFsQueriesV1].find? (fun d : CryptoWireDomain => d.tag == s)
 
 theorem CryptoWireDomain.ofTag?_tag (d : CryptoWireDomain) :
     CryptoWireDomain.ofTag? d.tag = some d := by
@@ -297,6 +302,54 @@ private theorem framedPair_injective {a b : Digest32 × Digest32}
     (by simpa only [List.append_nil] using ht)
   exact Prod.ext (digest_eq hs) (digest_eq hn)
 
+/-- Individually framed records of any width recover the list once its length is known. -/
+private theorem framedRecords_injective {α : Type} (enc : α → List UInt8)
+    (inj : ∀ {x y}, enc x = enc y → x = y) {xs ys : List α} (count : xs.length = ys.length)
+    (h : xs.flatMap (fun x => encodeListField (enc x)) =
+      ys.flatMap (fun x => encodeListField (enc x))) : xs = ys := by
+  induction xs generalizing ys with
+  | nil =>
+    cases ys with
+    | nil => rfl
+    | cons y ys => rw [List.length_nil, List.length_cons] at count; omega
+  | cons x xs ih =>
+    cases ys with
+    | nil => rw [List.length_cons, List.length_nil] at count; omega
+    | cons y ys =>
+      rw [List.length_cons, List.length_cons] at count
+      simp only [List.flatMap_cons] at h
+      obtain ⟨hh, ht⟩ := encodeListField_prefix_inj h
+      rw [inj hh, ih (by omega) ht]
+
+/-- The name, the LEB128 priority and the truth table are framed separately, so no byte
+can move between a clause's fields. -/
+private theorem clauseBytes_injective {n : Nat} {a b : Obend.Law.PointwiseRevise.Clause n}
+    (h : a.bytes = b.bytes) : a = b := by
+  simp only [Obend.Law.PointwiseRevise.Clause.bytes, List.append_assoc] at h
+  obtain ⟨hn, h⟩ := encodeListField_prefix_inj h
+  obtain ⟨hp, h⟩ := encodeListField_prefix_inj h
+  obtain ⟨ha, _⟩ := encodeListField_prefix_inj (r₁ := []) (r₂ := [])
+    (by simpa only [List.append_nil] using h)
+  obtain ⟨hp, _⟩ := leb128_prefix_inj (r₁ := []) (r₂ := [])
+    (by simpa only [List.append_nil] using hp)
+  have bound : ∀ c : Obend.Law.PointwiseRevise.Clause n,
+      c.allowed.toNat < 256 ^ ((n + 7) / 8) := fun c =>
+    Nat.lt_of_lt_of_le c.allowed.isLt (by
+      rw [show (256 : Nat) = 2 ^ 8 from by decide, ← Nat.pow_mul]
+      exact Nat.pow_le_pow_right (by decide) (by omega))
+  have ha := BitVec.eq_of_toNat_eq (be_injective (bound a) (bound b) ha)
+  cases a; cases b
+  simp only [Obend.Law.PointwiseRevise.Clause.mk.injEq]
+  exact ⟨utf8_injective hn, hp, ha⟩
+
+private theorem theoryBytes_injective {n : Nat} {a b : Obend.Law.PointwiseRevise.SpecTheory n}
+    (h : Obend.Law.PointwiseRevise.theoryBytes a = Obend.Law.PointwiseRevise.theoryBytes b) :
+    a = b := by
+  simp only [Obend.Law.PointwiseRevise.theoryBytes] at h
+  obtain ⟨count, h⟩ := leb128_prefix_inj h
+  exact framedRecords_injective (fun c : Obend.Law.PointwiseRevise.Clause n => c.bytes)
+    clauseBytes_injective count h
+
 /-- Each constructor is an invocation of cSHAKE. For expansion streams the message is the
 entire absorbed seed, independent of the number of bytes subsequently squeezed. -/
 inductive WireCall where
@@ -343,8 +396,7 @@ def WireCall.input : WireCall → CryptoWireDomain × List UInt8
 
 /-- First 32 output bytes. A streaming consumer may read a shorter prefix or continue squeezing. -/
 def WireCall.first32 (c : WireCall) : Digest32 :=
-  let (d, msg) := c.input
-  ⟨cshake32ByteArray d.bytes msg, cshake32ByteArray_size ..⟩
+  ⟨cshake32ByteArray c.input.1.bytes c.input.2, cshake32ByteArray_size ..⟩
 
 /-- Recover the typed payload or a collision on exactly the two absorbed messages.
 The equality decision compares the two encoded messages. -/
@@ -408,6 +460,100 @@ theorem matrixCell_preimage_injective {s t : Digest32} {r c i j : UInt64}
   obtain ⟨hr, h⟩ := word_split h
   exact ⟨hs, hr, (word_split (xs := []) (ys := []) (by simpa only [List.append_nil] using h)).1⟩
 
+/-- A customization and the message absorbed under it determine the invocation and every
+field of its payload: no constructor drops a field and no two constructors share a customization. -/
+theorem WireCall.input_injective {c₁ c₂ : WireCall} (h : c₁.input = c₂.input) : c₁ = c₂ := by
+  have hd := congrArg Prod.fst h
+  have hm := congrArg Prod.snd h
+  cases c₁ <;> cases c₂ <;>
+    first | cases hd | simp only [WireCall.input, reduceCtorEq] at hd | skip
+  case proposal.proposal a b =>
+    simp only [WireCall.input] at hm
+    exact congrArg WireCall.proposal (AmendmentProposal.preimage_injective hm)
+  case vk.vk a p b q =>
+    simp only [WireCall.input] at hm
+    obtain ⟨rfl, rfl⟩ := Prod.mk.inj (framedPair_injective hm)
+    rfl
+  case rootAuthority.rootAuthority s t =>
+    simp only [WireCall.input] at hm
+    exact congrArg WireCall.rootAuthority (digest_eq hm)
+  case hopMac.hopMac s n t m =>
+    simp only [WireCall.input] at hm
+    obtain ⟨rfl, rfl⟩ := Prod.mk.inj (framedPair_injective hm)
+    rfl
+  case prior.prior a b =>
+    simp only [WireCall.input] at hm
+    exact congrArg WireCall.prior (theoryBytes_injective hm)
+  case targetOrgan.targetOrgan s t =>
+    simp only [WireCall.input] at hm
+    exact congrArg WireCall.targetOrgan (utf8_injective hm)
+  case leafSalt.leafSalt s i t j =>
+    obtain ⟨rfl, rfl⟩ := leafSalt_preimage_injective hm
+    rfl
+  case matrixCell.matrixCell s r c t i j =>
+    obtain ⟨rfl, rfl, rfl⟩ := matrixCell_preimage_injective hm
+    rfl
+  case params.params p q =>
+    simp only [WireCall.input] at hm
+    exact congrArg WireCall.params (LatticeParameters.preimage_injective hm)
+  case ringChallenge.ringChallenge s t =>
+    simp only [WireCall.input] at hm
+    exact congrArg WireCall.ringChallenge (digest_eq hm)
+  case canopyBind.canopyBind a b =>
+    simp only [WireCall.input] at hm
+    exact congrArg WireCall.canopyBind (CanopyBindEnvelope.preimage_injective hm)
+  case blindExtension.blindExtension s x t y =>
+    simp only [WireCall.input] at hm
+    obtain ⟨rfl, hx⟩ := digest_split hm
+    obtain rfl := ringBytes_injective hx
+    rfl
+  case r1csSeed.r1csSeed s t =>
+    simp only [WireCall.input] at hm
+    exact congrArg WireCall.r1csSeed (digest_eq hm)
+  case bdlopSeed.bdlopSeed s t =>
+    simp only [WireCall.input] at hm
+    exact congrArg WireCall.bdlopSeed (digest_eq hm)
+  case proverMask.proverMask s ws t vs =>
+    obtain ⟨rfl, rfl⟩ := proverMask_preimage_injective hm
+    rfl
+  case gateLambda.gateLambda s t =>
+    simp only [WireCall.input] at hm
+    exact congrArg WireCall.gateLambda (digest_eq hm)
+  case orderSalt.orderSalt s t =>
+    simp only [WireCall.input] at hm
+    exact congrArg WireCall.orderSalt (digest_eq hm)
+  case ternary.ternary s t =>
+    simp only [WireCall.input] at hm
+    exact congrArg WireCall.ternary (digest_eq hm)
+  case queries.queries s t =>
+    simp only [WireCall.input] at hm
+    exact congrArg WireCall.queries (digest_eq hm)
+
+/-- Two invocations under one customization whose first 32 output bytes agree are the same
+invocation, or their two absorbed messages collide under that customization. Separation between
+distinct customizations is SP 800-185's and is not claimed here. A consumer that reads another
+prefix of the stream needs its own statement about that prefix, as `canopyBindLimbs_bind` gives. -/
+theorem WireCall.first32_binds {c₁ c₂ : WireCall} (domain : c₁.input.1 = c₂.input.1)
+    (h : c₁.first32 = c₂.first32) :
+    c₁ = c₂ ∨ CollisionAmong (cshake256Bytes c₁.input.1.bytes)
+      (fun x => x = c₁.input.2 ∨ x = c₂.input.2) := by
+  if hp : c₁.input.2 = c₂.input.2 then
+    exact .inl (WireCall.input_injective (Prod.ext domain hp))
+  else
+    have hl := congrArg (fun d : Digest32 => d.bytes.data.toList) h
+    simp only [WireCall.first32, ← domain, cshake32ByteArray, Native.bytesOfList_toList] at hl
+    exact .inr ⟨c₁.input.2, c₂.input.2, .inl rfl, .inr rfl, hp, congrArg ofBE hl⟩
+
+-- The same clause bytes without their three frames. A name byte can then be read as a priority
+-- byte: `("é", 1)` and `("", 21699)` both encode as `c3 a9 01` before the truth table.
+#tooth WireCall.input_injective by mutation Obend.Law.PointwiseRevise.Clause.bytes :=
+  fun {n} c => c.name.toUTF8.data.toList ++ leb128 c.priority ++ be ((n + 7) / 8) c.allowed.toNat
+
+#tooth WireCall.input_injective by mutation MaskWitness.bytes :=
+  fun w => word w.quantity ++ word w.total ++ raw w.canopySalt
+
+#tooth WireCall.input_injective by mutation framedPair := fun p => encodeListField (raw p.1)
+
 /-- Rust reads two LE64s and clears the high bit of each. -/
 def maskedLimbs (msg : List UInt8) : UInt64 × UInt64 :=
   let out := cshake256Bytes CryptoWireDomain.darkBazaarCanopyBindV1.bytes msg
@@ -469,7 +615,7 @@ def amendmentRelation (vk : Digest32) (circuitDesc : ByteArray) : Transcript .re
 
 def bazaarRelation (vk : Digest32) (circuitDesc : ByteArray) : Transcript .relationBound :=
   bindRelation CryptoWireDomain.darkBazaarSameOpeningV2.tag vk.bytes circuitDesc
-    (Transcript.newUnseeded "OBEND.DARKBAZAAR.SEED".toUTF8)
+    (Transcript.newUnseeded CryptoWireDomain.darkBazaarSeed.tag.toUTF8)
 
 inductive ChallengeStream where | ring | gate | ternary | queries
 
