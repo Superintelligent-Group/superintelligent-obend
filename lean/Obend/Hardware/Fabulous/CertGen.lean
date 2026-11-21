@@ -11,7 +11,7 @@ public import Obend.Hardware.Fabulous.Bitstream
 public import Obend.Hardware.Fabulous.Readback
 public import Obend.Hardware.Fabulous.LUT4ABSwitchMatrix
 public import Obend.Hardware.Fabulous.WIOSwitchMatrix
-@[expose] public section
+public section
 
 namespace Obend.Hardware.Fabulous
 
