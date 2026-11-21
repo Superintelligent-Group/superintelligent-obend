@@ -175,15 +175,26 @@ theorem rollettStability_sound (sp : TwoPortSParams)
   rw [decide_eq_true_eq, decide_eq_true_eq, decide_eq_true_eq, decide_eq_true_eq, decide_eq_true_eq] at hStable
   exact ⟨hStable.1.1.1.1.2, hStable.1.1.1.2.2, hStable.1.1.2.2, hStable.1.2, hStable.2⟩
 
-def golden2mHamLnaSParams : TwoPortSParams :=
+def vhf2mHamLnaSParams : TwoPortSParams :=
   { stageName := "vhf_144mhz_sige_lna", freqMhz := 144, s11MagSqPermilleSq := 62500,
     s22MagSqPermilleSq := 90000, s12s21MagPermilleSq := 320000, deltaMagSqPermilleSq := 85000 }
 
 def unstableFeedbackLnaSParams : TwoPortSParams :=
-  { golden2mHamLnaSParams with stageName := "unneutralized_feedback_lna", s12s21MagPermilleSq := 480000 }
+  { vhf2mHamLnaSParams with stageName := "unneutralized_feedback_lna", s12s21MagPermilleSq := 480000 }
+
+theorem checkCicAndRollett_inhabited (extraBits : Nat) :
+    checkRollettUnconditionalStability vhf2mHamLnaSParams = true ∧
+    checkCicOverflowFree
+      { filterName := "sdr_rx_cic4_r64", inputWidthBits := 14, numStages := 4,
+        decimationRatio := 64, diffDelay := 1, ceilLog2Rm := 6 } (38 + extraBits) = true := by
+  have hRollett : checkRollettUnconditionalStability vhf2mHamLnaSParams = true := by decide +kernel
+  refine ⟨hRollett, ?_⟩
+  unfold checkCicOverflowFree evalCicRequiredWidthBits
+  simp only [Bool.and_eq_true, decide_eq_true_eq]
+  omega
 
 example :
-    checkRollettUnconditionalStability golden2mHamLnaSParams = true ∧
+    checkRollettUnconditionalStability vhf2mHamLnaSParams = true ∧
     checkRollettUnconditionalStability unstableFeedbackLnaSParams = false ∧
     checkCicOverflowFree
       { filterName := "sdr_rx_cic4_r64", inputWidthBits := 14, numStages := 4,
@@ -242,15 +253,15 @@ def runCordicMicroPipeline (x0 y0 z0 : Int) : List CordicMicroStage → Int × I
     let (x1, y1, z1) := cordicRotateStep x0 y0 z0 st
     runCordicMicroPipeline x1 y1 z1 rest
 
-def goldenCordic4Stages : List CordicMicroStage :=
+def cordic4MicroStages : List CordicMicroStage :=
   [ { shiftPow2 := 0, atanAngleMrad := 785, signPositive := true }
   , { shiftPow2 := 1, atanAngleMrad := 464, signPositive := false }
   , { shiftPow2 := 2, atanAngleMrad := 245, signPositive := true }
   , { shiftPow2 := 3, atanAngleMrad := 124, signPositive := false } ]
 
 example :
-    runCordicMicroPipeline 1000 0 442 goldenCordic4Stages = (1484, 704, 0) ∧
-    (let (x4, y4, z4) := runCordicMicroPipeline 1000 0 442 goldenCordic4Stages
+    runCordicMicroPipeline 1000 0 442 cordic4MicroStages = (1484, 704, 0) ∧
+    (let (x4, y4, z4) := runCordicMicroPipeline 1000 0 442 cordic4MicroStages
      z4 = 0 ∧ 1000 * 1000 < x4 * x4 + y4 * y4) := by decide +kernel
 
 structure IqPhasor where

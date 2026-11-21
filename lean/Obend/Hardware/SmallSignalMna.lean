@@ -173,7 +173,7 @@ theorem runSarAdcN_acc_invariant (bits accCode vInMv vLsbMv : Nat) (hAcc : accCo
     have hPowSucc : 2 ^ (b + 1) = 2 ^ b + 2 ^ b := by rw [Nat.pow_succ]; omega
     exact ⟨hSub.1, by omega, by have := hStep.1; have := hSub.2.2; omega⟩
 
-theorem runSarAdcN_lower_bound (bits vInMv vLsbMv : Nat) (_hPos : 0 < vLsbMv) :
+theorem runSarAdcN_lower_bound (bits vInMv vLsbMv : Nat) :
     (runSarAdcN bits 0 vInMv vLsbMv) * vLsbMv ≤ vInMv ∧ runSarAdcN bits 0 vInMv vLsbMv < 2 ^ bits := by
   have hInv := runSarAdcN_acc_invariant bits 0 vInMv vLsbMv (by simp)
   exact ⟨hInv.1, by omega⟩
@@ -194,7 +194,8 @@ theorem runSarAdcN_exact_quantization_bounds (bits vInMv vLsbMv : Nat) (hPos : 0
     (runSarAdcN bits 0 vInMv vLsbMv) * vLsbMv ≤ vInMv ∧
     runSarAdcN bits 0 vInMv vLsbMv < 2 ^ bits ∧
     (vInMv < 2 ^ bits * vLsbMv → vInMv < (runSarAdcN bits 0 vInMv vLsbMv + 1) * vLsbMv) := by
-  have hLow := runSarAdcN_lower_bound bits vInMv vLsbMv hPos
+  have _ := hPos
+  have hLow := runSarAdcN_lower_bound bits vInMv vLsbMv
   refine ⟨hLow.1, hLow.2, fun hIn => ?_⟩
   apply runSarAdcN_acc_upper_bound bits 0 vInMv vLsbMv
   rwa [Nat.zero_add]
@@ -1072,6 +1073,30 @@ theorem smallSignalMnaJudge_sound_enclosure {r : Nat} {obj : AcMnaObj} {cert : A
   have hSound := smallSignalMna_neumann_enclosure_sound obj.dim obj.matG obj.matC cert.precondR
     obj.omega cert.vApprox obj.iSrc obj.errBound hCheck
   exact ⟨hSound.1, fun vStar hSol => (hSound.2 vStar hSol).2.1⟩
+
+/-- Constructive inhabitedness witness for `checkSmallSignalNeumannEnclosure`, `checkAcSweepTurns`, and `checkAcSweepTrace`. -/
+theorem checkSmallSignalNeumannEnclosure_inhabited (errSlack : CanonicalRat) (hSlack : 0 ≤ errSlack) :
+    checkSmallSignalNeumannEnclosure 1 [[1]] [[0]] [[1, 0], [0, 1]] 1 [1, 0] [1, 0] errSlack = true ∧
+    checkAcSweepTurns 1 [[1]] [[0]] 0 false
+      [{ omega := 1, iSrc := [1, 0], vApprox := [1, 0], precondR := [[1, 0], [0, 1]], errBound := errSlack }] = true ∧
+    checkAcSweepTrace 1 [[1]] [[0]]
+      [{ omega := 1, iSrc := [1, 0], vApprox := [1, 0], precondR := [[1, 0], [0, 1]], errBound := errSlack }] = true := by
+  have hDelta : acNeumannResidual 1 [[1]] [[0]] [[1, 0], [0, 1]] 1 [1, 0] [1, 0] = 0 := by decide +kernel
+  have hAlphaZero : acNeumannAlpha 1 [[1]] [[0]] [[1, 0], [0, 1]] 1 = 0 := by decide +kernel
+  have hEnc : checkSmallSignalNeumannEnclosure 1 [[1]] [[0]] [[1, 0], [0, 1]] 1 [1, 0] [1, 0] errSlack = true := by
+    unfold checkSmallSignalNeumannEnclosure
+    dsimp only
+    rw [hDelta, hAlphaZero]
+    have hLt1 : (0 : CanonicalRat) < 1 := by decide
+    have hLe : (0 : CanonicalRat) ≤ (1 - 0) * errSlack := by grind
+    simp [hSlack, hLt1, hLe]
+  refine ⟨hEnc, ?_, ?_⟩
+  · dsimp only [checkAcSweepTurns]
+    have h01 : (0 : CanonicalRat) ≤ 1 := by decide
+    simp [h01, hEnc]
+  · dsimp only [checkAcSweepTrace, checkAcSweepTurns]
+    have h01 : (0 : CanonicalRat) ≤ 1 := by decide
+    simp [h01, hEnc]
 
 /-- Concrete 1-node RC lowpass AC MNA benchmark at $\omega = 1$. -/
 def rcLowpassAcObj : AcMnaObj :=
