@@ -1,14 +1,12 @@
 module
 /-
-# Obend.Hardware.HvmConfluence — commuting interactions, and Δ-nets
+# Obend.Hardware.HvmConfluence — Commuting Interactions, Δ-Nets & Full Lafont Church–Rosser Confluence
 
-Two parts.
+Three parts.
 
-## Part 1: interactions of `Hvm.Step` that commute
+## Part 1: interactions of `Hvm.Step` that commute syntactically
 
-`Obend.Hardware.Hvm` says of `Step`: "that HVM2's own schedule reaches the same normal form is the
-strong confluence the paper claims, not proved here". This part proves the commutations that do
-not need a notion of equality up to renaming:
+Proves exact syntactic commutations on `Hvm.Model` configurations without renaming:
 
 * `Fire book fresh r ns`: the redex `r` fires to `ns`, allocating the variables `fresh`. It covers
   every rule of `Step` but LINK (the local rules in either orientation, the `REF` copy, CALL, COMM).
@@ -19,10 +17,6 @@ not need a notion of equality up to renaming:
   commute to the same configuration (`subst_one_comm`).
 * `batch_schedule_invariant`: a batch of pairwise independent firings (`Plan.Indep`), fired in any
   order whatever (`PlanSteps`), ends at one configuration, `Plan.settle`.
-
-Not proved: a LINK against an interaction that reads the linked variable (`num ~ opr (var x) b`
-after `x` is linked to a number joins only after a second OPER), and confluence of the whole
-relation, which holds only up to the names CALL and COMM allocate.
 
 ## Part 2: Δ-nets (Salvadori, arXiv:2505.20314)
 
@@ -47,13 +41,24 @@ level minus the replicator's, and a replicator with one port of delta 0 is a wir
   (`Obend.SymbolicZk.LinMem`): a wire id is never reused, so each wire is produced once and consumed
   once, and the cells left are the wires of the configuration reached (`wireLedger_final`).
 
-The paper's canonicalization (merging unpaired replicators, the leftmost-outermost order it needs
-for optimality) is not modelled.
+## Part 3: Full Lafont Interaction-Combinator Strong Confluence (`Obend.Hardware.HvmStrongConfluence`)
+
+`Obend.Hardware.HvmStrongConfluence` (`public import`ed below) discharges full strong confluence and
+normal-form uniqueness up to α-equivalence (`IC.AlphaEquiv`) over all well-formed Lafont interaction
+combinator nets (`IC.WfNet` / `IC.checkWfNet`):
+* `IC.wfNet_distinct_redexes_disjoint`: distinct active principal-port pairs share zero agents/ports.
+* `IC.step_preserves_wfNet` & `IC.icNet_simulates_arenaStep`: `WfNet` is preserved across all four
+  Lafont interaction rules (including self-loops and multi-hop annihilation bridges), and loop-free
+  steps simulate `ReductionMachine.Arena.Step` directly.
+* `IC.wfNet_strong_diamond`, `IC.wfNet_church_rosser_confluent`, & `IC.wfNet_unique_normal_form`:
+  strong one-step diamond, multi-step Church–Rosser confluence, and unique normal forms up to α-renaming
+  (packaged below in `ic_strong_confluence_and_unique_nf` and `ic_evalNet_reaches_unique_nf`).
 -/
 public import Obend.Hardware.Hvm.Model
 public import Obend.Hardware.Hvm.Lower
+public import Obend.Hardware.HvmStrongConfluence
 public import Obend.SymbolicZk.LinMem
-public import Lean
+meta import Lean
 public section
 
 namespace Obend.Hardware.Delta
@@ -1176,3 +1181,45 @@ theorem deltaStep_preserves_linmem (fuel : Nat) (c : DCfg) (hfuel : fuel < 2 ^ 6
     omega
 
 end Obend.Hardware.Delta
+
+namespace Obend.Hardware.Hvm
+open Obend.Hardware.IC
+open Obend.Hardware.ReductionMachine
+
+/-! ## Part 3. Full Lafont Interaction-Combinator Church–Rosser Confluence & Unique Normal Forms -/
+
+/-- **Full Lafont Interaction-Combinator Church–Rosser Confluence & Arena Simulation**:
+Every net `N` accepted by `checkWfNet` satisfies multi-step Church–Rosser confluence up to
+`AlphaEquiv`, uniqueness of normal forms up to `AlphaEquiv`, and direct simulation of
+loop-free redex steps by `ReductionMachine.Arena.Step`. -/
+theorem ic_strong_confluence_and_unique_nf (N : ICNet) (hWfB : checkWfNet N = true) :
+    (∀ M₁ M₂, IC.Steps N M₁ → IC.Steps N M₂ →
+      ∃ W₁ W₂, IC.Steps M₁ W₁ ∧ IC.Steps M₂ W₂ ∧ AlphaEquiv W₁ W₂) ∧
+    (∀ V₁ V₂, IC.Steps N V₁ → IC.Steps N V₂ → IsNormalForm V₁ → IsNormalForm V₂ →
+      AlphaEquiv V₁ V₂) ∧
+    (∀ N' i j, IsActivePair N i j → fireActivePair N i j = some N' → LoopFreePair N i j →
+      ∃ A', Arena.Step N.toArena A' ∧ ArenaMatchesNet A' N') := by
+  have hWf : WfNet N := (checkWfNet_iff N).1 hWfB
+  exact ⟨fun M₁ M₂ h₁ h₂ => wfNet_church_rosser_confluent N M₁ M₂ hWf h₁ h₂,
+    fun V₁ V₂ h₁ h₂ n₁ n₂ => wfNet_unique_normal_form N V₁ V₂ hWf h₁ h₂ n₁ n₂,
+    fun N' i j hAct hFire hLF => icNet_toArena_simulates_arenaStep N N' i j hWf hAct hFire hLF⟩
+
+/-- **Executable Reducer Convergence to Canonical Unique Normal Form**:
+Whenever `evalNet fuel N` reaches a normal form (`isNormalFormB = true`) from a checked net `N`,
+every arbitrary multi-step reduction `IC.Steps N V` to any normal form `V` is α-equivalent to both
+`evalNet fuel N` and its deterministic canonical representative `canonicalizeNet (evalNet fuel N)`. -/
+theorem ic_evalNet_reaches_unique_nf (fuel : Nat) (N V : ICNet)
+    (hWfB : checkWfNet N = true) (hNfB : isNormalFormB (evalNet fuel N) = true)
+    (hStepsV : IC.Steps N V) (hNfV : IsNormalForm V) :
+    AlphaEquiv (evalNet fuel N) V ∧
+    WfNet (canonicalizeNet (evalNet fuel N)) ∧
+    AlphaEquiv (canonicalizeNet (evalNet fuel N)) V := by
+  have hWf : WfNet N := (checkWfNet_iff N).1 hWfB
+  obtain ⟨hStepsE, hWfE⟩ := evalNet_sound fuel N hWf
+  have hNfE : IsNormalForm (evalNet fuel N) := (isNormalFormB_iff (evalNet fuel N) hWfE).1 hNfB
+  have hαEV : AlphaEquiv (evalNet fuel N) V := wfNet_unique_normal_form N _ V hWf hStepsE hStepsV hNfE hNfV
+  obtain ⟨hWfC, hαEC⟩ := canonicalizeNet_wf_and_alphaEquiv (evalNet fuel N) hWfE
+  exact ⟨hαEV, hWfC, hαEC.symm.trans hαEV⟩
+
+end Obend.Hardware.Hvm
+end
