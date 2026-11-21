@@ -50,7 +50,7 @@ inductive LinkRole where
   | parent
   | listed
   | custom (tag : String)
-  deriving @[expose] DecidableEq, Repr
+  deriving DecidableEq, Repr
 
 /-- Standard custom role for merged lanes pointing back to `DEV`. -/
 abbrev LinkRole.mergedLane : LinkRole := .custom "merged_lane"
@@ -59,7 +59,7 @@ abbrev LinkRole.mergedLane : LinkRole := .custom "merged_lane"
 structure TypedLink where
   role : LinkRole
   target : String
-  deriving @[expose] DecidableEq, Repr
+  deriving DecidableEq, Repr
 
 /-- A Vault page carrying scalar/label state `Data` and role-typed outgoing links. -/
 structure RolePage where
@@ -69,27 +69,27 @@ structure RolePage where
   deriving Repr
 
 /-- Target page names of outgoing links matching `role`. -/
-@[expose] def targetsInRole (role : LinkRole) (links : List TypedLink) : List String :=
+def targetsInRole (role : LinkRole) (links : List TypedLink) : List String :=
   (links.filter (·.role == role)).map (·.target)
 
 /-- Lookup a `RolePage` by name in a store snapshot. -/
-@[expose] def findRolePage (pages : List RolePage) (name : String) : Option RolePage :=
+def findRolePage (pages : List RolePage) (name : String) : Option RolePage :=
   pages.find? (·.name == name)
 
 /-- Forward role-filtered link view (`linked[role]`): states of resolved target pages in `role`. -/
-@[expose] def linkedInRole (pages : List RolePage) (page : RolePage) (role : LinkRole) : List Data :=
+def linkedInRole (pages : List RolePage) (page : RolePage) (role : LinkRole) : List Data :=
   (targetsInRole role page.links).filterMap fun tgt => (findRolePage pages tgt).map (·.state)
 
 /-- Backward role-filtered link view (`linked_by[role]`): pages in `pages` linking to `hubName` in `role`. -/
-@[expose] def linkedByInRole (pages : List RolePage) (hubName : String) (role : LinkRole) : List RolePage :=
+def linkedByInRole (pages : List RolePage) (hubName : String) (role : LinkRole) : List RolePage :=
   pages.filter fun src => (targetsInRole role src.links).contains hubName
 
 /-- Replace all outgoing links of `page` in `editRole` with `newTargets`, leaving all other roles intact. -/
-@[expose] def editRoleLinks (page : RolePage) (editRole : LinkRole) (newTargets : List String) : RolePage :=
+def editRoleLinks (page : RolePage) (editRole : LinkRole) (newTargets : List String) : RolePage :=
   { page with links := page.links.filter (·.role != editRole) ++ newTargets.map (TypedLink.mk editRole) }
 
 /-- Evaluate a Vault `LawExpr` over every page state in `linked[role]`. -/
-@[expose] def evalRoleLinkLaw (facts : Facts) (law : LawExpr) (pages : List RolePage)
+def evalRoleLinkLaw (facts : Facts) (law : LawExpr) (pages : List RolePage)
     (page : RolePage) (role : LinkRole) : Bool :=
   (linkedInRole pages page role).all fun st => law.denote facts (some st) st
 
@@ -146,19 +146,19 @@ theorem brief_write_preserves_linked_box_law
   (write_in_disjoint_role_preserves_role_law facts law pages page (by decide) newBriefs).2
 
 /-- Project a referring page's state with an explicit `listed : 0 | 1` backlink indicator. -/
-@[expose] def stateWithListedFlag (listed : Bool) : Data → Data
+def stateWithListedFlag (listed : Bool) : Data → Data
   | .record fs =>
     .record (("listed", .natural (if listed then 1 else 0)) :: fs.filter (·.1 != "listed"))
   | other => other
 
 /-- `DEV`'s backlink audit law over `linked_by[merged_lane]`: every merged lane (`new.merged == 1`)
     must be listed back by `DEV` (`new.listed == 1`). -/
-@[expose] def devMergedLaneBacklinkLaw : LawExpr :=
+def devMergedLaneBacklinkLaw : LawExpr :=
   .implies (.eqC (.field "merged") 1) (.eqC (.field "listed") 1)
 
 /-- Evaluate a backlink law on `hub` across all pages in `linked_by[inRole]`, binding `listed`
     according to whether `hub` links back to the referrer in `listRole`. -/
-@[expose] def checkBacklinkRoleLaw (facts : Facts) (law : LawExpr) (pages : List RolePage)
+def checkBacklinkRoleLaw (facts : Facts) (law : LawExpr) (pages : List RolePage)
     (hub : RolePage) (inRole listRole : LinkRole) : Bool :=
   (linkedByInRole pages hub.name inRole).all fun refPage =>
     let st := stateWithListedFlag ((targetsInRole listRole hub.links).contains refPage.name) refPage.state
@@ -222,46 +222,46 @@ theorem dev_backlink_detects_unlisted_merged_lane
 inductive TelemetryEvent where
   | boxUnreachable (box : String) (detail : String) (source : String)
   | tallyBreach (metric : String) (observed : Nat) (floor : Nat) (source : String)
-  deriving @[expose] DecidableEq, Repr
+  deriving DecidableEq, Repr
 
 /-- Atom naming that `box` is registered in the build fleet. -/
-@[expose] def boxRegisteredAtom (box : String) : String := "box_registered(" ++ box ++ ")"
+def boxRegisteredAtom (box : String) : String := "box_registered(" ++ box ++ ")"
 
 /-- Defeater atom naming that `box` is currently unreachable. -/
-@[expose] def boxUnreachableAtom (box : String) : String := "box_unreachable(" ++ box ++ ")"
+def boxUnreachableAtom (box : String) : String := "box_unreachable(" ++ box ++ ")"
 
 /-- Derived conclusion that `box` is usable. -/
-@[expose] def boxUsableAtom (box : String) : String := "box_usable(" ++ box ++ ")"
+def boxUsableAtom (box : String) : String := "box_usable(" ++ box ++ ")"
 
 /-- Derived action-justification conclusion that lanes may dispatch to `box`. -/
-@[expose] def dispatchToAtom (box : String) : String := "dispatch_to(" ++ box ++ ")"
+def dispatchToAtom (box : String) : String := "dispatch_to(" ++ box ++ ")"
 
 /-- Atom naming an observed floor/tally breach on `metric`. -/
-@[expose] def tallyBreachAtom (metric : String) : String := "tally_breach(" ++ metric ++ ")"
+def tallyBreachAtom (metric : String) : String := "tally_breach(" ++ metric ++ ")"
 
 /-- Convert a `TelemetryEvent` into a non-refusable `Reasons.Observation`. -/
-@[expose] def TelemetryEvent.toObservation : TelemetryEvent → Reasons.Observation
+def TelemetryEvent.toObservation : TelemetryEvent → Reasons.Observation
   | .boxUnreachable box detail src =>
     { name := boxUnreachableAtom box, text := detail, source := src }
   | .tallyBreach metric obs flr src =>
     { name := tallyBreachAtom metric, text := toString obs ++ " > " ++ toString flr, source := src }
 
 /-- Defeasible explanation `box_usable(B) ← box_registered(B), not box_unreachable(B)`. -/
-@[expose] def boxUsableRule (box : String) : Reasons.Rule :=
+def boxUsableRule (box : String) : Reasons.Rule :=
   { name := "usable_" ++ box
     concl := boxUsableAtom box
     pos := [boxRegisteredAtom box]
     neg := [boxUnreachableAtom box] }
 
 /-- Defeasible dispatch rule `dispatch_to(B) ← box_registered(B), not box_unreachable(B)`. -/
-@[expose] def boxDispatchRule (box : String) : Reasons.Rule :=
+def boxDispatchRule (box : String) : Reasons.Rule :=
   { name := "dispatch_" ++ box
     concl := dispatchToAtom box
     pos := [boxRegisteredAtom box]
     neg := [boxUnreachableAtom box] }
 
 /-- Initial `Reasons.Base` for a registered build box `box` with proposed dispatch action. -/
-@[expose] def mkBoxDispatchBase (box : String) : Reasons.Base :=
+def mkBoxDispatchBase (box : String) : Reasons.Base :=
   { observations := [{ name := boxRegisteredAtom box, text := "registered", source := "fleet" }]
     assumptions := []
     withdrawn := []
@@ -270,11 +270,11 @@ inductive TelemetryEvent where
     actions := [{ name := "run_lane_" ++ box, because := dispatchToAtom box }] }
 
 /-- Initial `Reasons.State` for `box` with consistent kept well-founded judgment. -/
-@[expose] def mkBoxDispatchState (box : String) : Reasons.State :=
+def mkBoxDispatchState (box : String) : Reasons.State :=
   { base := mkBoxDispatchBase box, kept := Reasons.judge (mkBoxDispatchBase box) }
 
 /-- Ingest a `TelemetryEvent` into `Reasons.State` as an observation (idempotent if already recorded). -/
-@[expose] def ingestTelemetryObservation (s : Reasons.State) (ev : TelemetryEvent) :
+def ingestTelemetryObservation (s : Reasons.State) (ev : TelemetryEvent) :
     Except String Reasons.State :=
   if s.base.observations.any (·.name == ev.toObservation.name) then .ok s
   else s.step (.observe ev.toObservation)
@@ -325,21 +325,21 @@ theorem mkBoxDispatchState_initial_supported (box : String) :
   rw [Reasons.State.status_eq hcons, Reasons.State.status_eq hcons]
   have hreg : Reasons.status (mkBoxDispatchBase box) (boxRegisteredAtom box) = .supported := by
     rw [Reasons.supported_iff]
-    exact Or.inl (by simp [Reasons.Base.program, mkBoxDispatchBase])
+    exact Or.inl (by simp [mkBoxDispatchBase])
   have hunr : Reasons.status (mkBoxDispatchBase box) (boxUnreachableAtom box) = .unsupported := by
     rw [Reasons.status_unsupported_iff, Reasons.judge]
     intro hmem
     rcases Reasons.mem_gamma.1 hmem with hfact | ⟨r, hr, hconcl, _, _⟩
-    · simp [Reasons.Base.program, mkBoxDispatchBase, Reasons.Base.held] at hfact
+    · simp [mkBoxDispatchBase, Reasons.Base.held] at hfact
       exact boxRegistered_ne_unreachable box hfact.symm
-    · simp [Reasons.Base.program, mkBoxDispatchBase, Reasons.Base.rule, boxUsableRule, boxDispatchRule] at hr
+    · simp [mkBoxDispatchBase, Reasons.Base.rule, boxUsableRule, boxDispatchRule] at hr
       rcases hr with rfl | rfl
       · exact boxUnreachable_ne_usable box hconcl.symm
       · exact boxUnreachable_ne_dispatch box hconcl.symm
   refine ⟨?_, ?_⟩
   · rw [Reasons.supported_iff]
     refine Or.inr ⟨boxDispatchRule box, ?_, rfl, ?_, ?_⟩
-    · simp [Reasons.Base.program, mkBoxDispatchState, mkBoxDispatchBase, Reasons.Base.rule, boxDispatchRule]
+    · simp [mkBoxDispatchState, mkBoxDispatchBase, Reasons.Base.rule, boxDispatchRule]
     · intro p hp
       simp [boxDispatchRule] at hp
       subst hp; exact hreg
@@ -348,7 +348,7 @@ theorem mkBoxDispatchState_initial_supported (box : String) :
       subst hd; exact hunr
   · rw [Reasons.supported_iff]
     refine Or.inr ⟨boxUsableRule box, ?_, rfl, ?_, ?_⟩
-    · simp [Reasons.Base.program, mkBoxDispatchState, mkBoxDispatchBase, Reasons.Base.rule, boxUsableRule]
+    · simp [mkBoxDispatchState, mkBoxDispatchBase, Reasons.Base.rule, boxUsableRule]
     · intro p hp
       simp [boxUsableRule] at hp
       subst hp; exact hreg
@@ -398,21 +398,21 @@ theorem telemetry_defeats_lane_dispatch_without_refusing_fact
   have hstEq : ∀ x, s₁.status x = Reasons.status b₁ x := Reasons.State.status_eq hcons₁
   have hreg₁ : Reasons.status b₁ (boxRegisteredAtom box) = .supported := by
     rw [Reasons.supported_iff]
-    exact Or.inl (by simp [Reasons.Base.program, b₁, mkBoxDispatchBase])
+    exact Or.inl (by simp [b₁, mkBoxDispatchBase])
   have hunr₁ : Reasons.status b₁ (boxUnreachableAtom box) = .supported := by
     rw [Reasons.supported_iff]
-    exact Or.inl (by simp [Reasons.Base.program, b₁, mkBoxDispatchBase, obs])
+    exact Or.inl (by simp [b₁, mkBoxDispatchBase, obs])
   have hunrMem : boxUnreachableAtom box ∈ (Reasons.judge b₁).1 :=
     (Reasons.status_supported_iff b₁ _).1 hunr₁
   have husable₁ : Reasons.status b₁ (boxUsableAtom box) = .unsupported := by
     rw [Reasons.status_unsupported_iff, Reasons.judge]
     intro hmem
     rcases Reasons.mem_gamma.1 hmem with hfact | ⟨r, hr, hconcl, _, hneg⟩
-    · simp [Reasons.Base.program, b₁, mkBoxDispatchBase, Reasons.Base.held, obs] at hfact
+    · simp [b₁, mkBoxDispatchBase, Reasons.Base.held, obs] at hfact
       rcases hfact with h1 | h2
       · exact boxRegistered_ne_usable box h1.symm
       · exact boxUnreachable_ne_usable box h2.symm
-    · simp [Reasons.Base.program, b₁, mkBoxDispatchBase, Reasons.Base.rule,
+    · simp [b₁, mkBoxDispatchBase, Reasons.Base.rule,
         boxUsableRule, boxDispatchRule] at hr
       rcases hr with rfl | rfl
       · exact hneg (boxUnreachableAtom box) (by simp) hunrMem
@@ -422,11 +422,11 @@ theorem telemetry_defeats_lane_dispatch_without_refusing_fact
     rw [Reasons.status_unsupported_iff, Reasons.judge]
     intro hmem
     rcases Reasons.mem_gamma.1 hmem with hfact | ⟨r, hr, hconcl, _, hneg⟩
-    · simp [Reasons.Base.program, b₁, mkBoxDispatchBase, Reasons.Base.held, obs] at hfact
+    · simp [b₁, mkBoxDispatchBase, Reasons.Base.held, obs] at hfact
       rcases hfact with h1 | h2
       · exact boxRegistered_ne_dispatch box h1.symm
       · exact boxUnreachable_ne_dispatch box h2.symm
-    · simp [Reasons.Base.program, b₁, mkBoxDispatchBase, Reasons.Base.rule,
+    · simp [b₁, mkBoxDispatchBase, Reasons.Base.rule,
         boxUsableRule, boxDispatchRule] at hr
       rcases hr with rfl | rfl
       · dsimp only at hconcl
@@ -439,7 +439,7 @@ theorem telemetry_defeats_lane_dispatch_without_refusing_fact
   have hrulesFor : b₁.rulesFor (dispatchToAtom box) = [boxDispatchRule box] := by
     have hneUD : (boxUsableAtom box == dispatchToAtom box) = false :=
       beq_false_of_ne (boxUsable_ne_dispatch box)
-    simp [Reasons.Base.rulesFor, Reasons.Base.program, b₁, mkBoxDispatchBase,
+    simp [Reasons.Base.rulesFor, b₁, mkBoxDispatchBase,
       Reasons.Base.rule, boxUsableRule, boxDispatchRule, hneUD]
   have hwhy :
       Reasons.whyNot s₁ (dispatchToAtom box) =
@@ -464,34 +464,34 @@ inductive FloorSpec where
   | maxCounter (metric : String) (cap : Nat)
   /-- Mandatory frontmatter/gate field line on `_kind.md` (e.g., `"gate"`). -/
   | mandatoryLine (field : String)
-  deriving @[expose] DecidableEq, Repr
+  deriving DecidableEq, Repr
 
 /-- Snapshot of a Vault `_kind` doctrine page's counters, present gate lines, and distance from home. -/
 structure DoctrineSnapshot where
   counters : List (String × Nat)
   presentLines : List String
   stepsFromHome : Nat
-  deriving @[expose] DecidableEq, Repr
+  deriving DecidableEq, Repr
 
 /-- State governed by `vaultDoctrineHabitat`. -/
 structure DoctrineState where
   current : DoctrineSnapshot
   auditLog : List String
-  deriving @[expose] DecidableEq, Repr
+  deriving DecidableEq, Repr
 
 /-- Actions proposed in `vaultDoctrineHabitat`. -/
 inductive DoctrineAct where
   | revert
   | writeKind (next : DoctrineSnapshot)
   | recordAudit (note : String)
-  deriving @[expose] DecidableEq, Repr
+  deriving DecidableEq, Repr
 
 /-- Read a counter metric from a `DoctrineSnapshot` (defaulting to `0`). -/
 @[expose] def DoctrineSnapshot.counterAt (snap : DoctrineSnapshot) (metric : String) : Nat :=
   (snap.counters.lookup metric).getD 0
 
 /-- Decidable meaning of a `FloorSpec` on `DoctrineState`. -/
-@[expose] def floorHoldsB (φ : FloorSpec) (s : DoctrineState) : Bool :=
+def floorHoldsB (φ : FloorSpec) (s : DoctrineState) : Bool :=
   match φ with
   | .corrigibilityHome maxSteps => decide (s.current.stepsFromHome ≤ maxSteps)
   | .maxCounter metric cap => decide (s.current.counterAt metric ≤ cap)
@@ -509,21 +509,26 @@ instance doctrineFloorDecidable (φ : FloorSpec) (s : DoctrineState) :
   unfold DoctrineFloorHolds
   cases φ <;> infer_instance
 
+/-- The sealed Boolean checker `floorHoldsB` decides exactly the declarative `DoctrineFloorHolds`. -/
+theorem floorHoldsB_iff (φ : FloorSpec) (s : DoctrineState) :
+    floorHoldsB φ s = true ↔ DoctrineFloorHolds φ s := by
+  cases φ <;> simp [floorHoldsB, DoctrineFloorHolds]
+
 /-- Step function for `vaultDoctrineHabitat`. -/
-@[expose] def stepDoctrine (a : DoctrineAct) (s : DoctrineState) : DoctrineState :=
+def stepDoctrine (a : DoctrineAct) (s : DoctrineState) : DoctrineState :=
   match a with
   | .revert => { s with current := { s.current with stepsFromHome := 0 } }
   | .writeKind next => { s with current := next }
   | .recordAudit note => { s with auditLog := s.auditLog ++ [note] }
 
 /-- Action format tag for `vaultDoctrineHabitat`. -/
-@[expose] def doctrineFormat : DoctrineAct → String
+def doctrineFormat : DoctrineAct → String
   | .revert => "revert"
   | .writeKind _ => "vault-kind-write"
   | .recordAudit _ => "audit-note"
 
 /-- Habitat-proved format preservation table (`revert` and `audit-note` preserve every `FloorSpec`). -/
-@[expose] def doctrineProved (fmt : String) (_φ : FloorSpec) : Bool :=
+def doctrineProved (fmt : String) (_φ : FloorSpec) : Bool :=
   fmt == "revert" || fmt == "audit-note"
 
 theorem doctrineProved_sound {fmt : String} {φ : FloorSpec} (hp : doctrineProved fmt φ = true) :
@@ -541,6 +546,20 @@ theorem doctrineProved_sound {fmt : String} {φ : FloorSpec} (hp : doctrineProve
     subst hfmt
     simp [doctrineProved, doctrineFormat] at hp
 
+/-- The operator's `revert` is proved for every floor (`Genealogy.Habitat.revert_proved`). -/
+theorem doctrineProved_revert (φ : FloorSpec) : doctrineProved (doctrineFormat .revert) φ = true := by
+  rfl
+
+/-- `doctrineProved` is inhabited at both proved formats, and `doctrineProved_sound` then carries the
+    corrigibility floor across a concrete `revert` from five steps out. -/
+example :
+    doctrineProved (doctrineFormat .revert) (.corrigibilityHome 8) = true ∧
+    doctrineProved (doctrineFormat (.recordAudit "note")) (.maxCounter "laptop_builds" 0) = true ∧
+    DoctrineFloorHolds (.corrigibilityHome 8)
+      (stepDoctrine .revert ⟨⟨[("laptop_builds", 0)], ["gate"], 5⟩, []⟩) :=
+  ⟨by decide, by decide,
+    doctrineProved_sound (fmt := "revert") (by decide) .revert _ rfl (by decide)⟩
+
 /-- **`vaultDoctrineHabitat`**: concrete `Genealogy.Habitat` governing Vault `_kind` doctrine succession. -/
 @[expose] def vaultDoctrineHabitat : Genealogy.Habitat where
   State := DoctrineState
@@ -552,13 +571,13 @@ theorem doctrineProved_sound {fmt : String} {φ : FloorSpec} (hp : doctrineProve
   proved := doctrineProved
   proved_sound := doctrineProved_sound
   revert := .revert
-  revert_proved _ := rfl
+  revert_proved := doctrineProved_revert
   bedrock
     | .corrigibilityHome _ => true
     | _ => false
 
 /-- Build a canonical kernel-backed `Genealogy.Gate` for `vaultDoctrineHabitat` over `floors`. -/
-@[expose] def mkDoctrineGate (name : String) (floors : List FloorSpec) :
+def mkDoctrineGate (name : String) (floors : List FloorSpec) :
     Genealogy.Gate vaultDoctrineHabitat :=
   { name := name
     formats := ["revert", "vault-kind-write", "audit-note"]
@@ -571,12 +590,12 @@ theorem doctrineProved_sound {fmt : String} {φ : FloorSpec} (hp : doctrineProve
 
 /-- Genesis `Reground` `G4` gate: corrigibility home `<= 8`, `laptop_builds <= 0`,
     `git_add_all <= 0`, and mandatory `"gate"` line. -/
-@[expose] def genesisDoctrineGate : Genealogy.Gate vaultDoctrineHabitat :=
+def genesisDoctrineGate : Genealogy.Gate vaultDoctrineHabitat :=
   mkDoctrineGate "genesis-doctrine"
     [.corrigibilityHome 8, .maxCounter "laptop_builds" 0, .maxCounter "git_add_all" 0, .mandatoryLine "gate"]
 
 /-- Boolean succession check for label-free (`[]`) kernel `Reground` transitions. -/
-@[expose] def checkDoctrineSuccession
+def checkDoctrineSuccession
     (cur : Genealogy.Gate vaultDoctrineHabitat)
     (s : DoctrineState)
     (next : Genealogy.Gate vaultDoctrineHabitat) : Bool :=
@@ -759,7 +778,7 @@ theorem vaultDoctrine_refuses_loosening
   | .field _ | .labelConst _ => false
 
 /-- Read a numeric request/ledger fact directly from `facts` (state-independent). -/
-@[expose] def readFactRef (facts : Facts) : LawRef → Option Int
+def readFactRef (facts : Facts) : LawRef → Option Int
   | .subject => facts.subject.map Int.ofNat
   | .caller => facts.caller.map Int.ofNat
   | .height => some (Int.ofNat facts.height)
@@ -786,18 +805,18 @@ theorem vaultDoctrine_refuses_loosening
   .record (keys.map fun k => (k, .natural (env k)))
 
 /-- Conjoin a precedence list of `(name, LawExpr)` laws into a single `LawExpr`. -/
-@[expose] def conjLaws : List (String × LawExpr) → LawExpr
+def conjLaws : List (String × LawExpr) → LawExpr
   | [] => LawExpr.eqR .turn .turn
   | [(_, e)] => e
   | (_, e) :: rest => .and e (conjLaws rest)
 
 /-- Check whether `cand` satisfies every law on `lin` at occasion `occ` from prior state `o`. -/
-@[expose] def allLawsHold (lin : List (String × LawExpr)) (facts : Facts) (o cand : Data)
+def allLawsHold (lin : List (String × LawExpr)) (facts : Facts) (o cand : Data)
     (occ : Vault.Occ) : Bool :=
   lin.all fun p => p.2.denote facts (occ.old o cand) cand
 
 /-- Effective old state seen by `monotone`/`writeOnce` on natural states (`adopt` acts like `none`). -/
-@[expose] def effectiveOldForOcc (occ : Vault.Occ) (o : Data) : Option Data :=
+def effectiveOldForOcc (occ : Vault.Occ) (o : Data) : Option Data :=
   match occ with
   | .write => some o
   | .birth | .adopt => none
@@ -837,12 +856,12 @@ def atomBound (facts : Facts) (old : Option Data) (env : String → Nat) (e : La
   | _ => 0
 
 /-- One parallel upward relaxation pass across all laws in `lin`. -/
-@[expose] def raiseLinEnv (facts : Facts) (old : Option Data) (lin : List (String × LawExpr))
+def raiseLinEnv (facts : Facts) (old : Option Data) (lin : List (String × LawExpr))
     (env : String → Nat) (h : String) : Nat :=
   lin.foldl (fun acc p => max acc (atomBound facts old env p.2 h)) (env h)
 
 /-- Early-stopping Kleene least-fixpoint iteration up to `fuel` rounds. -/
-@[expose] def kleeneLoop (keys : List String) (facts : Facts) (old : Option Data)
+def kleeneLoop (keys : List String) (facts : Facts) (old : Option Data)
     (lin : List (String × LawExpr)) : Nat → (String → Nat) → (String → Nat)
   | 0, env => env
   | fuel + 1, env =>
@@ -857,7 +876,7 @@ structure PassingDelta where
   deriving Repr
 
 /-- Build a `PassingDelta` recording the natural-field assignments on `keys` that differ from `cur`. -/
-@[expose] def mkPassingDelta (keys : List String) (cur : Data) (env : String → Nat) : PassingDelta :=
+def mkPassingDelta (keys : List String) (cur : Data) (env : String → Nat) : PassingDelta :=
   { targetState := stateFromEnv keys env
     edits := keys.filterMap fun k =>
       let v := env k
@@ -869,7 +888,7 @@ structure PassingDelta where
     2. Falls back to the monotone Kleene least-fixpoint solver `kleeneLoop` with bound `cap`
        (`keys.length * cap + 1` rounds, early-exiting on stabilization), which avoids upper/lower
        oscillation and is **complete** for all satisfiable difference-constraint systems bounded by `cap`. -/
-@[expose] def synthesizePassingDelta (keys : List String) (lin : List (String × LawExpr))
+def synthesizePassingDelta (keys : List String) (lin : List (String × LawExpr))
     (facts : Facts) (o cur : Data) (occ : Vault.Occ) (cap : Nat) : Option PassingDelta :=
   let old := effectiveOldForOcc occ o
   let dialEnv : String → Nat :=
@@ -889,7 +908,7 @@ structure PassingDelta where
 
 /-- Graded counterpart to `Vault.judge` parameterized by step budget `fuel` (`Vault.judge` is
     `judgeAtFuel Vault.lawFuel`). -/
-@[expose] def judgeAtFuel (fuel : Nat) (S : Ty) (pkg : String) (lin : List (String × LawExpr))
+def judgeAtFuel (fuel : Nat) (S : Ty) (pkg : String) (lin : List (String × LawExpr))
     (o n rq : Data) : Vault.Verdict :=
   if lin.all (fun p => Obend.Spec.LawCompile.Fits S p.2 o && Obend.Spec.LawCompile.Fits S p.2 n) then
     if (Vault.compiled S pkg lin).all (fun p => Obend.Law.closedB p.2) then
@@ -898,7 +917,8 @@ structure PassingDelta where
   else .undecided "the page state does not fit a law"
 
 theorem judgeAtFuel_lawFuel_eq (S : Ty) (pkg : String) (lin : List (String × LawExpr)) (o n rq : Data) :
-    judgeAtFuel Vault.lawFuel S pkg lin o n rq = Vault.judge S pkg lin o n rq := rfl
+    judgeAtFuel Vault.lawFuel S pkg lin o n rq = Vault.judge S pkg lin o n rq := by
+  rfl
 
 /-! ### 4.1 Core4 Closedness, `Fits` on `stateFromEnv`, and `run` Completeness -/
 

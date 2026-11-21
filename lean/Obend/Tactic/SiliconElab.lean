@@ -47,7 +47,7 @@ public import Obend.Judge.RealAnalysis
 public import Obend.Analysis.SosLyapunov
 public import Obend.Tactic.Tooth
 
-@[expose] public section
+public section
 
 /-! ## 1. Canonical Self-Hosting Symbol Aliases -/
 
@@ -291,16 +291,15 @@ def quadMinusLinearExpr : RealExpr :=
 def domZeroToTwo : Interval := ⟨0, 2⟩
 def tightQuadBound : Interval := ⟨CanonicalRat.mk (-1) 2, CanonicalRat.mk 5 2⟩
 
-theorem quadMinusLinear_subdiv_depth0_and_depth3 :
-    verifyRealBoundSubdiv 0 "x" domZeroToTwo quadMinusLinearExpr tightQuadBound = false ∧
-    verifyRealBoundSubdiv 3 "x" domZeroToTwo quadMinusLinearExpr tightQuadBound = true := by
+example : verifyRealBoundSubdiv 0 "x" domZeroToTwo quadMinusLinearExpr tightQuadBound = false := by decide +kernel
+example : verifyRealBoundSubdiv 3 "x" domZeroToTwo quadMinusLinearExpr tightQuadBound = true := by
   decide +kernel
 
 theorem quadMinusLinear_subdiv_encloses
     (rho : String → CanonicalRat) (hDom : rho "x" ∈ domZeroToTwo) :
     evalExpr rho quadMinusLinearExpr ∈ tightQuadBound :=
   verifyRealBoundSubdiv_sound 3 "x" domZeroToTwo quadMinusLinearExpr tightQuadBound
-    quadMinusLinear_subdiv_depth0_and_depth3.2 rho hDom
+    (by decide +kernel) rho hDom
 
 /-- Negative-endpoint high-depth (`depth = 7`) subdivision benchmark: $e(x) = x^2 + x$ over $x \in [-1, 0]$. -/
 def quadPlusLinearExpr : RealExpr :=
@@ -309,16 +308,15 @@ def quadPlusLinearExpr : RealExpr :=
 def negDomMinusOneToZero : Interval := ⟨-1, 0⟩
 def tightNegQuadBound : Interval := ⟨CanonicalRat.mk (-9) 32, CanonicalRat.mk 1 32⟩
 
-theorem quadPlusLinear_negDom_depth0_and_depth7 :
-    verifyRealBoundSubdiv 0 "x" negDomMinusOneToZero quadPlusLinearExpr tightNegQuadBound = false ∧
-    verifyRealBoundSubdiv 7 "x" negDomMinusOneToZero quadPlusLinearExpr tightNegQuadBound = true := by
+example : verifyRealBoundSubdiv 0 "x" negDomMinusOneToZero quadPlusLinearExpr tightNegQuadBound = false := by decide +kernel
+example : verifyRealBoundSubdiv 7 "x" negDomMinusOneToZero quadPlusLinearExpr tightNegQuadBound = true := by
   decide +kernel
 
 theorem quadPlusLinear_negDom_depth7_encloses
     (rho : String → CanonicalRat) (hDom : rho "x" ∈ negDomMinusOneToZero) :
     evalExpr rho quadPlusLinearExpr ∈ tightNegQuadBound :=
   verifyRealBoundSubdiv_sound 7 "x" negDomMinusOneToZero quadPlusLinearExpr tightNegQuadBound
-    quadPlusLinear_negDom_depth0_and_depth7.2 rho hDom
+    (by decide +kernel) rho hDom
 
 /-- 2D multivariate expression $e(x, y) = (x^2 - x) + (y^2 - y)$ over $(x, y) \in [0, 2] \times [0, 2]$. -/
 def quad2DBoxExpr : RealExpr :=
@@ -327,9 +325,8 @@ def quad2DBoxExpr : RealExpr :=
 def box2DZeroToTwo : IntervalEnv := [("x", domZeroToTwo), ("y", domZeroToTwo)]
 def tight2DBoxBound : Interval := ⟨-1, 5⟩
 
-theorem quad2DBox_subdiv_certifies :
-    verifyRealBoxBoundSubdiv [] box2DZeroToTwo quad2DBoxExpr tight2DBoxBound = false ∧
-    verifyRealBoxBoundSubdiv ["x", "y", "x", "y", "x", "y"] box2DZeroToTwo quad2DBoxExpr tight2DBoxBound = true := by
+example : verifyRealBoxBoundSubdiv [] box2DZeroToTwo quad2DBoxExpr tight2DBoxBound = false := by decide +kernel
+example : verifyRealBoxBoundSubdiv ["x", "y", "x", "y", "x", "y"] box2DZeroToTwo quad2DBoxExpr tight2DBoxBound = true := by
   decide +kernel
 
 theorem quad2DBox_subdiv_encloses
@@ -337,7 +334,7 @@ theorem quad2DBox_subdiv_encloses
     (hBox : ∀ v I, box2DZeroToTwo.lookup v = some I → rho v ∈ I) :
     evalExpr rho quad2DBoxExpr ∈ tight2DBoxBound :=
   verifyRealBoxBoundSubdiv_sound ["x", "y", "x", "y", "x", "y"] box2DZeroToTwo quad2DBoxExpr tight2DBoxBound
-    quad2DBox_subdiv_certifies.2 rho hBox
+    (by decide +kernel) rho hBox
 
 /-- **Theorem (`sos_cert_implies_nonneg`)**:
 Hardware-accelerated SOS Gram certificate soundness: whenever `sosCheck fuel q c = Judge.Verdict.ok`,
@@ -357,9 +354,10 @@ def sampleSosNonnegCert : SOSCert where
   sigmas  := []
   lambdas := []
 
-theorem sampleSosNonneg_holds :
-    SOSQuery.SemanticMeaning sampleSosNonnegQuery :=
-  sos_cert_implies_nonneg 0 sampleSosNonnegQuery sampleSosNonnegCert (by decide +kernel)
+theorem sampleSosNonneg_holds (ρ : Nat → CanonicalRat) :
+    (∀ g ∈ sampleSosNonnegQuery.ineqs, 0 ≤ g.eval ρ) →
+    (∀ h ∈ sampleSosNonnegQuery.eqs, h.eval ρ = 0) → 0 ≤ sampleSosNonnegQuery.goal.eval ρ :=
+  sos_cert_implies_nonneg 0 sampleSosNonnegQuery sampleSosNonnegCert (by decide +kernel) ρ
 
 /-! ## 3. Bounded Host `Lean.Expr` Ingestion, 88-Bit `HwExprCAM` Packing & `#silicon_check` -/
 

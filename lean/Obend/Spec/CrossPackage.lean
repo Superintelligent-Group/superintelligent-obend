@@ -22,7 +22,7 @@ public import Obend.Leaf.Specialize
 public import Obend.Lower.Transport
 public import Obend.Equiv.Clairvoyant
 public import Obend.Tactic.Tooth
-@[expose] public section
+public section
 namespace Obend.Spec.CrossPackage
 open Obend.Core.Term
 open Obend.Equiv
@@ -34,11 +34,11 @@ open Obend.Slot.World
 set_option autoImplicit false
 
 /-- The list of member names modified (provided) by an overlay layer `L`. -/
-def overlayModifiedFields (L : Layer) : List String :=
+@[expose] def overlayModifiedFields (L : Layer) : List String :=
   L.fields.map Prod.fst
 
 /-- Link a cross-package override layer `L` on top of an existing open-recursive composition `C`. -/
-def linkComposition (C : Composition) (L : Layer) : Composition where
+@[expose] def linkComposition (C : Composition) (L : Layer) : Composition where
   top := L
   below := C.layers
   seed := C.seed
@@ -156,8 +156,8 @@ theorem holdsAt_viewOf_linkComposition_of_not_mem
     holdsAt (viewOf k objectName (linkComposition C L)) (memberConePin C m) =
     holdsAt (viewOf k objectName C) (memberConePin C m) := by
   rw [holdsAt_eq, holdsAt_eq]
-  simp only [viewOf, memberConePin,
-    resolveLayerDecl_linkComposition_of_not_mem C L (C.provenance m ++ "." ++ m) hflat hlname hsplit]
+  simp only [resolveLayerDecl_linkComposition_of_not_mem C L (C.provenance m ++ "." ++ m)
+    hflat hlname hsplit]
 
 /-- **`crossPackage_disjoint_override_preserves_transportedSlot_and_specSlot` (`OB5` / `LT5`)**:
 When a cross-package override layer `L` (`L.flat = false`) modifies only fields disjoint from
@@ -201,7 +201,7 @@ theorem crossPackage_disjoint_override_preserves_transportedSlot_and_specSlot
     obtain ⟨m, hm, rfl⟩ := hp
     rw [hview_agree m hm]
     exact hall (memberConePin C m) (by
-      simp only [ specSlot, Candidate.supports, coneSupports, List.mem_map]
+      simp only [Candidate.supports, coneSupports, List.mem_map]
       exact ⟨m, hm, rfl⟩)
   have hspec_us' : specSlot.usable (holdsAt v') (.slotBook objectName member C defItem) = true :=
     (usable_iff specSlot (holdsAt v') (.slotBook objectName member C defItem)).2 ⟨hj, hall'⟩

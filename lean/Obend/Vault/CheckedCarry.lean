@@ -15,9 +15,11 @@ Mathlib-free pure Lean 4 port of `minidregg/Theory/CheckedCarry.lean` onto
 2. **Neutral Authority Lift (`AuthorityMeaning`)**:
    - Over `Transport.Grants` (standing + two-phase `revoked` set) and `Retention.Contract`
      (`retire`, `abandon`), changing commitment roots (`grantRoot`, `storeRoot`) while
-     preserving `AuthorityMeaning` preserves `AdmissibleCarry` iff (`neutral_capability_iff`),
-     while revoking a grant (`Grants.revoke`), retiring a form, abandoning a branch, or
-     resetting `logicalHeight` to `0` strictly refuses admission (`AuthorityPoles`).
+     preserving `AuthorityMeaning` preserves `AdmissibleCarry` iff (`neutral_capability_iff`,
+     `rerooting_preserves_meaning`), while revoking a grant (`revoke_refuses_carry`), retiring a
+     form (`retired_form_refuses_carry`), abandoning a branch (`abandoned_branch_refuses_carry`),
+     or a `logicalHeight` below `validFrom` (`early_height_refuses_carry`) refuses admission from
+     every state; `AuthorityPoles` instantiates each law on a concrete grant.
 3. **Semantic Field Migration (`TitleMigration`)**:
    - `copied_title_grant_not_semantic_narrowing`: copying raw numeric field grants across a
      schema migration where slots `3` and `8` remap to `7` and `3` fails `NoNewMeaning`
@@ -34,7 +36,7 @@ Mathlib-free pure Lean 4 port of `minidregg/Theory/CheckedCarry.lean` onto
 public import Obend.Vault.Retention
 public import Obend.Vault.Transport
 
-@[expose] public section
+public section
 
 namespace Obend.Vault.CheckedCarry
 
@@ -96,7 +98,7 @@ theorem duplicate_output_refused {source : List Cell} {relation : Cell → Cell 
   exact different (plan.outputsUnique i j left right hi hj same)
 
 /-- Stronger law-component cut: every source cell is kept (`NoDrops`). -/
-def NoDrops {source : List Cell} {relation : Cell → Cell → Prop}
+@[expose] def NoDrops {source : List Cell} {relation : Cell → Cell → Prop}
     (plan : Plan source relation) : Prop :=
   ∀ i, ∃ target, plan.decideCell i = .keep target
 
@@ -128,7 +130,7 @@ theorem Plan.noDrops_maps_all_cells {source : List Cell} {rel : Cell → Cell �
 
 /-- A drop is authorized by a declared `Retention.Contract` iff the source cell is listed in
     `retContract.retire` and the drop names `retContract.name`. -/
-def DropAuthorizedBy (retContract : Retention.Contract) (src : Cell) (reason : DropReason) : Prop :=
+@[expose] def DropAuthorizedBy (retContract : Retention.Contract) (src : Cell) (reason : DropReason) : Prop :=
   src.id ∈ retContract.retire ∧ reason.contractName = retContract.name
 
 /-- A `Plan` aligned with a `Retention.Contract`: every `.drop` is authorized by `retContract`. -/
@@ -173,11 +175,11 @@ structure CarryRequest where
   deriving DecidableEq, Repr
 
 /-- Write scope coverage for `pages` under a standing grant `s` and `scope`. -/
-def CoversPages (s : Standing) (scope pages : List String) : Prop :=
+@[expose] def CoversPages (s : Standing) (scope pages : List String) : Prop :=
   ∀ p ∈ pages, mayWrite (s.grant.viewer scope) p = true
 
 /-- Capability and retention admission predicate over `VaultAuthState`. -/
-def AdmissibleCarry (st : VaultAuthState) (req : CarryRequest) : Prop :=
+@[expose] def AdmissibleCarry (st : VaultAuthState) (req : CarryRequest) : Prop :=
   ∃ standing : Standing,
     standing ∈ st.grants.live ∧
     standing.id = req.grantId ∧
@@ -229,6 +231,38 @@ theorem neutral_write_scope_iff {old next : VaultAuthState}
       (s ∈ next.grants.live ∧ CoversPages s scope pages) := by
   rw [same.liveIff s]
 
+/-! ### Universal Refusal Laws Over `Transport.Grants` & `Retention.Contract` -/
+
+/-- Rerooting the commitment digests of any state preserves its `AuthorityMeaning`. -/
+theorem rerooting_preserves_meaning (st : VaultAuthState) (grantRoot storeRoot : Digest) :
+    AuthorityMeaning st { st with grantRoot := grantRoot, storeRoot := storeRoot } :=
+  ⟨fun _ => Iff.rfl, rfl, rfl, rfl, rfl⟩
+
+/-- Revoking the grant a request names refuses that request, from every state. -/
+theorem revoke_refuses_carry (st : VaultAuthState) (req : CarryRequest) :
+    ¬ AdmissibleCarry { st with grants := st.grants.revoke req.grantId } req := by
+  rintro ⟨standing, isLive, idEq, _⟩
+  exact ((mem_live_revoke st.grants req.grantId standing).mp isLive).2 idEq
+
+/-- A request for a form the retention contract retires is refused. -/
+theorem retired_form_refuses_carry {st : VaultAuthState} {req : CarryRequest}
+    (retired : req.formName ∈ st.retention.retire) : ¬ AdmissibleCarry st req := by
+  rintro ⟨_, _, _, _, _, _, _, formNotRetired, _⟩
+  exact formNotRetired retired
+
+/-- A request on a branch the retention contract abandons is refused. -/
+theorem abandoned_branch_refuses_carry {st : VaultAuthState} {req : CarryRequest} {branch : String}
+    (named : req.branchName = some branch) (abandoned : branch ∈ st.retention.abandon) :
+    ¬ AdmissibleCarry st req := by
+  rintro ⟨_, _, _, _, _, _, _, _, branchNotAbandoned⟩
+  exact branchNotAbandoned branch named abandoned
+
+/-- A request is refused at any logical height before its validity window opens. -/
+theorem early_height_refuses_carry {st : VaultAuthState} {req : CarryRequest}
+    (early : st.logicalHeight < req.validFrom) : ¬ AdmissibleCarry st req := by
+  rintro ⟨_, _, _, _, _, validFromLe, _⟩
+  exact Nat.not_le_of_lt early validFromLe
+
 /-! ### Concrete Semantic Poles Over `Transport.Grants` & `Retention.Contract` -/
 
 namespace AuthorityPoles
@@ -254,26 +288,32 @@ def demoRequest : CarryRequest :=
   , validFrom := 10
   , validUntil := 100 }
 
-theorem demoRequest_admissible : AdmissibleCarry demoState demoRequest := by
-  refine ⟨demoStanding, by decide, rfl, rfl, ?_, by decide, by decide, by decide, ?_⟩
-  · intro p hp
-    simp only [demoRequest, List.mem_singleton] at hp
-    subst hp
-    decide
-  · intro b hb
-    injection hb with hb'
-    subst hb'
-    decide
+/-- The demo capability is admissible under every rerooting of `demoState`'s commitment digests. -/
+theorem live_capability_survives_rerooting {grantRoot storeRoot : Digest} :
+    AdmissibleCarry { demoState with grantRoot := grantRoot, storeRoot := storeRoot }
+      demoRequest := by
+  have base : AdmissibleCarry demoState demoRequest := by
+    refine ⟨demoStanding, by decide, rfl, rfl, ?_, by decide, by decide, by decide, ?_⟩
+    · intro p hp
+      simp only [demoRequest, List.mem_singleton] at hp
+      subst hp
+      decide
+    · intro b hb
+      injection hb with hb'
+      subst hb'
+      decide
+  exact neutral_capability_forward (rerooting_preserves_meaning demoState grantRoot storeRoot)
+    demoRequest base
 
 def rerooted : VaultAuthState :=
   { demoState with
     grantRoot := ByteArray.mk #[0xAA, 0xBB]
     storeRoot := ByteArray.mk #[0xCC, 0xDD] }
 
-theorem same_meaning : AuthorityMeaning demoState rerooted :=
-  ⟨fun _ => Iff.rfl, rfl, rfl, rfl, rfl⟩
+example : AuthorityMeaning demoState rerooted := rerooting_preserves_meaning demoState _ _
 
-theorem commitments_changed :
+/-- Rerooting really moves both commitment digests of the demo state. -/
+example :
     demoState.grantRoot ≠ rerooted.grantRoot ∧
       demoState.storeRoot ≠ rerooted.storeRoot := by
   constructor <;>
@@ -281,35 +321,45 @@ theorem commitments_changed :
     have hlist := congrArg (fun b => b.data.toList) h
     simp [demoState, rerooted] at hlist
 
-theorem live_capability_survives_rerooting :
-    AdmissibleCarry rerooted demoRequest :=
-  neutral_capability_forward same_meaning demoRequest demoRequest_admissible
+example : AdmissibleCarry rerooted demoRequest := live_capability_survives_rerooting
 
 def revokedState : VaultAuthState :=
   { rerooted with grants := rerooted.grants.revoke "grant-treasury-1" }
 
-theorem fresh_revoked_capability_refused :
-    ¬ AdmissibleCarry revokedState demoRequest := by
-  rintro ⟨standing, isLive, idEq, _⟩
-  have hlive := (mem_live_revoke rerooted.grants "grant-treasury-1" standing).mp isLive
-  exact hlive.2 idEq
+/-- Revoking the demo grant refuses the demo request from every state. -/
+theorem fresh_revoked_capability_refused {st : VaultAuthState} :
+    ¬ AdmissibleCarry { st with grants := st.grants.revoke demoRequest.grantId } demoRequest :=
+  revoke_refuses_carry st demoRequest
+
+example : ¬ AdmissibleCarry revokedState demoRequest := fresh_revoked_capability_refused
 
 def retiredFormState : VaultAuthState :=
   { rerooted with
     retention := { rerooted.retention with retire := "drex-order-v1" :: rerooted.retention.retire } }
 
-theorem retired_form_refused :
-    ¬ AdmissibleCarry retiredFormState demoRequest := by
-  rintro ⟨_, _, _, _, _, _, _, formNotRetired, _⟩
-  exact formNotRetired (List.Mem.head _)
+/-- Retiring the demo request's form refuses it from every state. -/
+theorem retired_form_refused {st : VaultAuthState} :
+    ¬ AdmissibleCarry
+      { st with
+        retention := { st.retention with retire := demoRequest.formName :: st.retention.retire } }
+      demoRequest :=
+  retired_form_refuses_carry (List.Mem.head _)
+
+example : ¬ AdmissibleCarry retiredFormState demoRequest := retired_form_refused
+
+example : ¬ AdmissibleCarry rerooted { demoRequest with branchName := some "stale-fork" } :=
+  abandoned_branch_refuses_carry rfl (by decide)
 
 def resetHeightState : VaultAuthState :=
   { rerooted with logicalHeight := 0 }
 
-theorem resetting_segment_height_does_not_refresh_grant :
-    ¬ AdmissibleCarry resetHeightState demoRequest := by
-  rintro ⟨_, _, _, _, _, validFromLe, _⟩
-  simp [resetHeightState, demoRequest] at validFromLe
+/-- Resetting the logical height to `0` refuses the demo request from every state. -/
+theorem resetting_segment_height_does_not_refresh_grant {st : VaultAuthState} :
+    ¬ AdmissibleCarry { st with logicalHeight := 0 } demoRequest :=
+  early_height_refuses_carry (show 0 < demoRequest.validFrom by decide)
+
+example : ¬ AdmissibleCarry resetHeightState demoRequest :=
+  resetting_segment_height_does_not_refresh_grant
 
 end AuthorityPoles
 
@@ -324,7 +374,7 @@ inductive FieldSlot where
 /-- Explicit field-slot grant (`none` = unrestricted, `some slots` = restricted to `slots`). -/
 abbrev FieldGrant := Option (List FieldSlot)
 
-def FieldGrant.NamedBy (g : FieldGrant) (f : FieldSlot) : Prop :=
+@[expose] def FieldGrant.NamedBy (g : FieldGrant) (f : FieldSlot) : Prop :=
   match g with
   | none => True
   | some slots => f ∈ slots
@@ -336,7 +386,7 @@ instance (g : FieldGrant) (f : FieldSlot) : Decidable (FieldGrant.NamedBy g f) :
     unfold FieldGrant.NamedBy
     infer_instance
 
-def FieldGrant.SetNarrows (sub sup : FieldGrant) : Prop :=
+@[expose] def FieldGrant.SetNarrows (sub sup : FieldGrant) : Prop :=
   ∀ f, FieldGrant.NamedBy sub f → FieldGrant.NamedBy sup f
 
 theorem FieldGrant.SetNarrows.refl (g : FieldGrant) : FieldGrant.SetNarrows g g :=
@@ -361,30 +411,25 @@ def copiedGrant : FieldGrant := oldGrant
 
 /-- A migrated field grant introduces no new semantic authority: every semantic field
     permitted in the target schema was permitted in the source schema. -/
-def NoNewMeaning (oldFields newFields : FieldGrant) : Prop :=
+@[expose] def NoNewMeaning (oldFields newFields : FieldGrant) : Prop :=
   ∀ meaning, FieldGrant.NamedBy newFields (nextField meaning) →
     FieldGrant.NamedBy oldFields (oldField meaning)
 
-theorem numeric_subset_is_insufficient :
-    FieldGrant.SetNarrows copiedGrant oldGrant :=
-  FieldGrant.SetNarrows.refl oldGrant
-
-theorem copied_title_grant_gives_membership :
-    FieldGrant.NamedBy copiedGrant (nextField .membership) := by decide
+/-- The copied grant is a numeric subset of the old one, which is exactly what is insufficient. -/
+example : FieldGrant.SetNarrows copiedGrant oldGrant := FieldGrant.SetNarrows.refl oldGrant
 
 /-- Naive numeric slot copying across schema migration fails `NoNewMeaning`:
     a `.title`-only grant (`slot 3`) silently acquires `.membership` authority (`slot 3` in next). -/
-theorem copied_title_grant_not_semantic_narrowing :
-    ¬ NoNewMeaning oldGrant copiedGrant := by
-  intro supposed
-  have forbidden := supposed .membership copied_title_grant_gives_membership
+theorem copied_title_grant_not_semantic_narrowing
+    (supposed : NoNewMeaning oldGrant copiedGrant) : False := by
+  have granted : FieldGrant.NamedBy copiedGrant (nextField .membership) := by decide
   have absent : ¬ FieldGrant.NamedBy oldGrant (oldField .membership) := by decide
-  exact absent forbidden
+  exact absent (supposed .membership granted)
 
 /-- Semantic translation (`slot 3 → slot 7`) preserves `NoNewMeaning`. -/
-theorem translated_title_grant_preserves_meaning :
-    NoNewMeaning oldGrant correctGrant := by
-  intro meaning allowed
+theorem translated_title_grant_preserves_meaning (meaning : Meaning)
+    (allowed : FieldGrant.NamedBy correctGrant (nextField meaning)) :
+    FieldGrant.NamedBy oldGrant (oldField meaning) := by
   cases meaning with
   | title => decide
   | membership =>
@@ -425,9 +470,16 @@ theorem translated_effect_exact (document : Document) (edit : Edit) :
     · simp [translate, nextStep, oldStep, member]
     · simp [translate, oldStep, title, member]
 
-theorem byte_copy_changes_the_wrong_field :
+/-- A byte-copied edit of old slot `3` writes `membership` in the next schema where the old
+    schema wrote `title`, for every document and value. -/
+theorem byte_copy_changes_the_wrong_field (document : Document) (value : Nat) :
+    nextStep document ⟨3, value⟩ = some { document with membership := value } ∧
+    oldStep document ⟨3, value⟩ = some { document with title := value } := by
+  simp [nextStep, oldStep]
+
+example :
     nextStep ⟨10, 0⟩ ⟨3, 17⟩ = some ⟨10, 17⟩ ∧
-    oldStep ⟨10, 0⟩ ⟨3, 17⟩ = some ⟨17, 0⟩ := by decide
+    oldStep ⟨10, 0⟩ ⟨3, 17⟩ = some ⟨17, 0⟩ := byte_copy_changes_the_wrong_field ⟨10, 0⟩ 17
 
 end TitleMigration
 
@@ -490,7 +542,8 @@ def TranslatedRequest.recovery (request : TranslatedRequest) (journal : List Rec
 
 theorem translated_original_same_recovery (request : TranslatedRequest)
     (journal : List Receipt) :
-    request.recovery journal = recover journal request.origin request.meaning := rfl
+    request.recovery journal = recover journal request.origin request.meaning := by
+  rfl
 
 inductive Admission where
   | accepted (journal : List Receipt) (outcome : Digest)

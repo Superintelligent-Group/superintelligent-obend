@@ -51,7 +51,7 @@ structure DataRefinement (Spec : Type u) (Exec : Type v) where
 namespace PackedExec
 variable {Spec : Type u} {Exec : Type v} {R : DataRefinement Spec Exec}
 /-- The specification value of a well-formed representation. -/
-@[expose] def toSpec (p : PackedExec R) : Spec := R.alpha p.val p.property
+def toSpec (p : PackedExec R) : Spec := R.alpha p.val p.property
 theorem refines (p : PackedExec R) : Refines R p.toSpec p.val := ⟨p.property, rfl⟩
 end PackedExec
 
@@ -67,7 +67,7 @@ theorem alpha_eq {s : Spec} {e : Exec} (h : Refines R s e) : R.alpha e h.wf = s 
 theorem unique {s s' : Spec} {e : Exec} (h : Refines R s e) (h' : Refines R s' e) : s = s' :=
   h.alpha_eq.symm.trans h'.alpha_eq
 /-- Pack a refined representation. -/
-@[expose] def pack {s : Spec} {e : Exec} (h : Refines R s e) : PackedExec R := ⟨e, h.wf⟩
+def pack {s : Spec} {e : Exec} (h : Refines R s e) : PackedExec R := ⟨e, h.wf⟩
 theorem pack_toSpec {s : Spec} {e : Exec} (h : Refines R s e) : h.pack.toSpec = s := h.alpha_eq
 end Refines
 theorem refines_iff_packed {Spec : Type u} {Exec : Type v} (R : DataRefinement Spec Exec) (s : Spec)
@@ -76,13 +76,13 @@ theorem refines_iff_packed {Spec : Type u} {Exec : Type v} (R : DataRefinement S
 
 namespace DataRefinement
 /-- Every value represents itself. -/
-@[expose] protected def id (α : Type u) : DataRefinement α α where
+protected def id (α : Type u) : DataRefinement α α where
   WF _ := True
   alpha e _ := e
 theorem refines_id {α : Type u} (s e : α) : Refines (DataRefinement.id α) s e ↔ e = s :=
   ⟨fun ⟨_, h⟩ => h, fun h => ⟨trivial, h⟩⟩
 /-- Refinements compose: `C` represents `B` represents `A`. -/
-@[expose] def comp {A : Type u} {B : Type v} {C : Type w} (R₁ : DataRefinement A B)
+def comp {A : Type u} {B : Type v} {C : Type w} (R₁ : DataRefinement A B)
     (R₂ : DataRefinement B C) : DataRefinement A C where
   WF c := ∃ h : R₂.WF c, R₁.WF (R₂.alpha c h)
   alpha c h := R₁.alpha (R₂.alpha c (match h with | ⟨h₂, _⟩ => h₂)) (match h with | ⟨_, h₁⟩ => h₁)
@@ -96,7 +96,7 @@ theorem refines_comp {A : Type u} {B : Type v} {C : Type w} (R₁ : DataRefineme
     subst he₂
     exact ⟨⟨h₂, h₁⟩, he₁⟩
 /-- Refinements of the two components refine the pair. -/
-@[expose] def prod {S₁ : Type u₁} {E₁ : Type v₁} {S₂ : Type u₂} {E₂ : Type v₂}
+def prod {S₁ : Type u₁} {E₁ : Type v₁} {S₂ : Type u₂} {E₂ : Type v₂}
     (R₁ : DataRefinement S₁ E₁) (R₂ : DataRefinement S₂ E₂) : DataRefinement (S₁ × S₂) (E₁ × E₂) where
   WF p := R₁.WF p.1 ∧ R₂.WF p.2
   alpha p h := (R₁.alpha p.1 h.1, R₂.alpha p.2 h.2)
@@ -110,7 +110,7 @@ theorem refines_prod {S₁ : Type u₁} {E₁ : Type v₁} {S₂ : Type u₂} {E
   · rintro ⟨⟨h₁, he₁⟩, ⟨h₂, he₂⟩⟩
     exact ⟨⟨h₁, h₂⟩, Prod.ext he₁ he₂⟩
 /-- A refinement of the payload refines the option. -/
-@[expose] def option {Spec : Type u} {Exec : Type v} (R : DataRefinement Spec Exec) :
+def option {Spec : Type u} {Exec : Type v} (R : DataRefinement Spec Exec) :
     DataRefinement (Option Spec) (Option Exec) where
   WF o := ∀ e, o = some e → R.WF e
   alpha o h :=
@@ -163,7 +163,7 @@ theorem stack {A₁ : Type u₁} {B₁ : Type v₁} {C₁ : Type w} {A₂ : Type
   obtain ⟨b, hab, hbc⟩ := (DataRefinement.refines_comp R₁ R₁' a c).1 h
   exact (DataRefinement.refines_comp R₂ R₂' _ _).2 ⟨g b, hfg a b hab, hgk b c hbc⟩
 /-- The operation on packed representations. -/
-@[expose] def lift {R₁ : DataRefinement S₁ E₁} {R₂ : DataRefinement S₂ E₂} {f : S₁ → S₂} {g : E₁ → E₂}
+def lift {R₁ : DataRefinement S₁ E₁} {R₂ : DataRefinement S₂ E₂} {f : S₁ → S₂} {g : E₁ → E₂}
     (h : UnaryRefines R₁ R₂ f g) (p : PackedExec R₁) : PackedExec R₂ := ⟨g p.val, (h _ _ p.refines).wf⟩
 theorem lift_toSpec {R₁ : DataRefinement S₁ E₁} {R₂ : DataRefinement S₂ E₂} {f : S₁ → S₂} {g : E₁ → E₂}
     (h : UnaryRefines R₁ R₂ f g) (p : PackedExec R₁) : (h.lift p).toSpec = f p.toSpec := (h _ _ p.refines).alpha_eq
@@ -202,7 +202,7 @@ theorem uncurry {R₁ : DataRefinement S₁ E₁} {R₂ : DataRefinement S₂ E�
   obtain ⟨h₁, h₂⟩ := (DataRefinement.refines_prod R₁ R₂ s e).1 hse
   exact h _ _ _ _ h₁ h₂
 /-- The operation on packed representations. -/
-@[expose] def lift {R₁ : DataRefinement S₁ E₁} {R₂ : DataRefinement S₂ E₂} {R₃ : DataRefinement S₃ E₃}
+def lift {R₁ : DataRefinement S₁ E₁} {R₂ : DataRefinement S₂ E₂} {R₃ : DataRefinement S₃ E₃}
     {f : S₁ → S₂ → S₃} {g : E₁ → E₂ → E₃} (h : BinaryRefines R₁ R₂ R₃ f g) (p : PackedExec R₁)
     (q : PackedExec R₂) : PackedExec R₃ := ⟨g p.val q.val, (h _ _ _ _ p.refines q.refines).wf⟩
 theorem lift_toSpec {R₁ : DataRefinement S₁ E₁} {R₂ : DataRefinement S₂ E₂} {R₃ : DataRefinement S₃ E₃}
@@ -256,7 +256,7 @@ theorem asymm {a b : α} (h : lt a b = true) : lt b a = false := by
     rw [irrefl] at this
     cases this
 /-- Neither is below the other: equality, decided by the order. -/
-@[expose] def eqv (a b : α) : Bool := !lt a b && !lt b a
+def eqv (a b : α) : Bool := !lt a b && !lt b a
 theorem eqv_iff {a b : α} : eqv a b = true ↔ a = b := by
   constructor
   · intro h
@@ -295,7 +295,7 @@ instance : StrictLinearOrder UInt8 where
     intro h₁ h₂
     exact UInt8.toNat_inj.1 (by omega)
 /-- The lexicographic order on lists; a proper prefix is below its extensions. -/
-@[expose] def lexLt {α : Type u} [StrictLinearOrder α] : List α → List α → Bool
+def lexLt {α : Type u} [StrictLinearOrder α] : List α → List α → Bool
   | [], [] => false
   | [], _ :: _ => true
   | _ :: _, [] => false
@@ -416,11 +416,11 @@ variable {α : Type u} [StrictLinearOrder α]
 /-- Strictly increasing. -/
 abbrev SortedList (l : List α) : Prop := l.Pairwise fun a b => lt a b = true
 /-- Membership in a list, decided by the order. -/
-@[expose] def memB (z : α) (l : List α) : Bool := l.any fun y => eqv z y
+def memB (z : α) (l : List α) : Bool := l.any fun y => eqv z y
 theorem memB_iff {z : α} {l : List α} : memB z l = true ↔ z ∈ l := by
   simp only [memB, List.any_eq_true, eqv_iff]
   exact ⟨fun ⟨_, h, e⟩ => e ▸ h, fun h => ⟨z, h, rfl⟩⟩
-theorem memB_nil (z : α) : memB z ([] : List α) = false := rfl
+theorem memB_nil (z : α) : memB z ([] : List α) = false := by rfl
 theorem memB_cons (z x : α) (l : List α) : memB z (x :: l) = (eqv z x || memB z l) := by simp [memB]
 theorem memB_eq_false_of_lt_all {w : α} {l : List α} (h : ∀ z ∈ l, lt w z = true) : memB w l = false := by
   cases hm : memB w l
@@ -438,7 +438,7 @@ theorem SortedList.lt_trans_all {w x : α} {l : List α} (h : SortedList (x :: l
   · exact hw
   · exact StrictLinearOrder.trans w x z hw (h.head_lt z hz)
 /-- Prepend `x` when the flag is set. -/
-@[expose] def emit (k : Bool) (x : α) (l : List α) : List α := if k then x :: l else l
+def emit (k : Bool) (x : α) (l : List α) : List α := if k then x :: l else l
 theorem memB_emit (z : α) (k : Bool) (x : α) (l : List α) :
     memB z (emit k x l) = ((k && eqv z x) || memB z l) := by cases k <;> simp [emit, memB_cons]
 omit [StrictLinearOrder α] in
@@ -452,11 +452,11 @@ theorem sorted_emit {k : Bool} {x : α} {l : List α} (hl : SortedList l) (hx : 
   · exact hl
   · exact List.pairwise_cons.2 ⟨hx, hl⟩
 /-- The list when the flag is set, else nothing. -/
-@[expose] def keepIf (k : Bool) (l : List α) : List α := if k then l else []
+def keepIf (k : Bool) (l : List α) : List α := if k then l else []
 /-- The merge of two sorted lists that keeps an element found only on the left when `kl`, only on
 the right when `kr`, and on both sides when `kb`. Union is `true true true`, intersection
 `false false true`, difference `true false false`. -/
-@[expose] def mergeL (kl kr kb : Bool) : List α → List α → List α
+def mergeL (kl kr kb : Bool) : List α → List α → List α
   | [], ys => keepIf kr ys
   | x :: xs, [] => keepIf kl (x :: xs)
   | x :: xs, y :: ys =>
@@ -629,9 +629,9 @@ theorem ext {s t : FinSetSpec α} (h : ∀ a, s.mem a = t.mem a) : s = t := by
   cases e; rfl
 theorem ext_iff {s t : FinSetSpec α} : s = t ↔ ∀ a, s.mem a = t.mem a := ⟨fun h _ => h ▸ rfl, ext⟩
 /-- The empty set. -/
-@[expose] def empty : FinSetSpec α := ⟨fun _ => false, ⟨[], fun _ h => nomatch h⟩⟩
+def empty : FinSetSpec α := ⟨fun _ => false, ⟨[], fun _ h => nomatch h⟩⟩
 /-- `s ∪ t`, pointwise `||`. -/
-@[expose] def union (s t : FinSetSpec α) : FinSetSpec α where
+def union (s t : FinSetSpec α) : FinSetSpec α where
   mem a := s.mem a || t.mem a
   finite :=
     match s.finite, t.finite with
@@ -640,25 +640,25 @@ theorem ext_iff {s t : FinSetSpec α} : s = t ↔ ∀ a, s.mem a = t.mem a := �
       · exact List.mem_append_left _ (h₁ a h)
       · exact List.mem_append_right _ (h₂ a h)⟩
 /-- `s ∩ t`, pointwise `&&`. -/
-@[expose] def inter (s t : FinSetSpec α) : FinSetSpec α where
+def inter (s t : FinSetSpec α) : FinSetSpec α where
   mem a := s.mem a && t.mem a
   finite :=
     match s.finite with
     | ⟨l, h⟩ => ⟨l, fun a ha => h a (Bool.and_eq_true_iff.1 ha).1⟩
 /-- `s \ t`, pointwise `&& !`. -/
-@[expose] def diff (s t : FinSetSpec α) : FinSetSpec α where
+def diff (s t : FinSetSpec α) : FinSetSpec α where
   mem a := s.mem a && !t.mem a
   finite :=
     match s.finite with
     | ⟨l, h⟩ => ⟨l, fun a ha => h a (Bool.and_eq_true_iff.1 ha).1⟩
-theorem mem_empty (a : α) : (empty : FinSetSpec α).mem a = false := rfl
-theorem mem_union (s t : FinSetSpec α) (a : α) : (s.union t).mem a = (s.mem a || t.mem a) := rfl
-theorem mem_inter (s t : FinSetSpec α) (a : α) : (s.inter t).mem a = (s.mem a && t.mem a) := rfl
-theorem mem_diff (s t : FinSetSpec α) (a : α) : (s.diff t).mem a = (s.mem a && !t.mem a) := rfl
+theorem mem_empty (a : α) : (empty : FinSetSpec α).mem a = false := by rfl
+theorem mem_union (s t : FinSetSpec α) (a : α) : (s.union t).mem a = (s.mem a || t.mem a) := by rfl
+theorem mem_inter (s t : FinSetSpec α) (a : α) : (s.inter t).mem a = (s.mem a && t.mem a) := by rfl
+theorem mem_diff (s t : FinSetSpec α) (a : α) : (s.diff t).mem a = (s.mem a && !t.mem a) := by rfl
 /-- The members of a list. -/
-@[expose] def ofList [StrictLinearOrder α] (l : List α) : FinSetSpec α :=
+def ofList [StrictLinearOrder α] (l : List α) : FinSetSpec α :=
   ⟨fun z => memB z l, ⟨l, fun _ h => memB_iff.1 h⟩⟩
-theorem mem_ofList [StrictLinearOrder α] (l : List α) (z : α) : (ofList l).mem z = memB z l := rfl
+theorem mem_ofList [StrictLinearOrder α] (l : List α) (z : α) : (ofList l).mem z = memB z l := by rfl
 end FinSetSpec
 
 section Arrays
@@ -687,7 +687,7 @@ def bsearch (a : Array α) (x : α) (lo hi : Nat) (hhi : hi ≤ a.size) : Bool :
 termination_by hi - lo
 decreasing_by all_goals omega
 /-- Membership by binary search: `O(log n)` comparisons, reading the array in place. -/
-@[expose] def containsFast (a : Array α) (x : α) : Bool := bsearch a x 0 a.size (Nat.le_refl _)
+def containsFast (a : Array α) (x : α) : Bool := bsearch a x 0 a.size (Nat.le_refl _)
 theorem bsearch_iff {a : Array α} (hs : SortedArray a) (x : α) (lo hi : Nat) (hhi : hi ≤ a.size) :
     bsearch a x lo hi hhi = true ↔ ∃ i, ∃ h : i < a.size, lo ≤ i ∧ i < hi ∧ a[i] = x := by
   rw [bsearch]
@@ -786,7 +786,7 @@ theorem pushFrom_toList (a : Array α) (i : Nat) (out : Array α) :
     rw [array_drop_nil a i h, List.append_nil]
 termination_by a.size - i
 /-- Push when the flag is set. -/
-@[expose] def pushIf (k : Bool) (out : Array α) (x : α) : Array α := if k then out.push x else out
+def pushIf (k : Bool) (out : Array α) (x : α) : Array α := if k then out.push x else out
 omit [StrictLinearOrder α] in
 theorem pushIf_toList (k : Bool) (out : Array α) (x : α) (l : List α) :
     (pushIf k out x).toList ++ l = out.toList ++ emit k x l := by
@@ -840,7 +840,7 @@ theorem mergeLoop_toList (kl kr kb : Bool) (a b : Array α) (i j : Nat) (out : A
 termination_by (a.size - i) + (b.size - j)
 decreasing_by all_goals omega
 /-- The merge of two arrays into a fresh array of capacity `a.size + b.size`. -/
-@[expose] def mergeFast (kl kr kb : Bool) (a b : Array α) : Array α :=
+def mergeFast (kl kr kb : Bool) (a b : Array α) : Array α :=
   mergeLoop kl kr kb a b 0 0 (Array.emptyWithCapacity (a.size + b.size))
 theorem mergeFast_toList (kl kr kb : Bool) (a b : Array α) :
     (mergeFast kl kr kb a b).toList = mergeL kl kr kb a.toList b.toList := by
@@ -852,7 +852,7 @@ theorem mergeFast_toList (kl kr kb : Bool) (a b : Array α) :
 /-- `a \ b` in one pass. -/
 @[expose] def diffFast (a b : Array α) : Array α := mergeFast true false false a b
 /-- The set a merge computes, from its two arguments. -/
-@[expose] def FinSetSpec.merge (kl kr kb : Bool) (s t : FinSetSpec α) : FinSetSpec α where
+def FinSetSpec.merge (kl kr kb : Bool) (s t : FinSetSpec α) : FinSetSpec α where
   mem z := keep kl kr kb (s.mem z) (t.mem z)
   finite := (s.union t).finite.imp fun l h a ha => h a (by
     change (s.mem a || t.mem a) = true
@@ -904,16 +904,18 @@ theorem diffFast_eq_spec :
 
 namespace SortedArraySet
 /-- The empty set. -/
-@[expose] def empty : SortedArraySet α := ⟨#[], List.Pairwise.nil⟩
+def empty : SortedArraySet α := ⟨#[], List.Pairwise.nil⟩
 /-- Membership, by binary search. -/
-@[expose] def contains (p : SortedArraySet α) (x : α) : Bool := containsFast p.val x
+def contains (p : SortedArraySet α) (x : α) : Bool := containsFast p.val x
 /-- Union, by one merge. -/
-@[expose] def union (p q : SortedArraySet α) : SortedArraySet α := unionFast_eq_spec.lift p q
+def union (p q : SortedArraySet α) : SortedArraySet α := unionFast_eq_spec.lift p q
 /-- Intersection, by one merge. -/
-@[expose] def inter (p q : SortedArraySet α) : SortedArraySet α := interFast_eq_spec.lift p q
+def inter (p q : SortedArraySet α) : SortedArraySet α := interFast_eq_spec.lift p q
 /-- Difference, by one merge. -/
-@[expose] def diff (p q : SortedArraySet α) : SortedArraySet α := diffFast_eq_spec.lift p q
-theorem empty_toSpec : (empty : SortedArraySet α).toSpec = FinSetSpec.empty := rfl
+def diff (p q : SortedArraySet α) : SortedArraySet α := diffFast_eq_spec.lift p q
+theorem empty_toSpec : (empty : SortedArraySet α).toSpec = FinSetSpec.empty := by rfl
+theorem mem_toSpec (p : SortedArraySet α) (z : α) :
+    p.toSpec.mem z = p.val.toList.any (fun y => !lt z y && !lt y z) := by rfl
 theorem contains_eq_spec (p : SortedArraySet α) (x : α) : p.contains x = p.toSpec.mem x :=
   (containsFast_eq_spec x).packed p
 /-- **`(p ∪ q)` stands for the union of what `p` and `q` stand for.** -/
@@ -934,12 +936,12 @@ end Arrays
 
 /-! ## 5. Word lists as little-endian bytes -/
 /-- Byte `k` of a word, least significant first. -/
-@[expose] def u64Byte (w : UInt64) (k : Nat) : UInt8 := (w >>> (8 * k).toUInt64).toUInt8
+def u64Byte (w : UInt64) (k : Nat) : UInt8 := (w >>> (8 * k).toUInt64).toUInt8
 /-- The eight bytes of a word, least significant first. -/
-@[expose] def u64Bytes (w : UInt64) : List UInt8 :=
+def u64Bytes (w : UInt64) : List UInt8 :=
   [u64Byte w 0, u64Byte w 1, u64Byte w 2, u64Byte w 3, u64Byte w 4, u64Byte w 5, u64Byte w 6, u64Byte w 7]
 /-- The word with these bytes, least significant first. -/
-@[expose] def u64OfBytes (b₀ b₁ b₂ b₃ b₄ b₅ b₆ b₇ : UInt8) : UInt64 :=
+def u64OfBytes (b₀ b₁ b₂ b₃ b₄ b₅ b₆ b₇ : UInt8) : UInt64 :=
   (((((((b₇.toUInt64 <<< 8 + b₆.toUInt64) <<< 8 + b₅.toUInt64) <<< 8 + b₄.toUInt64) <<< 8 +
     b₃.toUInt64) <<< 8 + b₂.toUInt64) <<< 8 + b₁.toUInt64) <<< 8) + b₀.toUInt64
 theorem u64Byte_toNat (w : UInt64) (k : Nat) (hk : k < 8) :
@@ -964,16 +966,16 @@ theorem u64Byte_zero (k : Nat) (hk : k < 8) : u64Byte 0 k = 0 := by
   apply UInt8.toNat_inj.1
   rw [u64Byte_toNat 0 k hk]; simp
 /-- Append the eight bytes of a word. -/
-@[expose] def pushU64LE (out : ByteArray) (w : UInt64) : ByteArray :=
+def pushU64LE (out : ByteArray) (w : UInt64) : ByteArray :=
   (((((((out.push (u64Byte w 0)).push (u64Byte w 1)).push (u64Byte w 2)).push (u64Byte w 3)).push
     (u64Byte w 4)).push (u64Byte w 5)).push (u64Byte w 6)).push (u64Byte w 7)
 /-- The words, eight little-endian bytes each. -/
-@[expose] def packU64LE (l : List UInt64) : ByteArray :=
+def packU64LE (l : List UInt64) : ByteArray :=
   l.foldl pushU64LE (ByteArray.emptyWithCapacity (8 * l.length))
 /-- Byte `j`, `0` past the end. -/
-@[expose] def byteAt (b : ByteArray) (j : Nat) : UInt8 := if h : j < b.size then b[j] else 0
+def byteAt (b : ByteArray) (j : Nat) : UInt8 := if h : j < b.size then b[j] else 0
 /-- Word `i` of a little-endian byte string: eight reads at `8 * i`, in constant time. -/
-@[expose] def readU64LE (b : ByteArray) (i : Nat) : UInt64 :=
+def readU64LE (b : ByteArray) (i : Nat) : UInt64 :=
   u64OfBytes (byteAt b (8 * i)) (byteAt b (8 * i + 1)) (byteAt b (8 * i + 2)) (byteAt b (8 * i + 3))
     (byteAt b (8 * i + 4)) (byteAt b (8 * i + 5)) (byteAt b (8 * i + 6)) (byteAt b (8 * i + 7))
 theorem byteAt_eq_getD (b : ByteArray) (j : Nat) : byteAt b j = b.data.toList.getD j 0 := by
@@ -1037,7 +1039,7 @@ theorem readU64LE_packU64LE (l : List UInt64) (i : Nat) : readU64LE (packU64LE l
     byteAt_packU64LE l i 5 (by decide), byteAt_packU64LE l i 6 (by decide), byteAt_packU64LE l i 7 (by decide)]
   exact u64OfBytes_u64Byte _
 /-- The words of a byte string whose size is a multiple of eight. -/
-@[expose] def unpackU64LE (b : ByteArray) : List UInt64 := (List.range (b.size / 8)).map (readU64LE b)
+def unpackU64LE (b : ByteArray) : List UInt64 := (List.range (b.size / 8)).map (readU64LE b)
 /-- **The refinement**: a byte string of size a multiple of eight stands for its little-endian
 words. -/
 @[expose] def u64BytesRefinement : DataRefinement (List UInt64) ByteArray where
@@ -1072,7 +1074,7 @@ theorem readU64LE_eq_spec (i : Nat) :
   rintro l b ⟨hb, rfl⟩
   exact (unpackU64LE_getD b hb i).symm
 /-- The packed word list. -/
-@[expose] def U64Bytes.ofList (l : List UInt64) : PackedExec u64BytesRefinement := (packU64LE_refines l).pack
+def U64Bytes.ofList (l : List UInt64) : PackedExec u64BytesRefinement := (packU64LE_refines l).pack
 theorem U64Bytes.ofList_toSpec (l : List UInt64) : (U64Bytes.ofList l).toSpec = l :=
   (packU64LE_refines l).pack_toSpec
 
@@ -1087,27 +1089,27 @@ inductive Trit where
   | zero
   | one
   | star
-  deriving @[expose] DecidableEq, Repr
+  deriving DecidableEq, Repr
 
 namespace Trit
 /-- `0 ≤ *`, `1 ≤ *`, and each is below itself. -/
-@[expose] def le : Trit → Trit → Bool
+def le : Trit → Trit → Bool
   | _, .star => true
   | .zero, .zero => true
   | .one, .one => true
   | _, _ => false
-@[expose] def isZero : Trit → Bool
+def isZero : Trit → Bool
   | .zero => true
   | _ => false
-@[expose] def isOne : Trit → Bool
+def isOne : Trit → Bool
   | .one => true
   | _ => false
-@[expose] def code : Trit → Nat
+def code : Trit → Nat
   | .zero => 0
   | .one => 1
   | .star => 2
 /-- The coordinate a base-3 digit stands for. -/
-@[expose] def ofCode (n : Nat) : Trit := if n % 3 = 0 then .zero else if n % 3 = 1 then .one else .star
+def ofCode (n : Nat) : Trit := if n % 3 = 0 then .zero else if n % 3 = 1 then .one else .star
 theorem code_lt (t : Trit) : t.code < 3 := by cases t <;> decide
 theorem le_refl (a : Trit) : a.le a = true := by cases a <;> rfl
 theorem le_trans {a b c : Trit} : a.le b = true → b.le c = true → a.le c = true := by
@@ -1129,16 +1131,16 @@ theorem fin3_cases {P : Fin 3 → Prop} (h₀ : P 0) (h₁ : P 1) (h₂ : P 2) :
 
 namespace Trit3
 /-- Inclusion of faces, coordinatewise. -/
-@[expose] def le (f g : Trit3) : Bool := (f 0).le (g 0) && (f 1).le (g 1) && (f 2).le (g 2)
+def le (f g : Trit3) : Bool := (f 0).le (g 0) && (f 1).le (g 1) && (f 2).le (g 2)
 /-- The bit a face has in a `BitVec 27`: its coordinates as base-3 digits. -/
-@[expose] def index (f : Trit3) : Nat := (f 0).code + 3 * (f 1).code + 9 * (f 2).code
+def index (f : Trit3) : Nat := (f 0).code + 3 * (f 1).code + 9 * (f 2).code
 /-- The whole cube: every variable free. Bit 26. -/
-@[expose] def generic : Trit3 := fun _ => .star
+def generic : Trit3 := fun _ => .star
 end Trit3
 /-- Coordinate `v` of the face at bit `i`. -/
-@[expose] def tritAt (i : Nat) (v : Fin 3) : Trit := Trit.ofCode (i / 3 ^ v.val)
+def tritAt (i : Nat) (v : Fin 3) : Trit := Trit.ofCode (i / 3 ^ v.val)
 /-- The face at bit `i`. -/
-@[expose] def Trit3.ofIndex (i : Nat) : Trit3 := tritAt i
+def Trit3.ofIndex (i : Nat) : Trit3 := tritAt i
 
 namespace Trit3
 theorem index_lt (f : Trit3) : index f < 27 := by
@@ -1162,7 +1164,7 @@ theorem tritAt_index (f : Trit3) : ∀ v, tritAt (index f) v = f v := by
 theorem ofIndex_index (f : Trit3) : ofIndex (index f) = f := funext (tritAt_index f)
 /-- Bit `i < 27` is the bit of the face at it. -/
 theorem index_ofIndex : ∀ i : Fin 27, index (ofIndex i.val) = i.val := by decide +kernel
-theorem index_generic : index generic = 26 := rfl
+example : index generic = 26 := rfl
 end Trit3
 /-- A cofibration of the 3-cube: a downward-closed set of faces. -/
 structure FaceIdealSpec3 where
@@ -1179,38 +1181,38 @@ theorem ext {s t : FaceIdealSpec3} (h : ∀ f, s.mem f = t.mem f) : s = t := by
   cases e; rfl
 theorem ext_iff {s t : FaceIdealSpec3} : s = t ↔ ∀ f, s.mem f = t.mem f := ⟨fun h _ => h ▸ rfl, ext⟩
 /-- `⊥`: no face. -/
-@[expose] def bot : FaceIdealSpec3 := ⟨fun _ => false, fun _ _ _ h => h⟩
+def bot : FaceIdealSpec3 := ⟨fun _ => false, fun _ _ _ h => h⟩
 /-- `⊤`: every face. -/
-@[expose] def top : FaceIdealSpec3 := ⟨fun _ => true, fun _ _ _ h => h⟩
+def top : FaceIdealSpec3 := ⟨fun _ => true, fun _ _ _ h => h⟩
 /-- `φ ∨ ψ`: the union. -/
-@[expose] def join (s t : FaceIdealSpec3) : FaceIdealSpec3 where
+def join (s t : FaceIdealSpec3) : FaceIdealSpec3 where
   mem f := s.mem f || t.mem f
   down f g hfg h := by
     rw [Bool.or_eq_true] at h ⊢
     exact h.imp (s.down f g hfg) (t.down f g hfg)
 /-- `φ ∧ ψ`: the intersection. -/
-@[expose] def meet (s t : FaceIdealSpec3) : FaceIdealSpec3 where
+def meet (s t : FaceIdealSpec3) : FaceIdealSpec3 where
   mem f := s.mem f && t.mem f
   down f g hfg h := by
     rw [Bool.and_eq_true] at h ⊢
     exact ⟨s.down f g hfg h.1, t.down f g hfg h.2⟩
 /-- `(i_v = 0)`: the faces with variable `v` fixed at `0`. -/
-@[expose] def varEq0 (v : Fin 3) : FaceIdealSpec3 where
+def varEq0 (v : Fin 3) : FaceIdealSpec3 where
   mem f := (f v).isZero
   down _ _ hfg h := Trit.isZero_of_le (Trit3.le_apply hfg v) h
 /-- `(i_v = 1)`: the faces with variable `v` fixed at `1`. -/
-@[expose] def varEq1 (v : Fin 3) : FaceIdealSpec3 where
+def varEq1 (v : Fin 3) : FaceIdealSpec3 where
   mem f := (f v).isOne
   down _ _ hfg h := Trit.isOne_of_le (Trit3.le_apply hfg v) h
-theorem mem_bot (f : Trit3) : bot.mem f = false := rfl
-theorem mem_top (f : Trit3) : top.mem f = true := rfl
-theorem mem_join (s t : FaceIdealSpec3) (f : Trit3) : (s.join t).mem f = (s.mem f || t.mem f) := rfl
-theorem mem_meet (s t : FaceIdealSpec3) (f : Trit3) : (s.meet t).mem f = (s.mem f && t.mem f) := rfl
-theorem mem_varEq0 (v : Fin 3) (f : Trit3) : (varEq0 v).mem f = (f v).isZero := rfl
-theorem mem_varEq1 (v : Fin 3) (f : Trit3) : (varEq1 v).mem f = (f v).isOne := rfl
+theorem mem_bot (f : Trit3) : bot.mem f = false := by rfl
+theorem mem_top (f : Trit3) : top.mem f = true := by rfl
+theorem mem_join (s t : FaceIdealSpec3) (f : Trit3) : (s.join t).mem f = (s.mem f || t.mem f) := by rfl
+theorem mem_meet (s t : FaceIdealSpec3) (f : Trit3) : (s.meet t).mem f = (s.mem f && t.mem f) := by rfl
+theorem mem_varEq0 (v : Fin 3) (f : Trit3) : (varEq0 v).mem f = (f v).isZero := by rfl
+theorem mem_varEq1 (v : Fin 3) (f : Trit3) : (varEq1 v).mem f = (f v).isOne := by rfl
 end FaceIdealSpec3
 /-- The number whose bit `i < n` is `p i`. -/
-@[expose] def maskNat (p : Nat → Bool) : Nat → Nat
+def maskNat (p : Nat → Bool) : Nat → Nat
   | 0 => 0
   | n + 1 => maskNat p n ||| (if p n then 2 ^ n else 0)
 theorem testBit_maskNat (p : Nat → Bool) (n i : Nat) : (maskNat p n).testBit i = (decide (i < n) && p i) := by
@@ -1227,15 +1229,15 @@ theorem testBit_maskNat (p : Nat → Bool) (n i : Nat) : (maskNat p n).testBit i
       rw [h1]
       cases hp : p n <;> simp [hne]
 /-- The 27-bit word whose bit at each face is `p` of the face. -/
-@[expose] def faceMask (p : Trit3 → Bool) : BitVec 27 := BitVec.ofNat 27 (maskNat (fun i => p (Trit3.ofIndex i)) 27)
+def faceMask (p : Trit3 → Bool) : BitVec 27 := BitVec.ofNat 27 (maskNat (fun i => p (Trit3.ofIndex i)) 27)
 theorem getLsbD_faceMask (p : Trit3 → Bool) (f : Trit3) : (faceMask p).getLsbD (Trit3.index f) = p f := by
   rw [faceMask, BitVec.getLsbD_ofNat, testBit_maskNat, Trit3.ofIndex_index]
   simp [Trit3.index_lt f]
 /-- Downward closed: with the bit of a face, the bit of every face inside it. -/
-@[expose] def FaceWF (b : BitVec 27) : Prop :=
+def FaceWF (b : BitVec 27) : Prop :=
   ∀ f g : Trit3, Trit3.le f g = true → b.getLsbD (Trit3.index g) = true → b.getLsbD (Trit3.index f) = true
 /-- **The refinement**: a downward-closed 27-bit word stands for the set of faces whose bits it has. -/
-@[expose] def faceIdeal3Refinement : DataRefinement FaceIdealSpec3 (BitVec 27) where
+def faceIdeal3Refinement : DataRefinement FaceIdealSpec3 (BitVec 27) where
   WF := FaceWF
   alpha b h := ⟨fun f => b.getLsbD (Trit3.index f), h⟩
 /-- A cofibration of the 3-cube as a 27-bit word. -/
@@ -1244,37 +1246,40 @@ theorem refines_faceIdeal3 {s : FaceIdealSpec3} {b : BitVec 27} :
     Refines faceIdeal3Refinement s b ↔ FaceWF b ∧ ∀ f, b.getLsbD (Trit3.index f) = s.mem f :=
   ⟨fun ⟨h, e⟩ => ⟨h, fun _ => e ▸ rfl⟩, fun ⟨h, e⟩ => ⟨h, FaceIdealSpec3.ext e⟩⟩
 /-- **`|||` refines `∨`.** -/
-theorem faceJoin_refines :
-    BinaryRefines faceIdeal3Refinement faceIdeal3Refinement faceIdeal3Refinement FaceIdealSpec3.join
-      (fun a b : BitVec 27 => a ||| b) := by
-  rintro s a t b ⟨ha, rfl⟩ ⟨hb, rfl⟩
+theorem faceJoin_refines (s : FaceIdealSpec3) (a : BitVec 27) (t : FaceIdealSpec3) (b : BitVec 27) :
+    Refines faceIdeal3Refinement s a → Refines faceIdeal3Refinement t b →
+    Refines faceIdeal3Refinement (s.join t) (a ||| b) := by
+  rintro ⟨ha, rfl⟩ ⟨hb, rfl⟩
   refine refines_faceIdeal3.2 ⟨fun f g hfg hg => ?_, fun f => BitVec.getLsbD_or⟩
   rw [BitVec.getLsbD_or, Bool.or_eq_true] at hg ⊢
   exact hg.imp (ha f g hfg) (hb f g hfg)
 /-- **`&&&` refines `∧`.** -/
-theorem faceMeet_refines :
-    BinaryRefines faceIdeal3Refinement faceIdeal3Refinement faceIdeal3Refinement FaceIdealSpec3.meet
-      (fun a b : BitVec 27 => a &&& b) := by
-  rintro s a t b ⟨ha, rfl⟩ ⟨hb, rfl⟩
+theorem faceMeet_refines (s : FaceIdealSpec3) (a : BitVec 27) (t : FaceIdealSpec3) (b : BitVec 27) :
+    Refines faceIdeal3Refinement s a → Refines faceIdeal3Refinement t b →
+    Refines faceIdeal3Refinement (s.meet t) (a &&& b) := by
+  rintro ⟨ha, rfl⟩ ⟨hb, rfl⟩
   refine refines_faceIdeal3.2 ⟨fun f g hfg hg => ?_, fun f => BitVec.getLsbD_and⟩
   rw [BitVec.getLsbD_and, Bool.and_eq_true] at hg ⊢
   exact ⟨ha f g hfg hg.1, hb f g hfg hg.2⟩
-theorem faceBot_refines : Refines faceIdeal3Refinement FaceIdealSpec3.bot 0#27 :=
-  refines_faceIdeal3.2 ⟨fun _ _ _ h => (by rw [BitVec.getLsbD_zero] at h; cases h), fun _ => BitVec.getLsbD_zero⟩
-theorem faceTop_refines : Refines faceIdeal3Refinement FaceIdealSpec3.top (BitVec.allOnes 27) :=
-  have h : ∀ f : Trit3, (BitVec.allOnes 27).getLsbD (Trit3.index f) = true := fun f => by
-    rw [BitVec.getLsbD_allOnes]
-    exact decide_eq_true (Trit3.index_lt f)
-  refines_faceIdeal3.2 ⟨fun f _ _ _ => h f, h⟩
+theorem constantFace_refines (full : Bool) :
+    Refines faceIdeal3Refinement (if full then FaceIdealSpec3.top else FaceIdealSpec3.bot)
+      (if full then BitVec.allOnes 27 else 0#27) := by
+  cases full
+  · change Refines faceIdeal3Refinement FaceIdealSpec3.bot 0#27
+    exact refines_faceIdeal3.2 ⟨fun _ _ _ h => (by rw [BitVec.getLsbD_zero] at h; cases h),
+        fun _ => BitVec.getLsbD_zero⟩
+  · have h (f : Trit3) : (BitVec.allOnes 27).getLsbD (Trit3.index f) = true := by
+      rw [BitVec.getLsbD_allOnes]; exact decide_eq_true (Trit3.index_lt f)
+    exact refines_faceIdeal3.2 ⟨fun f _ _ _ => h f, h⟩
 /-- **Every cofibration has a word**: its mask. -/
 theorem faceMask_refines (s : FaceIdealSpec3) : Refines faceIdeal3Refinement s (faceMask s.mem) :=
   refines_faceIdeal3.2 ⟨fun f g hfg hg => by
     rw [getLsbD_faceMask] at hg ⊢
     exact s.down f g hfg hg, getLsbD_faceMask s.mem⟩
 /-- The word of `(i_v = 0)`. -/
-@[expose] def varEq0Mask (v : Fin 3) : BitVec 27 := faceMask (FaceIdealSpec3.varEq0 v).mem
+def varEq0Mask (v : Fin 3) : BitVec 27 := faceMask (FaceIdealSpec3.varEq0 v).mem
 /-- The word of `(i_v = 1)`. -/
-@[expose] def varEq1Mask (v : Fin 3) : BitVec 27 := faceMask (FaceIdealSpec3.varEq1 v).mem
+def varEq1Mask (v : Fin 3) : BitVec 27 := faceMask (FaceIdealSpec3.varEq1 v).mem
 /-- **The boundary is not the interval**, on the words: `(i_v = 0) ∨ (i_v = 1)` lacks bit 26, the
 face with every variable free. Evaluated by the kernel. -/
 theorem boundaryMask_ne_allOnes : ∀ v : Fin 3, varEq0Mask v ||| varEq1Mask v ≠ BitVec.allOnes 27 := by
@@ -1282,25 +1287,27 @@ theorem boundaryMask_ne_allOnes : ∀ v : Fin 3, varEq0Mask v ||| varEq1Mask v �
 
 namespace FaceIdeal3
 /-- `⊥`, the word `0`. -/
-@[expose] def bot : FaceIdeal3 := faceBot_refines.pack
+def bot : FaceIdeal3 := (constantFace_refines false).pack
 /-- `⊤`, the word of all ones. -/
-@[expose] def top : FaceIdeal3 := faceTop_refines.pack
+def top : FaceIdeal3 := (constantFace_refines true).pack
 /-- `φ ∨ ψ`, one `|||`. -/
-@[expose] def join (a b : FaceIdeal3) : FaceIdeal3 := faceJoin_refines.lift a b
+def join (a b : FaceIdeal3) : FaceIdeal3 := BinaryRefines.lift faceJoin_refines a b
 /-- `φ ∧ ψ`, one `&&&`. -/
-@[expose] def meet (a b : FaceIdeal3) : FaceIdeal3 := faceMeet_refines.lift a b
+def meet (a b : FaceIdeal3) : FaceIdeal3 := BinaryRefines.lift faceMeet_refines a b
 /-- The word of a cofibration. -/
-@[expose] def ofSpec (s : FaceIdealSpec3) : FaceIdeal3 := (faceMask_refines s).pack
+def ofSpec (s : FaceIdealSpec3) : FaceIdeal3 := (faceMask_refines s).pack
 /-- `(i_v = 0)`. -/
-@[expose] def varEq0 (v : Fin 3) : FaceIdeal3 := ofSpec (FaceIdealSpec3.varEq0 v)
+def varEq0 (v : Fin 3) : FaceIdeal3 := ofSpec (FaceIdealSpec3.varEq0 v)
 /-- `(i_v = 1)`. -/
-@[expose] def varEq1 (v : Fin 3) : FaceIdeal3 := ofSpec (FaceIdealSpec3.varEq1 v)
-theorem bot_toSpec : bot.toSpec = FaceIdealSpec3.bot := faceBot_refines.pack_toSpec
-theorem top_toSpec : top.toSpec = FaceIdealSpec3.top := faceTop_refines.pack_toSpec
+def varEq1 (v : Fin 3) : FaceIdeal3 := ofSpec (FaceIdealSpec3.varEq1 v)
+theorem mem_bot (f : Trit3) : bot.toSpec.mem f = false :=
+  congrArg (fun s : FaceIdealSpec3 => s.mem f) (constantFace_refines false).pack_toSpec
+theorem mem_top (f : Trit3) : top.toSpec.mem f = true :=
+  congrArg (fun s : FaceIdealSpec3 => s.mem f) (constantFace_refines true).pack_toSpec
 theorem join_toSpec (a b : FaceIdeal3) : (a.join b).toSpec = a.toSpec.join b.toSpec :=
-  faceJoin_refines.lift_toSpec a b
+  BinaryRefines.lift_toSpec faceJoin_refines a b
 theorem meet_toSpec (a b : FaceIdeal3) : (a.meet b).toSpec = a.toSpec.meet b.toSpec :=
-  faceMeet_refines.lift_toSpec a b
+  BinaryRefines.lift_toSpec faceMeet_refines a b
 theorem ofSpec_toSpec (s : FaceIdealSpec3) : (ofSpec s).toSpec = s := (faceMask_refines s).pack_toSpec
 theorem varEq0_toSpec (v : Fin 3) : (varEq0 v).toSpec = FaceIdealSpec3.varEq0 v := ofSpec_toSpec _
 theorem varEq1_toSpec (v : Fin 3) : (varEq1 v).toSpec = FaceIdealSpec3.varEq1 v := ofSpec_toSpec _
@@ -1324,8 +1331,8 @@ theorem generic_not_mem_boundary (v : Fin 3) :
 /-- `(i_v = 0) ∧ (i_v = 1) = ⊥`: the endpoints are disjoint. -/
 theorem varEq0_meet_varEq1 (v : Fin 3) : (varEq0 v).meet (varEq1 v) = bot := by
   apply toSpec_injective
-  rw [meet_toSpec, varEq0_toSpec, varEq1_toSpec, bot_toSpec]
-  exact FaceIdealSpec3.ext fun f => Trit.isZero_and_isOne (f v)
+  apply FaceIdealSpec3.ext; intro f
+  rw [meet_toSpec, varEq0_toSpec, varEq1_toSpec, mem_bot]; exact Trit.isZero_and_isOne (f v)
 end FaceIdeal3
 
 /-! ## 7. `refine_exec` -/
@@ -1409,10 +1416,10 @@ meta def refineExecLemmas : List Name :=
   [``SortedArraySet.eq_iff_toSpec, ``SortedArraySet.contains_eq_spec, ``SortedArraySet.unionFast_toSpec,
     ``SortedArraySet.interFast_toSpec, ``SortedArraySet.diffFast_toSpec, ``SortedArraySet.empty_toSpec,
     ``FinSetSpec.ext_iff, ``FinSetSpec.mem_union, ``FinSetSpec.mem_inter, ``FinSetSpec.mem_diff,
-    ``FinSetSpec.mem_empty, ``containsFast_mergeFast, ``sortedArray_mergeFast,
+    ``FinSetSpec.mem_empty, ``SortedArraySet.mem_toSpec, ``containsFast_mergeFast, ``sortedArray_mergeFast,
     ``readU64LE_packU64LE, ``U64Bytes.ofList_toSpec,
-    ``FaceIdeal3.eq_iff_toSpec, ``FaceIdeal3.join_toSpec, ``FaceIdeal3.meet_toSpec, ``FaceIdeal3.bot_toSpec,
-    ``FaceIdeal3.top_toSpec, ``FaceIdeal3.varEq0_toSpec, ``FaceIdeal3.varEq1_toSpec, ``FaceIdeal3.ofSpec_toSpec,
+    ``FaceIdeal3.eq_iff_toSpec, ``FaceIdeal3.join_toSpec, ``FaceIdeal3.meet_toSpec, ``FaceIdeal3.mem_bot,
+    ``FaceIdeal3.mem_top, ``FaceIdeal3.varEq0_toSpec, ``FaceIdeal3.varEq1_toSpec, ``FaceIdeal3.ofSpec_toSpec,
     ``FaceIdealSpec3.ext_iff, ``FaceIdealSpec3.mem_join, ``FaceIdealSpec3.mem_meet, ``FaceIdealSpec3.mem_bot,
     ``FaceIdealSpec3.mem_top, ``FaceIdealSpec3.mem_varEq0, ``FaceIdealSpec3.mem_varEq1,
     ``bitVec_eq_iff_getElem, ``BitVec.getElem_or, ``BitVec.getElem_and, ``BitVec.getElem_xor,

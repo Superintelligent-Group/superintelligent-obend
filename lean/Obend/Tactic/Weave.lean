@@ -19,7 +19,7 @@ public meta import Obend.Spec.Law
 public import Obend.Spec.LawDial
 public meta import Obend.Spec.LawDial
 
-@[expose] public section
+public section
 namespace Obend.Tactic.Weave
 
 open Lean Elab Tactic Meta Term
@@ -212,14 +212,14 @@ structure WeaveChainReceipt where
 
 /-- Verify a single `WeaveChainStep` from `currentProp`: requires a non-empty `label`,
     `discharged = true`, and `s.sourceProp = currentProp` (`0 Classical.choice`). -/
-def checkWeaveChainStep (currentProp : String) (s : WeaveChainStep) : Bool :=
+@[expose] def checkWeaveChainStep (currentProp : String) (s : WeaveChainStep) : Bool :=
   !decide (s.label = "") &&
   s.discharged &&
   decide (s.sourceProp = currentProp)
 
 /-- Recursively verify that `steps` forms a contiguous discharged implication chain from
     `currentProp` to `goalProp` (`0 Classical.choice`). -/
-def checkWeaveChainSteps (currentProp goalProp : String) : List WeaveChainStep → Bool
+@[expose] def checkWeaveChainSteps (currentProp goalProp : String) : List WeaveChainStep → Bool
   | [] => decide (currentProp = goalProp)
   | s :: rest =>
     checkWeaveChainStep currentProp s &&
@@ -228,10 +228,14 @@ def checkWeaveChainSteps (currentProp goalProp : String) : List WeaveChainStep �
 /-- Verify that a `WeaveChainReceipt` is non-empty, every step is discharged with a non-empty
     label, adjacent steps chain `s_i.targetProp = s_{i+1}.sourceProp` starting from `r.initialProp`,
     and the final step establishes `r.goalProp` (`0 Classical.choice`). -/
-def checkWeaveChainReceipt (r : WeaveChainReceipt) : Bool :=
+@[expose] def checkWeaveChainReceipt (r : WeaveChainReceipt) : Bool :=
   match r.steps with
   | [] => false
   | s :: rest => checkWeaveChainSteps r.initialProp r.goalProp (s :: rest)
+
+example : checkWeaveChainReceipt ⟨"input", "goal",
+    [{ label := "first", sourceProp := "input", targetProp := "middle" },
+     { label := "second", sourceProp := "middle", targetProp := "goal" }]⟩ = true := rfl
 
 theorem checkWeaveChainSteps_step_valid :
     ∀ {steps : List WeaveChainStep} {currentProp goalProp : String} {s : WeaveChainStep},

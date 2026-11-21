@@ -80,16 +80,13 @@ theorem plugContext_append (c₁ c₂ : List SourceFrame) (hole : Term) :
 
 /-- Well-formedness of a single `Core4` `SourceFrame`: `.binaryRight op left` requires `Value left`
     so `Step.binaryRight` and `Yields.binaryRight` apply uniformly. -/
-@[expose] def FrameWF : SourceFrame → Prop
+def FrameWF : SourceFrame → Prop
   | .binaryRight _ left => Value left
   | _ => True
 
 /-- Well-formedness of an innermost-first evaluation context `List SourceFrame`. -/
-@[expose] def CtxWF (ctx : List SourceFrame) : Prop :=
+def CtxWF (ctx : List SourceFrame) : Prop :=
   ∀ f ∈ ctx, FrameWF f
-
-@[simp] theorem ctxWF_nil : CtxWF [] := by
-  intro _ h; cases h
 
 theorem ctxWF_singleton {f : SourceFrame} (hf : FrameWF f) : CtxWF [f] := by
   intro g hg
@@ -108,7 +105,7 @@ theorem ctxWF_append {c₁ c₂ : List SourceFrame} (h₁ : CtxWF c₁) (h₂ : 
 theorem yields_ctxWF {t plan : Term} {ctx : List SourceFrame} (hy : Yields t plan ctx) :
     CtxWF ctx := by
   induction hy with
-  | perform _ => exact ctxWF_nil
+  | perform _ => simp [CtxWF]
   | application a _ ih => exact ctxWF_append ih (ctxWF_singleton trivial)
   | field n _ ih => exact ctxWF_append ih (ctxWF_singleton trivial)
   | extend fs _ ih => exact ctxWF_append ih (ctxWF_singleton trivial)
@@ -485,7 +482,7 @@ private theorem steps_append {a b c : Term} (h₁ : Steps a b) (h₂ : Steps b c
         (k ↦ seqNat (actorStep s) (self k (bound 0))))
       {}
     ``` -/
-@[expose] def actorLoopSpec (actorStep : Term) : Term :=
+def actorLoopSpec (actorStep : Term) : Term :=
   .lam (.lam (.lam (.lam
     (.ifZero (.bound 1)
       (.done (.bound 0))
@@ -493,11 +490,11 @@ private theorem steps_append {a b c : Term} (h₁ : Steps a b) (h₂ : Steps b c
         (.app (.app (.bound 5) (.bound 1)) (.bound 0)))))))
 
 /-- Open-recursive `Core4` `.fix` knot for an $N$-turn server/actor over `actorStep`. -/
-@[expose] def actorLoopFix (actorStep : Term) : Term :=
+def actorLoopFix (actorStep : Term) : Term :=
   .fix (actorLoopSpec actorStep) (.record [])
 
 /-- Applied $N$-turn open-recursive `Core4` actor run `actorLoopFix actorStep (.nat n) (.nat s)`. -/
-@[expose] def runActorFix (actorStep : Term) (n : Nat) (s : Nat) : Term :=
+def runActorFix (actorStep : Term) (n : Nat) (s : Nat) : Term :=
   .app (.app (actorLoopFix actorStep) (.nat n)) (.nat s)
 
 theorem substClosed_actorLoopFix {actorStep : Term} (hc : SubstClosed actorStep) :
@@ -597,8 +594,7 @@ theorem wp_loop_invariant {proto : ProtocolSpec}
   (∃ c : Nat, plan = counterBumpPlan c) ∧
     (resp = writtenResponse.term ∨ resp = refusedResponse.term)
 
-theorem counterBump_substClosed : SubstClosed counterBump := by
-  intro σ
+theorem counterBump_substClosed (σ : Nat → Term) : counterBump.substitute σ = counterBump := by
   simp [counterBump, Term.substitute, liftSubstitution, Term.rename]
 
 /-- Single-turn `SafeWP` for `Turn.counterBump` preserving monotonicity `c₀ ≤ s'`. -/
@@ -632,11 +628,15 @@ theorem counterBump_multiTurn_safeWP (n c₀ : Nat) :
   (plan = .label "propose" ∧ (resp = writtenResponse.term ∨ resp = refusedResponse.term)) ∨
   (plan = .label "cooldown" ∧ resp = .inject "ack" (.record []))
 
-theorem retryProto_propose_expected : ExpectedPlan retryProto (.label "propose") :=
-  ⟨writtenResponse.term, Or.inl ⟨rfl, Or.inl rfl⟩⟩
-
-theorem retryProto_cooldown_expected : ExpectedPlan retryProto (.label "cooldown") :=
-  ⟨.inject "ack" (.record []), Or.inr ⟨rfl, rfl⟩⟩
+theorem retryProto_expected_iff (plan : Term) :
+    ExpectedPlan retryProto plan ↔ plan = .label "propose" ∨ plan = .label "cooldown" := by
+  constructor
+  · rintro ⟨_, ⟨hp, _⟩ | ⟨hc, _⟩⟩
+    · exact Or.inl hp
+    · exact Or.inr hc
+  · rintro (rfl | rfl)
+    · exact ⟨writtenResponse.term, Or.inl ⟨rfl, Or.inl rfl⟩⟩
+    · exact ⟨.inject "ack" (.record []), Or.inr ⟨rfl, rfl⟩⟩
 
 /-- `Core4` expression resetting the streak on cooldown (`streak * 0 = 0`).
     Mutating `0` to `1` or `.add streak 1` breaks the invariant on the 2nd refusal turn! -/
@@ -654,18 +654,18 @@ theorem retryProto_cooldown_expected : ExpectedPlan retryProto (.label "cooldown
         [ ("ack", .done (nextCooldownStreak (.bound 1))) ]))
 
 /-- Reckless actor step that omits cooldown and always increments `streak + 1` on `"refused"`. -/
-@[expose] def recklessRetryStep : Term :=
+def recklessRetryStep : Term :=
   .lam
     (.case (.perform (.label "propose"))
       [ ("written", .done (.nat 0)),
         ("refused", .done (.binary .add (.bound 1) (.nat 1))) ])
 
-theorem guardedRetryStep_substClosed : SubstClosed guardedRetryStep := by
-  intro σ
+theorem guardedRetryStep_substClosed (σ : Nat → Term) :
+    guardedRetryStep.substitute σ = guardedRetryStep := by
   simp [guardedRetryStep, nextCooldownStreak, Term.substitute, liftSubstitution, Term.rename]
 
-theorem recklessRetryStep_substClosed : SubstClosed recklessRetryStep := by
-  intro σ
+theorem recklessRetryStep_substClosed (σ : Nat → Term) :
+    recklessRetryStep.substitute σ = recklessRetryStep := by
   simp [recklessRetryStep, Term.substitute, liftSubstitution, Term.rename]
 
 /-- Single-turn `SafeWP` for `guardedRetryStep`: preserves `r ≤ 1` across every demonic response. -/
@@ -678,7 +678,7 @@ theorem guardedRetry_turn_safeWP (r : Nat) (hrLe : r ≤ 1) :
   by_cases hlt : r < 1
   · simp only [hlt, decide_true]
     refine wp_step (.ifTrue _ _) ?_
-    refine wp_perform (.case _ (.perform (.label "propose"))) retryProto_propose_expected ?_
+    refine wp_perform (.case _ (.perform (.label "propose"))) ((retryProto_expected_iff _).2 (Or.inl rfl)) ?_
     intro resp hproto
     rcases hproto with ⟨_, hresp⟩ | ⟨hbad, _⟩
     · rcases hresp with rfl | rfl
@@ -695,7 +695,7 @@ theorem guardedRetry_turn_safeWP (r : Nat) (hrLe : r ≤ 1) :
     · simp at hbad
   · simp only [hlt, decide_false]
     refine wp_step (.ifFalse _ _) ?_
-    refine wp_perform (.case _ (.perform (.label "cooldown"))) retryProto_cooldown_expected ?_
+    refine wp_perform (.case _ (.perform (.label "cooldown"))) ((retryProto_expected_iff _).2 (Or.inr rfl)) ?_
     intro resp hproto
     rcases hproto with ⟨hbad, _⟩ | ⟨_, rfl⟩
     · simp at hbad
@@ -722,15 +722,14 @@ theorem guardedRetry_interaction_adequate (n r₀ : Nat) (hr₀ : r₀ ≤ 1)
     (∃ r_fin : Nat, v = .nat r_fin ∧ r_fin ≤ 1) ∧ AllPlansExpected (ExpectedPlan retryProto) trace :=
   safeWP_adequacy (guardedRetry_loop_safeWP n r₀ hr₀) htrace hint
 
-/-- **Why 1-Turn Checking Misses the Bug (`recklessRetry_one_turn_safe`)**: starting from `streak = 0`,
-    `recklessRetryStep` *still* satisfies `r' ≤ 1` after 1 turn even when refused (`0 + 1 = 1 ≤ 1`)! -/
-theorem recklessRetry_one_turn_safe :
-    SafeWP retryProto (runActorFix recklessRetryStep 1 0) (fun v => ∃ r' : Nat, v = .nat r' ∧ r' ≤ 1) := by
-  refine wp_steps (runActorFix_succ_steps 0 0 recklessRetryStep_substClosed) ?_
-  refine wp_seqNat (Ψ := fun m => m ≤ 1) ?_ (fun m hm => ?_)
-  · refine wp_step (.beta _ (.nat 0)) ?_
+/-- In one turn the reckless actor increases the initial streak by at most one. -/
+theorem recklessRetry_one_turn_safe (s : Nat := 0) :
+    SafeWP retryProto (runActorFix recklessRetryStep 1 s) (fun v => ∃ r' : Nat, v = .nat r' ∧ r' ≤ s + 1) := by
+  refine wp_steps (runActorFix_succ_steps 0 s recklessRetryStep_substClosed) ?_
+  refine wp_seqNat (Ψ := fun m => m ≤ s + 1) ?_ (fun m hm => ?_)
+  · refine wp_step (.beta _ (.nat s)) ?_
     simp [instantiate, Term.substitute, liftSubstitution, Term.rename]
-    refine wp_perform (.case _ (.perform (.label "propose"))) retryProto_propose_expected ?_
+    refine wp_perform (.case _ (.perform (.label "propose"))) ((retryProto_expected_iff _).2 (Or.inl rfl)) ?_
     intro resp hproto
     rcases hproto with ⟨_, hresp⟩ | ⟨hbad, _⟩
     · rcases hresp with rfl | rfl
@@ -742,8 +741,8 @@ theorem recklessRetry_one_turn_safe :
         refine wp_step (.caseInject "refused" (.record []) _ _ rfl) ?_
         simp [instantiate, Term.substitute]
         refine wp_step (.done _) ?_
-        refine wp_step (.primitive .add (.nat 0) (.nat 1) (.nat 1) (.natural 0) (.natural 1) rfl) ?_
-        exact wp_val (.natural 1) ⟨1, rfl, by omega⟩
+        refine wp_step (.primitive .add (.nat s) (.nat 1) (.nat (s + 1)) (.natural s) (.natural 1) rfl) ?_
+        exact wp_val (.natural (s + 1)) ⟨s + 1, rfl, by omega⟩
     · simp at hbad
   · have hLoopClosed : SubstClosed (actorLoopFix recklessRetryStep) :=
       substClosed_actorLoopFix recklessRetryStep_substClosed
@@ -824,19 +823,17 @@ private theorem recklessRetry_refused_seqNat_turn (k s : Nat) :
   rw [hInst]
   exact .refl _
 
-/-- **2nd-Refusal-Turn Refutation (`recklessRetry_two_turns_refuted`)**: on 2 consecutive environment
-    refusal turns `[("propose", refused), ("propose", refused)]`, `runActorFix recklessRetryStep 2 0`
-    evaluates to `.nat 2`, constructively refuting `SafeWP` for `r_fin ≤ 1`! -/
-theorem recklessRetry_two_turns_refuted :
-    ¬ SafeWP retryProto (runActorFix recklessRetryStep 2 0)
-        (fun v => ∃ r_fin : Nat, v = .nat r_fin ∧ r_fin ≤ 1) := by
-  obtain ⟨ctx₁, hs₁, hy₁, hp₁⟩ := recklessRetry_refused_seqNat_turn 1 0
-  obtain ⟨ctx₂, hs₂, hy₂, hp₂⟩ := recklessRetry_refused_seqNat_turn 0 1
-  have hFinSteps : Steps (plug ctx₂ refusedResponse.term) (.nat 2) :=
-    steps_append hp₂ (runActorFix_zero_steps 2 recklessRetryStep_substClosed)
-  have hRun2 : Obend.Equiv.Interaction (runActorFix recklessRetryStep 2 0)
-      [(.label "propose", refusedResponse.term), (.label "propose", refusedResponse.term)] (.nat 2) :=
-    .turn hs₁ hy₁ (.turn (steps_append hp₁ hs₂) hy₂ (.finish ⟨hFinSteps, .natural 2⟩))
+/-- Two consecutive refusals take the initial streak from `s` to `s + 2`, refuting the one-turn bound. -/
+theorem recklessRetry_two_turns_refuted (s : Nat := 0) :
+    ¬ SafeWP retryProto (runActorFix recklessRetryStep 2 s)
+        (fun v => ∃ r_fin : Nat, v = .nat r_fin ∧ r_fin ≤ s + 1) := by
+  obtain ⟨ctx₁, hs₁, hy₁, hp₁⟩ := recklessRetry_refused_seqNat_turn 1 s
+  obtain ⟨ctx₂, hs₂, hy₂, hp₂⟩ := recklessRetry_refused_seqNat_turn 0 (s + 1)
+  have hFinSteps : Steps (plug ctx₂ refusedResponse.term) (.nat (s + 2)) :=
+    steps_append hp₂ (runActorFix_zero_steps (s + 2) recklessRetryStep_substClosed)
+  have hRun2 : Obend.Equiv.Interaction (runActorFix recklessRetryStep 2 s)
+      [(.label "propose", refusedResponse.term), (.label "propose", refusedResponse.term)] (.nat (s + 2)) :=
+    .turn hs₁ hy₁ (.turn (steps_append hp₁ hs₂) hy₂ (.finish ⟨hFinSteps, .natural (s + 2)⟩))
   have hValid : ValidTrace retryProto
       [(.label "propose", refusedResponse.term), (.label "propose", refusedResponse.term)] := by
     intro entry hentry

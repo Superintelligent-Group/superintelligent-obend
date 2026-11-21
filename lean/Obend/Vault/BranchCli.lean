@@ -22,7 +22,7 @@ This is `Obend.Vault.Branch` over its own store file of page states. The markdow
 -/
 public import Obend.Vault.Branch
 public import Lean.Data.Json
-@[expose] public section
+public section
 
 namespace Obend.Vault.BranchCli
 

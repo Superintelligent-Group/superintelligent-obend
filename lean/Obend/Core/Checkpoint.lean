@@ -9,7 +9,7 @@ which holds this checkpoint as one artifact. The round trip
 `decodeState (encodeState s) = some s` is the obligation this module exists for
 (ObjectiveProofs). -/
 public import Obend.Core.Machine
-@[expose] public section
+public section
 namespace Obend.Core.Checkpoint
 open Obend.Core.Term Obend.Core.Machine
 set_option autoImplicit false
