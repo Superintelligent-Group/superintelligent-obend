@@ -28,7 +28,7 @@ pads (`Grid.pads`). The carry chain and `MUX8LUT` are not in the certificate's v
 extraction refuses a design that uses them).
 -/
 public import Obend.Hardware.Fabulous.Cell
-@[expose] public section
+public section
 
 namespace Obend.Hardware.Fabulous
 
@@ -1151,6 +1151,7 @@ theorem Cert.endOf_step (C : Cert) (hOK : C.entries.all C.entryOK = true) {j : N
   rw [show C.entries.length = (C.entries.length - 1) + 1 by omega]
   simp only [Cert.follow, he]
   rw [show C.entries.length - 1 + 1 - 1 = C.entries.length - 1 by omega]
+  rfl
 
 /-- An entry's wire, in the cone's assignment, carries what its hop reads. -/
 theorem Cert.solve_target (C : Cert) (N : Net) (pins : Nat → Bool) (Q : Node → Bool)

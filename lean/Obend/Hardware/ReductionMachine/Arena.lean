@@ -21,13 +21,13 @@ Ports of a node outside the arena are free ports (the root of a net). Fresh ids 
 resolved: `apply` wires the outside ports it is given, and callers rule loops out.
 -/
 public import Obend.Hardware.ReductionMachine
-@[expose] public section
+public section
 
 namespace Obend.Hardware.ReductionMachine
 set_option autoImplicit false
 
 /-- `f` with `p` sent to `q`. -/
-def upd (f : PortRef → PortRef) (p q : PortRef) : PortRef → PortRef :=
+@[expose] def upd (f : PortRef → PortRef) (p q : PortRef) : PortRef → PortRef :=
   fun x => if x = p then q else f x
 
 theorem upd_apply (f : PortRef → PortRef) (p q x : PortRef) :
@@ -42,35 +42,35 @@ structure Arena where
 namespace Arena
 
 /-- Node `i` as `reduceActivePair` reads it. -/
-def inet? (A : Arena) (i : Nat) : Option INetNode :=
+@[expose] def inet? (A : Arena) (i : Nat) : Option INetNode :=
   (A.node i).map fun k => ⟨i, k.1, k.2.1, k.2.2, A.link ⟨i, 1⟩, A.link ⟨i, 2⟩⟩
 
 /-- Wire `p` and `q`. -/
-def connect (A : Arena) (p q : PortRef) : Arena :=
+@[expose] def connect (A : Arena) (p q : PortRef) : Arena :=
   { A with link := upd (upd A.link p q) q p }
 
 /-- Free node `i`'s memory. -/
-def drop (A : Arena) (i : Nat) : Arena :=
+@[expose] def drop (A : Arena) (i : Nat) : Arena :=
   { A with node := fun k => if k = i then none else A.node k }
 
 /-- Write node `n`: its kind, label and immediate, and its auxiliary fields into the link table. -/
-def place (A : Arena) (n : INetNode) : Arena :=
+@[expose] def place (A : Arena) (n : INetNode) : Arena :=
   { A with
     node := fun k => if k = n.id then some (n.kind, n.label, n.immVal) else A.node k
     link := upd (upd A.link ⟨n.id, 1⟩ n.aux1) ⟨n.id, 2⟩ n.aux2 }
 
 /-- Wire each splice, in order. -/
-def splice (A : Arena) : List (PortRef × PortRef) → Arena
+@[expose] def splice (A : Arena) : List (PortRef × PortRef) → Arena
   | [] => A
   | w :: ws => (A.connect w.1 w.2).splice ws
 
 /-- One fresh eraser facing each port. -/
-def erasers (A : Arena) : List PortRef → Arena
+@[expose] def erasers (A : Arena) : List PortRef → Arena
   | [] => A
   | p :: ps => ({ A.place (mkEraNode A.next) with next := A.next + 1 }.connect ⟨A.next, 0⟩ p).erasers ps
 
 /-- Apply the outcome of firing `l ~ r`. -/
-def apply (A : Arena) (l r : INetNode) : INetRewriteOutcome → Option Arena
+@[expose] def apply (A : Arena) (l r : INetNode) : INetRewriteOutcome → Option Arena
   | .annihilate w1 w2 => some (((A.drop l.id).drop r.id |>.connect w1.1 w1.2).connect w2.1 w2.2)
   | .erase ps => some (((A.drop l.id).drop r.id).erasers ps)
   | .commute spawned splices =>
