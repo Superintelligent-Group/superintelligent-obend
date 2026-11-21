@@ -120,6 +120,7 @@ import Obend.Apps.CyberneticRadioNode
 import Obend.Apps.FidgetCam
 import Obend.Apps.FidgetCamCert
 import Obend.Apps.FocHil
+import Obend.Apps.RelativityZ4cApp
 import Obend.Apps.SdrFt8Rx
 import Obend.Apps.SiliconKernelVerilator
 import Obend.Apps.SovereignDrex
@@ -354,6 +355,7 @@ import Obend.Hardware.OpenHypergraph
 import Obend.Hardware.OpenUSD
 import Obend.Hardware.OspcProver
 import Obend.Hardware.PCB
+import Obend.Hardware.PdeHypergraphSymmetry
 import Obend.Hardware.PdeSolvers
 import Obend.Hardware.Photonics
 import Obend.Hardware.PinoutEquiv

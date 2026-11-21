@@ -24,7 +24,7 @@ example :
   have h : affectedWith (fun d => d.reads.dropLast) embedQuestion = [] := by decide +kernel
   refine ⟨h, fun hm => ?_⟩
   rw [h] at hm
-  have := check_complete (r := 0) hm
+  have := check_complete (r := 0) ⟨by decide +kernel, hm⟩
   have e : check 0 embedQuestion [] = .refused (.missing "Alpha: ![[Beta]]") [] := by decide +kernel
   rw [e] at this; cases this
 end Obend.Analysis

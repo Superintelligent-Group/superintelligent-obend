@@ -42,6 +42,8 @@ public import Obend.Logic.Obligation
 public import Obend.Elab.AutoCert
 public import Obend.Elab.Workbook
 public import Obend.Consensus.SimplexTrace
+public import Obend.SemanticKG.SemanticCert
+public import Obend.Hardware.GlitchAndTempestSafe
 
 public section
 namespace Obend.Judge
@@ -87,6 +89,8 @@ goal `1 ≥ 0`) makes every witness naming it pass, so it was removed on 2026-11
   , Obend.Lower.format
   , Obend.Consensus.SimplexTrace.simplexTraceFormat
   , Obend.Hardware.GeometryCAM.camGougeFormat
+  , Obend.Hardware.GlitchAndTempestSafe.tempestGlitchEmcFormat
+  , Obend.SemanticKG.semanticKgFormat
   , Genealogy.successionFormat
   ] ++ Obend.Hardware.Judge.hardwareFormats
 

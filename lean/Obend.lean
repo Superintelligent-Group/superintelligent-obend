@@ -227,6 +227,7 @@ public import Obend.Hardware.MultiDStencilGpuSource
 public import Obend.Hardware.MultiDStencilCorrect
 public import Obend.Hardware.BalanceLawLowering
 public import Obend.Hardware.PdeSolvers
+public import Obend.Hardware.PdeHypergraphSymmetry
 public import Obend.Hardware.Device.DriftDiffusion
 public import Obend.Leaf.Flatten
 public import Obend.Leaf.Emit

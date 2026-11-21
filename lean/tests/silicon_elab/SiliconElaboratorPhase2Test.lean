@@ -35,6 +35,16 @@ public import Obend.Lower.ExprCAM
 import all Obend.Lower.ExprCAM
 public import Obend.Lower.SiliconElabFabric
 import all Obend.Lower.SiliconElabFabric
+import all Obend.Lower.DiscrTreeLUT
+import all Obend.Lower.Fragment
+import all Obend.Lower.MetaUnify
+import all Obend.Lower.Proofs.SiliconKernel
+import all Obend.Hardware.HDL
+import all Obend.Hardware.Codec
+import all Obend.Hardware.Judge
+import all Obend.Hardware.ReductionMachine
+import all Obend.Slot
+import all Obend.Slot.World
 @[expose] public section
 
 namespace Obend.Tests.SiliconElaboratorPhase2Test

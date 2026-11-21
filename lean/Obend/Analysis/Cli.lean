@@ -149,9 +149,26 @@ def lawDeps (s : Store) : List (Dep TFact) :=
 def base (s : Store) : TView :=
   ⟨s.pages.filterMap fun p => (label p.history).map (p.name, ·)⟩
 
+/-- Pick `base` verbatim if unseen, otherwise the first unused `base (#k)` (`k ≥ 2`). -/
+private def freshDepName (seen : List String) (base : String) : Nat → Nat → String
+  | 0, k => base ++ " (#" ++ toString k ++ ")"
+  | fuel + 1, k =>
+    let cand := if k == 1 then base else base ++ " (#" ++ toString k ++ ")"
+    if seen.contains cand then freshDepName seen base fuel (k + 1) else cand
+
+private def disambiguateDepsAux : List String → List (Dep TFact) → List (Dep TFact)
+  | _, [] => []
+  | seen, d :: ds =>
+    let n' := freshDepName seen d.name (seen.length + 1) 1
+    { d with name := n' } :: disambiguateDepsAux (n' :: seen) ds
+
+/-- Ensure dependent names are pairwise distinct while preserving every first occurrence verbatim. -/
+def disambiguateDeps (ds : List (Dep TFact)) : List (Dep TFact) :=
+  disambiguateDepsAux [] ds
+
 /-- **The vault's impact question.** -/
 def question (s : Store) (m : Move) : Question TView :=
-  { base := base s, deps := citeDeps s m ++ lawDeps s, cell := m.name, pin := label m.history }
+  { base := base s, deps := disambiguateDeps (citeDeps s m ++ lawDeps s), cell := m.name, pin := label m.history }
 
 /-- Parse `SPEC` of `PAGE@SPEC` against the store: a version `N` (or `vN`), `retired`, or a file the
 owner would write. -/
@@ -204,7 +221,7 @@ def deps (t : Turn) : List (Dep TFact) :=
 
 /-- **The workspace's impact question.** -/
 def question (v : View) (t : Turn) (cell : String) (moved : Option RecordLine) : Question TView :=
-  { base := base v, deps := deps t, cell := cell, pin := moved.map lineLabel }
+  { base := base v, deps := VaultWorld.disambiguateDeps (deps t), cell := cell, pin := moved.map lineLabel }
 
 end WorkspaceWorld
 
@@ -336,6 +353,7 @@ def lineText (q : Question TView) (l : Line TFact) : String :=
       (show String from q.cell) ++ "@" ++ pinText q.pin
 
 def clauseText : Clause → String
+  | .duplicateDep d => "duplicate-dep: " ++ d ++ " is indexed more than once"
   | .notIndexed d => "not-indexed: " ++ d ++ " is no dependent of the question"
   | .doesNotRead d => "does-not-read: " ++ d ++ "'s line rests on a support it does not read, or not of the moved cell"
   | .wrongOpening d => "wrong-opening: " ++ d ++ "'s opening is not what the new pin says, or it does not go that way"

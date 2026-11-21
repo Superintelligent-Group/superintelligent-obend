@@ -53,10 +53,19 @@ meta import Obend.Tactic.DocsCensus
 meta import Obend.Tactic.Tooth
 meta import Obend.AssertAxioms
 import all Obend.Judge.Class
+import all Obend.Judge.RealAnalysis
 import all Obend.Logic.Obligation
+import all Obend.Hardware.HDL
+import all Obend.Hardware.Codec
 import all Obend.Hardware.Judge
+import all Obend.Analysis.RealAnalysis
+import all Obend.Analysis.TaylorModel
+import all Obend.Analysis.Groebner
 import all Obend.Analysis.SosLyapunov
 import all Obend.Elab.AutoCert
+import all Obend.Elab.Workbook
+import all Obend.Spec.BidirectionalSurfaceElab
+import all Obend.Spec.FrontEnd
 
 open Obend.Core.Term (Primitive Term)
 open Obend.Judge (Verdict Format IntervalQuery)

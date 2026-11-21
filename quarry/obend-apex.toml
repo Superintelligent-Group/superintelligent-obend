@@ -38,6 +38,8 @@ subsystems = [
   "Fold",
   "Reasons",
   "Kind",
+  "Geometry",
+  "SemanticKG",
 ]
 
 entry_points = [
@@ -1891,6 +1893,178 @@ subsystem = "Tactic"
 module = "Obend.Tactic.SymDiffAndFlux"
 theorem = "inferSsaDagQ32Intervals_encloses_eval"
 description = "Signed Q32 interval soundness: when `inferSsaDagQ32Intervals` accepts and inputs lie in their boxes, every evaluated SSA word lies in its inferred guard-bit interval and every DAG output stays inside `(-2^62, 2^62)` (`inferSsaDagQ32Intervals_encloses_eval`, per node `propagateSsaInterval_encloses`)."
+
+# ==============================================================================
+# Unified PDE Compiler, Continuum Geometry, CAE/OSPC, SemanticKG & Core4 Spines
+# ==============================================================================
+
+[[apex]]
+id = "hardware-pde-end-to-end-6rung-cert"
+subsystem = "Hardware"
+module = "Obend.Hardware.MultiDStencilCorrect"
+theorem = "buildEndToEndPdeCert"
+description = "Single-object 6-rung `EndToEndPdeCert` assembler uniting continuum Fréchet AD, Gershgorin/Lipschitz bounds, Lie/Strang & Rusanov conservation, Q32.32 guard-bit defect bounds, multi-step error tubes, bit-exact GPU lowering, and 2^64-word systolic RTL + Yosys LEC."
+
+[[apex]]
+id = "hardware-pde-euler3d-single-systolic-all-axes"
+subsystem = "Hardware"
+module = "Obend.Hardware.PdeHypergraphSymmetry"
+theorem = "euler3d_single_systolic_cell_serves_all_3_axes"
+description = "C_3 cyclic axis equivariance (`euler3d_cyclic_axis_equivariance`), MHD planar reflection (`mhd8wave_planar_axis_equivariance`), bit-exact 3-axis systolic RTL reuse on `EulerGas3D_flux_axis0`, and OpenHypergraph/Equitable S_3 invariant sub-DAG quotienting."
+
+[[apex]]
+id = "analysis-hyperbolic-gershgorin-and-z4c-damping"
+subsystem = "Analysis"
+module = "Obend.Analysis.HyperbolicBalanceLaws"
+theorem = "z4c_theta_constraint_strict_damped"
+description = "Interval-Jacobian Gershgorin spectral bound (`verifyWavespeedGershgorin_sound`), constructive weighted Lipschitz (`evalFluxLip_sound`), Audusse–Bouchut lake-at-rest (`audusseBouchut_lakeAtRest_wellBalanced`), and strict Z4c Theta constraint damping."
+
+[[apex]]
+id = "analysis-nonlinear-q32-scheme-error-tube"
+subsystem = "Analysis"
+module = "Obend.Analysis.NonlinearErrorTube"
+theorem = "q32_scheme_trajectory_error_tube"
+description = "Quantitative per-step Q32.32 rounding bound (`stepQ32Axis_rat_defect_bound`), surrogate defect tube (`nonlinear_aposteriori_error_tube`), and multi-D Lie/Strang + inhomogeneous-source Q32 trajectory error tube."
+
+[[apex]]
+id = "analysis-nonlinear-pde-cli-reflective-and-receipt"
+subsystem = "Analysis"
+module = "Obend.Analysis.NonlinearPdeCli"
+theorem = "pdeTrajectoryDigest_binding"
+description = "LEB128 length-framed 256-bit `cSHAKE256` trajectory receipt binding (`pdeTrajectoryDigest_binding`) and periodic/reflective Lie/Strang conservation (`rolloutRat_reflective_conserves_component`) for `obend pde solve|check`."
+
+[[apex]]
+id = "geometry-dec-maxwell-poynting-energy-balance"
+subsystem = "Geometry"
+module = "Obend.Geometry.CochainAndGauge"
+theorem = "dec_maxwell_poynting_energy_balance"
+description = "Exact rational 3D DEC Maxwell discrete Poynting energy conservation across oriented 3-cells (`dec_maxwell_poynting_energy_balance`, `stepDecMaxwell_yee_bilinear_balance`)."
+
+[[apex]]
+id = "hardware-dual-rail-coupled-maxwell-tempest"
+subsystem = "Hardware"
+module = "Obend.Hardware.GlitchAndTempestSafe"
+theorem = "dualRail_decMaxwell_poynting_tempest_sound"
+description = "Gate-switching 1-cochains injected into 3D DEC Maxwell steps (`switching_current_bounds_radiated_flux`) with dual-rail WDDL quarantine and secret-independent bus SSN (`balanced_wddl_bus_ssn_secret_independent`)."
+
+[[apex]]
+id = "hardware-pinout-equiv-d4-and-trace"
+subsystem = "Hardware"
+module = "Obend.Hardware.PinoutEquiv"
+theorem = "runPinoutRevisionTrace_sound"
+description = "D_4 dihedral footprint/pinout bijection (`checkPinoutIso_iff`), 256-bit datasheet citation freshness (`datasheetBlockDigest256_binding`), commutative multi-agent board merge, and multi-turn revision trace soundness."
+
+[[apex]]
+id = "hardware-planesweep-drc-lvs-exec-refines-spec"
+subsystem = "Hardware"
+module = "Obend.Hardware.PlaneSweepDrcLvs"
+theorem = "planeSweepDrcExec_eq_allPairsSpec"
+description = "Sorted scanline plane-sweep 2D DRC (`planeSweepDrcExec_eq_allPairsSpec`), Union-Find LVS netlist extraction (`checkLvsConnectivityExec_iff`), and multi-turn layout trace soundness (`runLayoutEditTrace_sound`)."
+
+[[apex]]
+id = "hardware-small-signal-mna-neumann-and-sweep"
+subsystem = "Hardware"
+module = "Obend.Hardware.SmallSignalMna"
+theorem = "acSweepTrace_sound"
+description = "2N×2N AC MNA Neumann interval enclosure (`smallSignalMna_neumann_enclosure_sound`, `acMatVecExec_eq_spec`), N-bit SAR ADC quantization bounds, Prouhet–Thue–Morse/Pelgrom bow cancellation, and multi-frequency AC sweep soundness."
+
+[[apex]]
+id = "hardware-digital-filter-cic-fir-and-chebyshev"
+subsystem = "Hardware"
+module = "Obend.Hardware.DigitalFilterAndArray"
+theorem = "cascaded_cic_fir_zero_overflow"
+description = "Cascaded `CIC -> ShiftTrunc -> FIR` exact wordlength zero-overflow (`cascaded_cic_fir_zero_overflow`), folded symmetric FIR `Exec = Spec`, and continuum Dolph–Chebyshev sidelobe bounds (`dolphChebyshev_sidelobe_bound`)."
+
+[[apex]]
+id = "hardware-ospc-four-tile-hypercube-prover"
+subsystem = "Hardware"
+module = "Obend.Hardware.OspcProver"
+theorem = "ospc_four_tile_prover_multi_cycle_sound"
+description = "Synthesizable 4-tile Q_2 hypercube hardware prover (`FaceIdeal4` ternary 4-cube registers with `faceIdeal4_boundary_ne_top`, DiscrTreeLUT, DeltaNet, StreamLRAT) and 2-hop XOR-butterfly Sumcheck/Merkle folding."
+
+[[apex]]
+id = "trailblaze-cathedral-ospc-multiturn"
+subsystem = "Trailblaze"
+module = "Obend.Trailblaze.CathedralApex"
+theorem = "apex_cathedral_ospc_multi_turn_sound"
+description = "Multi-turn Cathedral governance welded to `OspcProver` 4-tile hardware prover receipts (`checkOspcInRackFpgaReceipt_sound`, `apex_cathedral_ospc_end_to_end_sound`)."
+
+[[apex]]
+id = "semantickg-positive-and-whynot-cert-sound"
+subsystem = "SemanticKG"
+module = "Obend.SemanticKG.SemanticCert"
+theorem = "semantic_whynot_cert_sound"
+description = "4-stage Verifiable Semantic KG (`Databank`, VPA/SymbolicRegex `SpanParse`, guarded Skolem `HypergraphChase`) with masked Ajtai positive receipts (`semantic_positive_cert_sound`), saturated countermodel/unfounded-set `whyNot` receipts, and `semantic-kg@1` Judge."
+
+[[apex]]
+id = "doc-semantickg-multiturn-spine"
+subsystem = "Doc"
+module = "Obend.Doc.SemanticKG"
+theorem = "semanticKg_multi_turn_update_sound"
+description = "Multi-turn document-to-SemanticKG world update spine with incremental chunk commitment, stale-root refusal (`skip_implies_contract_violation`), and monotone capability attenuation."
+
+[[apex]]
+id = "logic-open-world-env-harness-mgc"
+subsystem = "Logic"
+module = "Obend.Logic.EnvHarness"
+theorem = "most_general_client_multi_turn_safe"
+description = "Open-world adversarial environment harness (`SortedU64Set` binary-search `RevokedSet`, `Mandate` depletion, `skip_implies_contract_violation`, `most_general_client_multi_turn_safe`)."
+
+[[apex]]
+id = "polis-hermes-env-why-sound-complete"
+subsystem = "Polis"
+module = "Obend.Polis.HermesEnv"
+theorem = "hermesRoom_multi_turn_attenuation_sound"
+description = "Positive/negative threshold policy explanation algebra (`evalWhy_sound_and_complete`) and multi-turn Hermes room capability attenuation (`hermesRoom_multi_turn_attenuation_sound`)."
+
+[[apex]]
+id = "polis-decentralized-rules-mesh-multiturn"
+subsystem = "Polis"
+module = "Obend.Polis.DecentralizedRulesMesh"
+theorem = "ex_post_rules_compliance_multi_turn_sound"
+description = "Sybil-bounded pluralist quorum mesh (`sybil_cluster_stuffing_non_amplifying`), 256-bit receipt binding (`exPostRulesReceipt_digest_binding`), `no_self_lockout_multi_turn`, and multi-turn ex-post compliance."
+
+[[apex]]
+id = "core-graded-qtt-zero-erasure-bisim"
+subsystem = "Core"
+module = "Obend.Core.GradedCoreWeld"
+theorem = "core_zero_grade_erasure_bisim"
+description = "Semiring-graded `Core.Term` typing welded to `PartialTyping` (`graded_eraseZero_partialTyping`) and step-by-step `0`-grade erasure lockstep bisimulation (`core_zero_grade_erasure_bisim`)."
+
+[[apex]]
+id = "core-surface-bidirectional-elab-sound"
+subsystem = "Core"
+module = "Obend.Spec.BidirectionalSurfaceElab"
+theorem = "elabSyntaxExpr_checks_bidirectionally"
+description = "Bidirectional surface `Spec.Syntax.Expr` elaborator targeting `Core.Bidirectional.checkAt` with `0`-/`1`-/`omega`-grade QTT discipline, law/effect tracking, and total refusal diagnostics."
+
+[[apex]]
+id = "equiv-ciu-logical-relation-and-kind-ri"
+subsystem = "Equiv"
+module = "Obend.Equiv.LogicalRelation"
+theorem = "kind_brand_representation_independence"
+description = "Step-indexed CIU logical relation (`fundamental_lemma`, `lr_sound_typedCtxEquiv`), `#kind` Reynolds representation independence across distinct private layouts, and `0`-grade `erased_relational_noninterference`."
+
+[[apex]]
+id = "core-total-canonicity-and-machine-normalization"
+subsystem = "Core"
+module = "Obend.Core.Canonicity"
+theorem = "total_ground_machine_terminates"
+description = "Tait–Girard reducibility (`total_canonicity`) over `PositiveBounds` + `IsTotalTerm` (`lawCompile_emits_totalTerm`) and refusal/blackhole/yield-free `Core.Machine.runBounded` normalization."
+
+[[apex]]
+id = "equiv-oneshot-algebraic-effect-handlers"
+subsystem = "Equiv"
+module = "Obend.Equiv.EffectHandlers"
+theorem = "handler_vertical_fusion_iequiv"
+description = "One-shot (`Reuse.once`, `.linear`/`.affine`) shallow and CPS deep resumption handlers (`multi_turn_shallow_trace_preserves_typing`, `machine_handler_no_sharedEffect_refusal`, `compileDeep_preserves_typing`, `handler_vertical_fusion_iequiv`)."
+
+[[apex]]
+id = "core-open-object-c4-around-augment-algebra"
+subsystem = "Core"
+module = "Obend.Spec.Proofs.OpenObjectAlgebra"
+theorem = "around_intercepts_subclass_override"
+description = "C4 linearization parity (`c4_linearize_parity_and_nodup`), 2-band `[primary, around]` wrapper interception over subclass `override`, associative `+`/`*`/`and` `augment_c4_monoid_fold`, and `expandProtocols_unique_dispatch_keys`."
 
 # ==============================================================================
 # Planned Wave 5+ Vertical Spine Apex Theorems (`master_interface_and_systems_architecture.md`)

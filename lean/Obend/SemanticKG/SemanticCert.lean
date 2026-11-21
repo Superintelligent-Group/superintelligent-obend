@@ -1063,7 +1063,7 @@ theorem badSemanticKg_refused (r : Nat) :
   have h0 : semanticKgJudge.check 0 badSemanticKgObj badSemanticKgCert = .refused .nonBaseTargetAtom [] := by
     change checkSemanticKg 0 badSemanticKgObj badSemanticKgCert = _; simp [checkSemanticKg, hb]
   exact (semanticKgJudge.mono (Nat.zero_le r) (by rw [h0]; intro hc; cases hc)).trans h0
-def semanticKgFormat : Obend.Judge.Format where
+@[expose] def semanticKgFormat : Obend.Judge.Format where
   name := "semantic-kg"; version := "1"; Obj := SemanticKgObj; Cert := SemanticKgCert
   judge := semanticKgJudge; decodeObj := decodeSemanticKgObj; decodeCert := decodeSemanticKgCert
   trust := .kernel; regime := .decidable; bad := (badSemanticKgObj, badSemanticKgCert); badGrade := 0

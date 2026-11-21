@@ -218,6 +218,17 @@ import all Obend.Leaf.Flatten
 import all Obend.Leaf.Served
 import all Obend.Leaf.Specialize
 import all Obend.Leaf.Static
+import all Obend.Analysis.SimplicialFeecFem
+import all Obend.Geometry.CochainAndGauge
+import all Obend.Hardware.Accelerators
+import all Obend.Hardware.CurrentLoop
+import all Obend.Hardware.GeometryCAM
+import all Obend.Hardware.OspcProver
+import all Obend.Hardware.PCB
+import all Obend.Paco.GPaco
+import all Obend.SymbolicZk.CompileToPiop
+import all Obend.SymbolicZk.CompileToPiopCore
+import all Obend.SymbolicZk.SkolemChaseCore
 import all Obend.Leaf.UpTo
 import all Obend.Lower.Fragment
 import all Obend.Lower.Proofs.Book

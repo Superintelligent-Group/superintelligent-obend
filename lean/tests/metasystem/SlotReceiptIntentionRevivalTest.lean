@@ -376,8 +376,10 @@ theorem slot_dependency_closure_and_self_edge_regression :
   refine ⟨?_, ?_, ?_, by decide⟩
   · change negotiateSlots revivalKinds revivalIntention () [⟨dIf, [codecCandV1]⟩] = _
     simp [negotiateSlots, hBad, hId]
-  · change (match diagnoseDialecticalBlame revivalKinds revivalIntention () cshakeMultiproofHash
-        [⟨dIf, codecCandV1⟩] _ _ with
+  · generalize buildBlindedMultiproof256 cshakeMultiproofHash sampleLeaves256 [0] = proof
+    generalize saltedTreeRoot256 cshakeMultiproofHash sampleLeaves256 = root
+    change (match diagnoseDialecticalBlame revivalKinds revivalIntention () cshakeMultiproofHash
+        [⟨dIf, codecCandV1⟩] proof root with
       | .inr (.slotGraphMalformed ["codec"] _ _) => true
       | _ => false) = true
     have hAud : auditCandidateLocal revivalKinds revivalIntention () dIf codecCandV1 = none := by
@@ -455,6 +457,8 @@ theorem cyclic_reasons_defeat_graphs_terminate_with_blame :
     unfold verifyNonEmptyBlindedMultiproof256
     rw [buildBlindedMultiproof256_queriedIndices, hVer]
     rfl
+  generalize buildBlindedMultiproof256 cshakeMultiproofHash sampleLeaves256 [0] = proof at hNonEmpty ⊢
+  generalize saltedTreeRoot256 cshakeMultiproofHash sampleLeaves256 = root at hNonEmpty ⊢
   have hOdd :
       ({ base := { explanations := [{ name := "odd", concl := "p", pos := [], neg := ["p"] }] }
          kept := judge { explanations := [{ name := "odd", concl := "p", pos := [], neg := ["p"] }] } } : State).status "p" =
