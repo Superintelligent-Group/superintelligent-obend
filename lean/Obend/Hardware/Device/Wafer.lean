@@ -34,6 +34,7 @@ deposited restores the stack), `sqrtEnclosure_spec` (the root enclosure brackets
 has the process parameters free and false for some value of them.
 -/
 public import Obend.Hardware.Device.Constants
+import all Obend.Hardware.Device.Constants
 import all Obend.Hardware.Device.Enclosure
 public section
 
@@ -79,7 +80,7 @@ structure WaferState where
 @[expose] def WaferState.bare (background : CanonicalRat) : WaferState :=
   ⟨background, [], [], 0⟩
 
-@[expose] def filmsThickness (films : List Film) : CanonicalRat :=
+def filmsThickness (films : List Film) : CanonicalRat :=
   films.foldl (fun acc f => acc + f.thicknessCm) 0
 
 /-- The thickness of the oxide on top, `0` if the top film is not oxide (or there is none). -/
@@ -96,14 +97,14 @@ structure WaferState where
   | _ => false
 
 /-- Total dose of a species in the wafer (cm⁻²). -/
-@[expose] def WaferState.dose (w : WaferState) (sp : Species) : CanonicalRat :=
+def WaferState.dose (w : WaferState) (sp : Species) : CanonicalRat :=
   w.dopants.foldl (fun acc g => if g.species = sp then acc + g.doseCm2 else acc) 0
 
 /-! ## 2. Implant -/
 
 /-- Implant `sp` at `keV` with dose `Q`: a Gaussian at `R_p − t_films` with variance `ΔR_p²` (the films
 are taken to stop like silicon; `none` outside the table's energies). -/
-@[expose] def WaferState.implant (w : WaferState) (sp : Species) (keV dose : CanonicalRat) : Option WaferState :=
+def WaferState.implant (w : WaferState) (sp : Species) (keV dose : CanonicalRat) : Option WaferState :=
   match rangeAt sp keV with
   | none => none
   | some (rp, drp) =>
@@ -141,21 +142,21 @@ structure Diffusivities where
   antimony : CanonicalRat
   deriving @[expose] DecidableEq, Repr
 
-@[expose] def Diffusivities.get (d : Diffusivities) : Species → CanonicalRat
+def Diffusivities.get (d : Diffusivities) : Species → CanonicalRat
   | .boron => d.boron
   | .phosphorus => d.phosphorus
   | .arsenic => d.arsenic
   | .antimony => d.antimony
 
 /-- Each supplied diffusivity lies in `D₀ exp(−E_A/kT)` of its species (`intrinsicDiffusivity`). -/
-@[expose] def Diffusivities.ok (d : Diffusivities) (kBEv tempK : CanonicalRat) : Bool :=
+def Diffusivities.ok (d : Diffusivities) (kBEv tempK : CanonicalRat) : Bool :=
   (intrinsicDiffusivity .boron).ok kBEv tempK d.boron &&
   (intrinsicDiffusivity .phosphorus).ok kBEv tempK d.phosphorus &&
   (intrinsicDiffusivity .arsenic).ok kBEv tempK d.arsenic &&
   (intrinsicDiffusivity .antimony).ok kBEv tempK d.antimony
 
 /-- Fick's law for time `t` at diffusivities `d`: `σ² ↦ σ² + 2Dt`, exact. -/
-@[expose] def WaferState.anneal (w : WaferState) (d : Diffusivities) (timeS : CanonicalRat) : WaferState :=
+def WaferState.anneal (w : WaferState) (d : Diffusivities) (timeS : CanonicalRat) : WaferState :=
   { w with dopants := w.dopants.map fun g => { g with varCm2 := g.varCm2 + 2 * d.get g.species * timeS } }
 
 /-- A positive diffusivity for a positive time widens every profile. -/
@@ -187,7 +188,7 @@ structure OxidationCert where
   deriving @[expose] DecidableEq, Repr
 
 /-- `x² + Ax − B(t + τ)`. -/
-@[expose] def dealGroveResidual (A target x : CanonicalRat) : CanonicalRat :=
+def dealGroveResidual (A target x : CanonicalRat) : CanonicalRat :=
   x * x + A * x - target
 
 /-- Deal–Grove: with `A = B/(B/A)` and `τ = (x₀² + Ax₀)/B` from the oxide already present, the new
@@ -196,7 +197,7 @@ anneals (it is a thermal step), consumes `0.44` of the grown oxide from the sili
 profile up by that much (segregation of dopant into the oxide is not modelled). `none` when the rate
 constants are not Arrhenius-consistent, the surface is masked, or the thickness does not solve the
 equation. -/
-@[expose] def WaferState.oxidize (w : WaferState) (amb : OxidationAmbient) (kBEv tempK timeS : CanonicalRat)
+def WaferState.oxidize (w : WaferState) (amb : OxidationAmbient) (kBEv tempK timeS : CanonicalRat)
     (c : OxidationCert) (tol : CanonicalRat) : Option WaferState :=
   let rates := dealGrove100 amb
   if !(rates.parabolic.ok kBEv tempK c.bCm2PerS && rates.linear.ok kBEv tempK c.baCmPerS &&
@@ -273,14 +274,14 @@ theorem oxidize_consumes {w w' : WaferState} {amb : OxidationAmbient} {kBEv temp
 /-! ## 5. Etch and deposition -/
 
 /-- Deposit a film of `m`, thickness `t` (merged with a top film of the same material). -/
-@[expose] def WaferState.deposit (w : WaferState) (m : FilmMaterial) (t : CanonicalRat) : WaferState :=
+def WaferState.deposit (w : WaferState) (m : FilmMaterial) (t : CanonicalRat) : WaferState :=
   match w.films with
   | ⟨m', t'⟩ :: rest => if m' = m then { w with films := ⟨m, t' + t⟩ :: rest } else { w with films := ⟨m, t⟩ :: w.films }
   | [] => { w with films := [⟨m, t⟩] }
 
 /-- Etch `depth` of the top film, which must be `m` and at least that thick; a film etched to zero is
 removed. -/
-@[expose] def WaferState.etch (w : WaferState) (m : FilmMaterial) (depth : CanonicalRat) : Option WaferState :=
+def WaferState.etch (w : WaferState) (m : FilmMaterial) (depth : CanonicalRat) : Option WaferState :=
   match w.films with
   | ⟨m', t⟩ :: rest =>
     if m' = m ∧ depth ≤ t then
@@ -289,13 +290,13 @@ removed. -/
   | [] => none
 
 /-- Strip the top film entirely; it must be `m`. -/
-@[expose] def WaferState.strip (w : WaferState) (m : FilmMaterial) : Option WaferState :=
+def WaferState.strip (w : WaferState) (m : FilmMaterial) : Option WaferState :=
   match w.films with
   | ⟨m', _⟩ :: rest => if m' = m then some { w with films := rest } else none
   | [] => none
 
 /-- Etch `depth` of bare silicon: every profile moves up by `depth`. -/
-@[expose] def WaferState.etchSilicon (w : WaferState) (depth : CanonicalRat) : Option WaferState :=
+def WaferState.etchSilicon (w : WaferState) (depth : CanonicalRat) : Option WaferState :=
   match w.films with
   | [] => some { w with dopants := w.dopants.map fun g => { g with rpCm := g.rpCm - depth },
                         siliconRemovedCm := w.siliconRemovedCm + depth }
@@ -325,7 +326,7 @@ theorem etch_deposit (w : WaferState) (m : FilmMaterial) {t : CanonicalRat}
 
 /-- A root enclosure: `lo² ≤ v ≤ hi²`, `0 ≤ lo`, by Newton from above (`hi₀ = max 1 v`), rounding
 `hi` up to `roundScale` each step and taking `lo = v/hi`. -/
-@[expose] def sqrtEnclosure (v : CanonicalRat) (iters : Nat := 48) : Interval :=
+def sqrtEnclosure (v : CanonicalRat) (iters : Nat := 48) : Interval :=
   let s : CanonicalRat := (roundScale : Nat)
   let hi := go (max 1 v) iters s
   ⟨v / hi, hi⟩
@@ -441,22 +442,22 @@ theorem sqrtEnclosure_bracket_mem {a b r : CanonicalRat} (ha : 0 ≤ a) (hr : 0 
     simpa [ratPow] using Rat.le_trans hrb hhi_b
 
 /-- `[π]` to 15 digits. -/
-@[expose] def piInterval : Interval := ⟨3.14159265358979, 3.14159265358980⟩
+def piInterval : Interval := ⟨3.14159265358979, 3.14159265358980⟩
 
 /-- `1/√(2πσ²)` as an interval; `none` for `σ² ≤ 0`. -/
-@[expose] def invSqrt2PiVar? (var : CanonicalRat) : Option Interval :=
+def invSqrt2PiVar? (var : CanonicalRat) : Option Interval :=
   let twoPiVar := Interval.scale (2 * var) piInterval
   if 0 < twoPiVar.lo then
     Interval.divPos? (Interval.ofPoint 1) ⟨(sqrtEnclosure twoPiVar.lo).lo, (sqrtEnclosure twoPiVar.hi).hi⟩
   else none
 
 /-- `e^{−(x−R_p)²/2σ²} + e^{−(x+R_p)²/2σ²}`. -/
-@[expose] def gaussPair (rp var x : CanonicalRat) : Interval :=
+def gaussPair (rp var x : CanonicalRat) : Interval :=
   Interval.add (expEnclosure (-((x - rp) * (x - rp)) / (2 * var)))
                (expEnclosure (-((x + rp) * (x + rp)) / (2 * var)))
 
 /-- One dopant's contribution at depth `x`, signed (donors positive). -/
-@[expose] def GaussianDopant.enclosure? (g : GaussianDopant) (x : CanonicalRat) : Option Interval :=
+def GaussianDopant.enclosure? (g : GaussianDopant) (x : CanonicalRat) : Option Interval :=
   (invSqrt2PiVar? g.varCm2).map fun inv =>
     let sign : CanonicalRat := if g.species.isDonor then 1 else -1
     Interval.scale (sign * g.doseCm2) (Interval.mul inv (gaussPair g.rpCm g.varCm2 x))
@@ -471,7 +472,7 @@ theorem sqrtEnclosure_bracket_mem {a b r : CanonicalRat} (ha : 0 ≤ a) (hr : 0 
     (some (Interval.ofPoint w.background))
 
 /-- One dopant's contribution at depth `x`, unsigned. -/
-@[expose] def GaussianDopant.absEnclosure? (g : GaussianDopant) (x : CanonicalRat) : Option Interval :=
+def GaussianDopant.absEnclosure? (g : GaussianDopant) (x : CanonicalRat) : Option Interval :=
   (invSqrt2PiVar? g.varCm2).map fun inv =>
     Interval.scale (ratAbs g.doseCm2) (Interval.mul inv (gaussPair g.rpCm g.varCm2 x))
 

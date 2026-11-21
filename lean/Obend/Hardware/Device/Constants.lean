@@ -65,7 +65,7 @@ namespace SiliconConstants
 
 /-- `n_i` is accepted when `n_i² ∈ N_c N_v · exp(−E_g/kT)`: the intrinsic density is derived from
 `N_c`, `N_v`, `E_g`, not typed. -/
-@[expose] def niOk (c : SiliconConstants) (ni : CanonicalRat) : Bool :=
+def niOk (c : SiliconConstants) (ni : CanonicalRat) : Bool :=
   decide (0 < ni) &&
   decide (ni * ni ∈ Interval.scale (c.nc * c.nv) (expEnclosure (-c.egEv / c.vt)))
 
@@ -103,7 +103,7 @@ namespace CaugheyThomas
   ct.muMin + (ct.muMax - ct.muMin) / (1 + r)
 
 /-- `r` stands for `(N/N_ref)^α` to within relative `δ` (`powBracket`); `N ≥ 0`, `N_ref > 0`. -/
-@[expose] def ratioOk (ct : CaugheyThomas) (nTot r δ : CanonicalRat) : Bool :=
+def ratioOk (ct : CaugheyThomas) (nTot r δ : CanonicalRat) : Bool :=
   decide (0 < ct.nRef) && decide (0 ≤ nTot) && powBracket r (nTot / ct.nRef) ct.alphaNum ct.alphaDen δ
 
 /-- More doping, less mobility: `µ_of` is antitone in `r ≥ 0` when `µ_min ≤ µ_max`. -/
@@ -166,7 +166,7 @@ structure SrhParams where
   deriving @[expose] DecidableEq, Repr
 
 /-- `U = (np − n_i²)/(τ_p (n + n₁) + τ_n (p + p₁))`, exact over `ℚ`. -/
-@[expose] def SrhParams.rate (s : SrhParams) (ni n p : CanonicalRat) : CanonicalRat :=
+def SrhParams.rate (s : SrhParams) (ni n p : CanonicalRat) : CanonicalRat :=
   (n * p - ni * ni) / (s.tauP * (n + s.n1) + s.tauN * (p + s.p1))
 
 /-- Mid-gap trap, `τ_n = τ_p = 10 µs` (devsim's default for lightly damaged bulk silicon; a lifetime
@@ -189,7 +189,7 @@ structure Arrhenius where
 @[expose] def SiliconConstants.kBEv (c : SiliconConstants) : CanonicalRat := c.kB / c.q
 
 /-- A value `d` is accepted as `D(T)` when `d ∈ D₀ · exp(−E_A/(k_B T))`. -/
-@[expose] def Arrhenius.ok (a : Arrhenius) (kBEv tempK d : CanonicalRat) : Bool :=
+def Arrhenius.ok (a : Arrhenius) (kBEv tempK d : CanonicalRat) : Bool :=
   decide (0 < tempK) && decide (d ∈ Interval.scale a.d0 (expEnclosure (-a.eaEv / (kBEv * tempK))))
 
 /-- Dopant species. -/
@@ -209,7 +209,7 @@ inductive Species where
 B `1.0, 3.5`; P `4.70, 3.68`; As `9.17, 3.99`; Sb `4.58, 3.88`. Intrinsic means `n < n_i(T)`: the
 concentration-dependent (charged-defect) terms of Table 7-? are not modelled, which under-estimates the
 diffusion of the `10²⁰ cm⁻³` n⁺ layer; stated in `Device/Wafer.lean`. -/
-@[expose] def intrinsicDiffusivity : Species → Arrhenius
+def intrinsicDiffusivity : Species → Arrhenius
   | .boron => ⟨1.0, 3.5⟩
   | .phosphorus => ⟨4.70, 3.68⟩
   | .arsenic => ⟨9.17, 3.99⟩
@@ -229,13 +229,13 @@ structure DealGroveRates where
   deriving @[expose] DecidableEq, Repr
 
 /-- `1 µm²/h = 10⁻⁸ cm² / 3600 s`; `1 µm/h = 10⁻⁴ cm / 3600 s`. -/
-@[expose] def um2PerHour : CanonicalRat := 1.0e-8 / 3600
-@[expose] def umPerHour : CanonicalRat := 1.0e-4 / 3600
+def um2PerHour : CanonicalRat := 1.0e-8 / 3600
+def umPerHour : CanonicalRat := 1.0e-4 / 3600
 
 /-- Plummer Table 6-? (the Deal–Grove fits, for (100) silicon: the (111) `C₂` divided by 1.68):
 dry O₂ `C₁ = 7.72·10² µm²/h, E₁ = 1.23 eV; C₂ = 6.23·10⁶/1.68 µm/h, E₂ = 2.0 eV`;
 wet O₂ (H₂O) `C₁ = 3.86·10² µm²/h, E₁ = 0.78 eV; C₂ = 1.63·10⁸/1.68 µm/h, E₂ = 2.05 eV`. -/
-@[expose] def dealGrove100 : OxidationAmbient → DealGroveRates
+def dealGrove100 : OxidationAmbient → DealGroveRates
   | .dryO2 => ⟨⟨772 * um2PerHour, 1.23⟩, ⟨6.23e6 / 1.68 * umPerHour, 2.0⟩⟩
   | .wetO2 => ⟨⟨386 * um2PerHour, 0.78⟩, ⟨1.63e8 / 1.68 * umPerHour, 2.05⟩⟩
 
@@ -266,7 +266,7 @@ structure RangeRow where
 
 /-- Plummer–Deal–Griffin ch. 8, "Ranges and standard deviation ΔRp of dopants in randomly oriented
 silicon" (µm, here nm), 10–200 keV, columns P, As, Sb, B. -/
-@[expose] def rangeTable : Species → List RangeRow
+def rangeTable : Species → List RangeRow
   | .phosphorus =>
     [⟨10, 19.9, 6.4⟩, ⟨20, 34.2, 12.5⟩, ⟨30, 47.3, 17.9⟩, ⟨40, 59.8, 22.9⟩, ⟨50, 71.7, 27.5⟩,
      ⟨60, 83.3, 31.7⟩, ⟨70, 94.7, 35.6⟩, ⟨80, 105, 39.3⟩, ⟨90, 116, 42.8⟩, ⟨100, 127, 46.1⟩,
@@ -286,7 +286,7 @@ silicon" (µm, here nm), 10–200 keV, columns P, As, Sb, B. -/
 
 /-- `R_p`, `ΔR_p` (cm) at an energy, by linear interpolation between tabulated rows; `none` outside
 the table (10–200 keV). -/
-@[expose] def rangeAt (sp : Species) (keV : CanonicalRat) : Option (CanonicalRat × CanonicalRat) :=
+def rangeAt (sp : Species) (keV : CanonicalRat) : Option (CanonicalRat × CanonicalRat) :=
   go (rangeTable sp)
 where
   nm : CanonicalRat := 1.0e-7
@@ -299,7 +299,7 @@ where
     | _ => none
 
 /-- A range table is well formed when energies, ranges and straggles all increase down the rows. -/
-@[expose] def rangeTableSorted : List RangeRow → Bool
+def rangeTableSorted : List RangeRow → Bool
   | r₁ :: r₂ :: rest =>
     decide (r₁.keV < r₂.keV) && decide (r₁.rpNm < r₂.rpNm) && decide (r₁.drpNm < r₂.drpNm) &&
     rangeTableSorted (r₂ :: rest)
