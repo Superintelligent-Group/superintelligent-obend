@@ -1044,7 +1044,6 @@ theorem compileMultiDSweepFused_sound (b : StencilBoundary) (dims : List Nat) (r
   exact multiDHaloLeaf_read b dims r s idx grid (List.mem_range.mp hMem)
 
 /-! ## 4. Q32.32 Systolic `HDL.RtlModule` Lowering & `RangeSafe` Interval Gate -/
-
 /-- Scale before encoding: range checks must inspect this integer, never a wrapped word. -/
 def ratToQ32Scaled (q : Rat) : Int := (q.num * ((2 : Int) ^ 32)) / (q.den : Int)
 
@@ -1372,9 +1371,10 @@ def bindPdeReciprocal (size d : Nat) : Obend.Hardware.Gpu.ArrayPrograms.BuildM N
   for _ in [0,1,2,3] do
     let dx ← emit (scalarQmul32 (i dp) (i x))
     x ← emit (scalarQmul32 (i x) (scalarSub (.const (2#64 <<< 32)) (i dx)))
-  let mag ← emit (scalarSelect (scalarLt (i k) (.const 31#64))
-    (op .shr (i x) (scalarSub (.const 31#64) (i k)))
-    (op .shl (i x) (scalarSub (i k) (.const 31#64))))
+  let isRight ← emit (scalarLt (i k) (.const 31#64))
+  let shrAmt ← emit (scalarSelect (i isRight) (scalarSub (.const 31#64) (i k)) (.const 0#64))
+  let shlAmt ← emit (scalarSelect (i isRight) (.const 0#64) (scalarSub (i k) (.const 31#64)))
+  let mag ← emit (scalarSelect (i isRight) (op .shr (i x) (i shrAmt)) (op .shl (i x) (i shlAmt)))
   emit (scalarSelect (i neg) (scalarSub (.const 0#64) (i mag)) (i mag))
 
 /-- Compile the genuine specialized flux DAG, retaining every SSA result once. -/
