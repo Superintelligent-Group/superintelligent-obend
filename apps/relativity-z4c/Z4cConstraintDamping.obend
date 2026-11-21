@@ -1,0 +1,64 @@
+edition ObjectiveBend 1
+# Real-World Numerical Relativity App (`apps/relativity-z4c/Z4cConstraintDamping.obend`):
+# Layer 2 — Undamped ADM (`kappa1 = 0/2`) overridden by Bernuzzi-Hilditch Z4c constraint
+# damping (`kappa1 = 1/2`, `|Theta| <= 1/4`, 6 evolved variables: alpha, gxx, Ax, Dx, Kxx, Theta).
+
+import ./BonaMassoSlicing.obend as Slicing
+
+record ConstraintDampingSystem:
+  kappa1Num() -> Nat
+  kappa1Den() -> Nat
+  thetaBoundMilli() -> Nat
+  numVars() -> Nat
+  dampingRateMilli(alphaMilli: Nat) -> Nat
+
+spec BaseUndampedAdmSpec for ConstraintDampingSystem:
+  requires kappa1Num() -> Nat
+  def kappa1Num() -> Nat:
+    0n
+  def kappa1Den() -> Nat:
+    2n
+  def thetaBoundMilli() -> Nat:
+    250n
+  def numVars() -> Nat:
+    6n
+  def dampingRateMilli(alphaMilli: Nat) -> Nat:
+    self.kappa1Num * alphaMilli
+  claim adm_theta_box_milli_bound(thetaMilli: Nat) given thetaMilli <= 250n by judge("interval@1"): thetaMilli * 4n <= 1000n
+
+spec BernuzziHilditchZ4cOverride for ConstraintDampingSystem:
+  requires kappa1Num() -> Nat
+  def kappa1Num() -> Nat:
+    1n
+  def kappa1Den() -> Nat:
+    2n
+  claim z4c_activates_damping_at_unit_lapse() by weave: self.dampingRateMilli(1000n) == 1000n
+  claim z4c_damping_rate_within_contraction_window(alphaMilli: Nat) given 500n <= alphaMilli && alphaMilli <= 2000n by judge("interval@1"): alphaMilli * 1n <= 2000n
+
+def seedConstraintDamping() -> ConstraintDampingSystem:
+  {kappa1Num: 0n, kappa1Den: 1n, thetaBoundMilli: 0n, numVars: 0n, dampingRateMilli: fn(a: Nat) -> Nat: a}
+
+def baseUndampedAdm() -> ConstraintDampingSystem:
+  fix(BaseUndampedAdmSpec, seedConstraintDamping())
+
+def bernuzziHilditchZ4c() -> ConstraintDampingSystem:
+  fix(compose(BaseUndampedAdmSpec, BernuzziHilditchZ4cOverride), seedConstraintDamping())
+
+def kappa1Num() -> Nat:
+  bernuzziHilditchZ4c().kappa1Num
+
+def kappa1Den() -> Nat:
+  bernuzziHilditchZ4c().kappa1Den
+
+def thetaBoundMilli() -> Nat:
+  bernuzziHilditchZ4c().thetaBoundMilli
+
+def numVars() -> Nat:
+  bernuzziHilditchZ4c().numVars
+
+def dampingAtMaxLapse() -> Nat:
+  bernuzziHilditchZ4c().dampingRateMilli(Slicing.alphaMaxMilli())
+
+def z4cDampingValid() -> Bool:
+  let d = bernuzziHilditchZ4c()
+  Slicing.slicingConfigValid() && (1n <= d.kappa1Num) && (d.kappa1Num < d.kappa1Den) && (d.numVars == 6n) && (d.thetaBoundMilli == 250n)

@@ -1,0 +1,40 @@
+{
+  "schema": "dregg.objective-bend.package-input.v1",
+  "edition": "objective-bend-1",
+  "entryModule": "2",
+  "entryDefinition": "relativityZ4cSummary",
+  "modules": [
+    {
+      "name": "BonaMassoSlicing",
+      "sourcePath": "apps/relativity-z4c/BonaMassoSlicing.obend",
+      "imports": []
+    },
+    {
+      "name": "Z4cConstraintDamping",
+      "sourcePath": "apps/relativity-z4c/Z4cConstraintDamping.obend",
+      "imports": [
+        {
+          "alias": "Slicing",
+          "path": "./BonaMassoSlicing.obend",
+          "module": "0"
+        }
+      ]
+    },
+    {
+      "name": "RelativityZ4cTop",
+      "sourcePath": "apps/relativity-z4c/RelativityZ4cTop.obend",
+      "imports": [
+        {
+          "alias": "Slicing",
+          "path": "./BonaMassoSlicing.obend",
+          "module": "0"
+        },
+        {
+          "alias": "Damping",
+          "path": "./Z4cConstraintDamping.obend",
+          "module": "1"
+        }
+      ]
+    }
+  ]
+}
