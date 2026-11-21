@@ -4,17 +4,27 @@ module
 
 `cloud_custody.rs` hashes the twelve execution fields and eight request fields with
 cSHAKE256, using the domain as customization and LEB128-length-framed fields as input.
-The execution's emitted-slot field is itself a SHA-256 digest. Its domain is the
-first bytes of the input, followed by big-endian u64 lengths and slot IDs.
+The execution's emitted-slot field and the request's input-slot field are themselves
+SHA-256 digests from `grain.rs:digest_slot_entries`. The domain is the first bytes of
+that input, followed by big-endian u64 lengths and slot IDs.
 
 `grain.rs` also uses cSHAKE256 for the kernel public tag, verifier identity, and
 halted-receipt MAC. The binding theorems name the two actual inputs in each
-possible collision. The request starts from Rust's computed program and input digests.
+possible collision. The request binds its input slots, and starts from Rust's computed
+program digest: `GrainProgram::digest` and its opcode encoding are not modelled here.
+
+Rust's stack top and registers are `i64`. They appear here as the `UInt64` with the same
+bits, which is what `i64::to_be_bytes` writes.
+
+The vectors at the end of the file are asserted byte for byte by the Rust tests
+`grain::tests::{emitted_slots_wire_vector, kernel_verifier_wire_vectors}` and
+`cloud_custody::tests::execution_and_request_wire_vectors`.
 -/
 public import Obend.Crypto.Transcript
 import Obend.Spec.Sha256
 meta import Obend.Spec.Sha256
 meta import Obend.Digest.HashBytes
+meta import Obend.Crypto.Transcript
 import Obend.Tactic.Tooth
 
 public section
@@ -28,7 +38,8 @@ set_option autoImplicit false
 
 /-! ## 1. Sandbox Wire Domain Enumeration & Tag Injectivity -/
 
-/-- Enumeration of the 6 versioned `crates/obend-sandbox` wire domain tags. -/
+/-- The six versioned `crates/obend-sandbox` wire domain tags this module models. The other
+    `OBEND.CUSTODY.*` tags are modelled in `Obend.Polis.GrainCustodyHost`. -/
 inductive SandboxWireDomain where
   | custodyExecutionV1
   | custodyEmittedV1
@@ -128,7 +139,8 @@ theorem leb128_injective {n₁ n₂ : Nat} (h : leb128 n₁ = leb128 n₂) : n�
   have h' : leb128 n₁ ++ [] = leb128 n₂ ++ [] := by simpa only [List.append_nil] using h
   exact (leb128_prefix_inj h').1
 
-/-- Big-endian 8-byte encoding of `UInt64` matching `u64::to_be_bytes()`. -/
+/-- Big-endian 8-byte encoding of `UInt64`, as `u64::to_be_bytes` and (on the same bits)
+    `i64::to_be_bytes` write it. -/
 def u64ToBe8 (w : UInt64) : List UInt8 :=
   be 8 w.toNat
 
@@ -186,31 +198,31 @@ theorem encodeSlotIndices_injective {s₁ s₂ : List Nat}
     (h : encodeSlotIndices s₁ = encodeSlotIndices s₂) : s₁ = s₂ :=
   (List.map_inj_right (fun _ _ => leb128_injective)).mp (encodeSandboxFields_injective h)
 
-/-! ## 3. Custody emitted slots, execution receipt and turn request -/
+/-! ## 3. Slot-entry digests, execution receipt and turn request -/
 
 /-- Both lengths cast to u64 by Rust's `digest_slot_entries` are representable. -/
-@[expose] def EmittedSlotsFit (entries : List (UInt64 × ByteArray)) : Prop :=
+@[expose] def SlotEntriesFit (entries : List (UInt64 × ByteArray)) : Prop :=
   entries.length < 2^64 ∧ ∀ e ∈ entries, e.2.size < 2^64
 
-private def emittedSlotBody (entries : List (UInt64 × ByteArray)) : List UInt8 :=
+private def slotEntriesBody (entries : List (UInt64 × ByteArray)) : List UInt8 :=
   entries.flatMap fun (slot, data) => u64ToBe8 slot ++ (be 8 data.size ++ data.data.toList)
 
-/-- The complete SHA-256 message passed to `grain.rs:digest_slot_entries`. -/
-def encodeEmittedSlotsPreimage (entries : List (UInt64 × ByteArray)) : List UInt8 :=
-  asciiTagBytes "OBEND.CUSTODY.EMITTED/v1" ++ (be 8 entries.length ++ emittedSlotBody entries)
+/-- The complete SHA-256 message `grain.rs:digest_slot_entries` builds for `domain`. -/
+def encodeSlotEntriesPreimage (domain : String) (entries : List (UInt64 × ByteArray)) : List UInt8 :=
+  asciiTagBytes domain ++ (be 8 entries.length ++ slotEntriesBody entries)
 
 /-- Public byte layout of the message before hashing, including the raw domain prefix. -/
-theorem encodeEmittedSlotsPreimage_eq (entries : List (UInt64 × ByteArray)) :
-    encodeEmittedSlotsPreimage entries =
-      "OBEND.CUSTODY.EMITTED/v1".toUTF8.data.toList ++ (be 8 entries.length ++
+theorem encodeSlotEntriesPreimage_eq (domain : String) (entries : List (UInt64 × ByteArray)) :
+    encodeSlotEntriesPreimage domain entries =
+      domain.toUTF8.data.toList ++ (be 8 entries.length ++
         entries.flatMap fun (slot, data) => be 8 slot.toNat ++ (be 8 data.size ++ data.data.toList)) := by
-  unfold encodeEmittedSlotsPreimage asciiTagBytes emittedSlotBody u64ToBe8
+  unfold encodeSlotEntriesPreimage asciiTagBytes slotEntriesBody u64ToBe8
   rfl
 
-private theorem emittedSlotBody_injective (xs ys : List (UInt64 × ByteArray))
+private theorem slotEntriesBody_injective (xs ys : List (UInt64 × ByteArray))
     (count : xs.length = ys.length)
     (hx : ∀ e ∈ xs, e.2.size < 2^64) (hy : ∀ e ∈ ys, e.2.size < 2^64)
-    (h : emittedSlotBody xs = emittedSlotBody ys) : xs = ys := by
+    (h : slotEntriesBody xs = slotEntriesBody ys) : xs = ys := by
   induction xs generalizing ys with
   | nil =>
     cases ys with
@@ -220,7 +232,7 @@ private theorem emittedSlotBody_injective (xs ys : List (UInt64 × ByteArray))
     cases ys with
     | nil => exact nomatch count
     | cons y ys =>
-      simp only [emittedSlotBody, List.flatMap_cons, List.append_assoc] at h
+      simp only [slotEntriesBody, List.flatMap_cons, List.append_assoc] at h
       obtain ⟨hid, h⟩ := List.append_inj h ((u64ToBe8_length _).trans (u64ToBe8_length _).symm)
       obtain ⟨hsize, h⟩ := List.append_inj h (by simp only [length_be])
       have sizeEq := be_injective (w := 8) (hx x List.mem_cons_self) (hy y List.mem_cons_self) hsize
@@ -230,16 +242,20 @@ private theorem emittedSlotBody_injective (xs ys : List (UInt64 × ByteArray))
         (fun e he => hx e (List.mem_cons_of_mem _ he))
         (fun e he => hy e (List.mem_cons_of_mem _ he)) hrest]
 
-theorem encodeEmittedSlotsPreimage_injective {xs ys : List (UInt64 × ByteArray)}
-    (hx : EmittedSlotsFit xs) (hy : EmittedSlotsFit ys)
-    (h : encodeEmittedSlotsPreimage xs = encodeEmittedSlotsPreimage ys) : xs = ys := by
-  unfold encodeEmittedSlotsPreimage at h
+/-- Under one domain, the message determines the entries: their order, slot IDs and bytes. -/
+theorem encodeSlotEntriesPreimage_injective {domain : String} {xs ys : List (UInt64 × ByteArray)}
+    (hx : SlotEntriesFit xs) (hy : SlotEntriesFit ys)
+    (h : encodeSlotEntriesPreimage domain xs = encodeSlotEntriesPreimage domain ys) : xs = ys := by
+  unfold encodeSlotEntriesPreimage at h
   have h := List.append_cancel_left h
   obtain ⟨hcount, hbody⟩ := List.append_inj h (by simp only [length_be])
-  exact emittedSlotBody_injective xs ys (be_injective (w := 8) hx.1 hy.1 hcount) hx.2 hy.2 hbody
+  exact slotEntriesBody_injective xs ys (be_injective (w := 8) hx.1 hy.1 hcount) hx.2 hy.2 hbody
 
-/-- Rust's SHA-256 instantiation serializes the eight digest words most significant byte first. -/
-def emittedSha256 (input : List UInt8) : List UInt8 := Id.run do
+/-- FIPS 180-4 SHA-256 as `grain.rs:sha256` returns it: the eight digest words, most
+    significant byte first. The padding is written out here because `Obend.Spec.Sha256.pad`
+    loops with `while`, which depends on `Classical.choice`; this function is the default
+    hash of both digests below and would carry that axiom into their binding theorems. -/
+def sha256Bytes (input : List UInt8) : List UInt8 := Id.run do
   -- The padding fills the last block up to its 8-byte bit-length suffix.
   let n := input.length
   let zeros := (64 - (n + 9) % 64) % 64
@@ -249,18 +265,19 @@ def emittedSha256 (input : List UInt8) : List UInt8 := Id.run do
     state := Obend.Spec.Sha256.compress state padded (64 * block)
   return state.toList.flatMap fun word => be 4 word.toNat
 
-def custodyEmittedSlotsDigest (emittedHash : Hash) (entries : List (UInt64 × ByteArray)) :
+/-- `grain.rs:digest_slot_entries` over an arbitrary byte hash. -/
+def slotEntriesDigest (sha : Hash) (domain : String) (entries : List (UInt64 × ByteArray)) :
     List UInt8 :=
-  emittedHash (encodeEmittedSlotsPreimage entries)
+  sha (encodeSlotEntriesPreimage domain entries)
 
-/-- Constructively select equal entries or a collision on precisely the two SHA-256 inputs. -/
-def custodyEmittedSlotsDigest_binds (emittedHash : Hash) {xs ys : List (UInt64 × ByteArray)}
-    (hx : EmittedSlotsFit xs) (hy : EmittedSlotsFit ys)
-    (h : custodyEmittedSlotsDigest emittedHash xs = custodyEmittedSlotsDigest emittedHash ys) :
-    PSum (PLift (xs = ys)) (PLift (CollisionAmong emittedHash
-      (fun x => x = encodeEmittedSlotsPreimage xs ∨ x = encodeEmittedSlotsPreimage ys))) :=
-  if hp : encodeEmittedSlotsPreimage xs = encodeEmittedSlotsPreimage ys then
-    .inl ⟨encodeEmittedSlotsPreimage_injective hx hy hp⟩
+/-- Constructively select equal entries or a collision on precisely the two hashed messages. -/
+def slotEntriesDigest_binds (sha : Hash) (domain : String) {xs ys : List (UInt64 × ByteArray)}
+    (hx : SlotEntriesFit xs) (hy : SlotEntriesFit ys)
+    (h : slotEntriesDigest sha domain xs = slotEntriesDigest sha domain ys) :
+    PSum (PLift (xs = ys)) (PLift (CollisionAmong sha
+      (fun x => x = encodeSlotEntriesPreimage domain xs ∨ x = encodeSlotEntriesPreimage domain ys))) :=
+  if hp : encodeSlotEntriesPreimage domain xs = encodeSlotEntriesPreimage domain ys then
+    .inl ⟨encodeSlotEntriesPreimage_injective hx hy hp⟩
   else
     .inr ⟨⟨_, _, .inl rfl, .inr rfl, hp, congrArg ofBE h⟩⟩
 
@@ -281,7 +298,7 @@ structure CustodyExecutionEnvelope where
   ticket : ByteArray
   deriving DecidableEq
 
-private def CustodyExecutionEnvelope.wire (r : CustodyExecutionEnvelope) (emittedHash : Hash) :
+private def CustodyExecutionEnvelope.wire (r : CustodyExecutionEnvelope) (sha : Hash) :
     String × List (List UInt8) :=
   Prod.mk "OBEND.CUSTODY.EXECUTION/v1"
     [ r.programDigest.data.toList
@@ -291,41 +308,41 @@ private def CustodyExecutionEnvelope.wire (r : CustodyExecutionEnvelope) (emitte
     , leb128 r.peakMemoryBytes
     , [r.tierTag, r.terminationTag]
     , r.commitment.data.toList
-    , custodyEmittedSlotsDigest emittedHash r.emittedSlots
+    , slotEntriesDigest sha "OBEND.CUSTODY.EMITTED/v1" r.emittedSlots
     , encodeStackTop r.stackTop
     , encodeRegistersBE r.registers
     , r.lastHashDigest.data.toList
     , r.ticket.data.toList
     ]
 
-def CustodyExecutionEnvelope.preimage (r : CustodyExecutionEnvelope) (emittedHash : Hash) : List UInt8 :=
-  encodeSandboxFields (r.wire emittedHash).2
+def CustodyExecutionEnvelope.preimage (r : CustodyExecutionEnvelope) (sha : Hash) : List UInt8 :=
+  encodeSandboxFields (r.wire sha).2
 
-def custodyExecutionDigest (r : CustodyExecutionEnvelope) (emittedHash : Hash := emittedSha256) : ByteArray :=
-  let wire := r.wire emittedHash
+def custodyExecutionDigest (r : CustodyExecutionEnvelope) (sha : Hash := sha256Bytes) : ByteArray :=
+  let wire := r.wire sha
   sandboxDomainHash wire.1 wire.2
 
 /-- **12-Field Execution Envelope Binding (`0 Classical`)**:
     Equal `"OBEND.CUSTODY.EXECUTION/v1"` digests imply full structural equality across all 13
     fields of `CustodyExecutionEnvelope`, or an explicit collision in `"OBEND.CUSTODY.EXECUTION/v1"`
-    or `"OBEND.CUSTODY.EMITTED/v1"`. -/
-theorem custodyExecutionDigest_binds (emittedHash : Hash) {r₁ r₂ : CustodyExecutionEnvelope}
-    (hw₁ : EmittedSlotsFit r₁.emittedSlots) (hw₂ : EmittedSlotsFit r₂.emittedSlots)
-    (h : custodyExecutionDigest r₁ emittedHash = custodyExecutionDigest r₂ emittedHash) :
+    or in the SHA-256 message under `"OBEND.CUSTODY.EMITTED/v1"`. -/
+theorem custodyExecutionDigest_binds (sha : Hash) {r₁ r₂ : CustodyExecutionEnvelope}
+    (hw₁ : SlotEntriesFit r₁.emittedSlots) (hw₂ : SlotEntriesFit r₂.emittedSlots)
+    (h : custodyExecutionDigest r₁ sha = custodyExecutionDigest r₂ sha) :
     r₁ = r₂ ∨
       CollisionAmong (cshake256Bytes (asciiTagBytes "OBEND.CUSTODY.EXECUTION/v1"))
-        (fun x => x = r₁.preimage emittedHash ∨ x = r₂.preimage emittedHash) ∨
-      CollisionAmong emittedHash
-        (fun x => x = encodeEmittedSlotsPreimage r₁.emittedSlots ∨
-          x = encodeEmittedSlotsPreimage r₂.emittedSlots) := by
+        (fun x => x = r₁.preimage sha ∨ x = r₂.preimage sha) ∨
+      CollisionAmong sha
+        (fun x => x = encodeSlotEntriesPreimage "OBEND.CUSTODY.EMITTED/v1" r₁.emittedSlots ∨
+          x = encodeSlotEntriesPreimage "OBEND.CUSTODY.EMITTED/v1" r₂.emittedSlots) := by
   cases extractCshake32 (asciiTagBytes "OBEND.CUSTODY.EXECUTION/v1")
-      (r₁.preimage emittedHash) (r₂.preimage emittedHash) h with
+      (r₁.preimage sha) (r₂.preimage sha) h with
   | inr hc => exact .inr (.inl hc.down)
   | inl hp =>
     have hf := encodeSandboxFields_injective hp.down
     simp only [CustodyExecutionEnvelope.wire, List.cons.injEq, and_true] at hf
     obtain ⟨hProg, hIn, hOut, hFuel, hMem, hTags, hCom, hEmit, hStk, hRegs, hLast, hTkt⟩ := hf
-    cases custodyEmittedSlotsDigest_binds emittedHash hw₁ hw₂ hEmit with
+    cases slotEntriesDigest_binds sha "OBEND.CUSTODY.EMITTED/v1" hw₁ hw₂ hEmit with
     | inr hSlotCol => exact .inr (.inr hSlotCol.down)
     | inl hSlots =>
       left
@@ -346,10 +363,11 @@ theorem custodyExecutionDigest_binds (emittedHash : Hash) {r₁ r₂ : CustodyEx
         byteArray_eq_of_toList_eq hLast,
         byteArray_eq_of_toList_eq hTkt⟩
 
-/-- Complete Grain turn-request policy & budget envelope (`cloud_custody.rs:turn_request_digest`). -/
+/-- Grain turn-request policy and budget envelope (`cloud_custody.rs:turn_request_digest`).
+    `programDigest` is `GrainProgram::digest`, taken as given. -/
 structure CustodyTurnRequest where
   programDigest : ByteArray
-  inputsDigest : ByteArray
+  inputs : List (UInt64 × ByteArray)
   maxFuel : Nat
   maxMemoryBytes : Nat
   maxOutputBytes : Nat
@@ -359,11 +377,11 @@ structure CustodyTurnRequest where
   tierTag : UInt8
   deriving DecidableEq
 
-private def CustodyTurnRequest.wire (req : CustodyTurnRequest) :
+private def CustodyTurnRequest.wire (req : CustodyTurnRequest) (sha : Hash) :
     String × List (List UInt8) :=
   Prod.mk "OBEND.CUSTODY.REQUEST/v1"
     [ req.programDigest.data.toList
-    , req.inputsDigest.data.toList
+    , slotEntriesDigest sha "OBEND-GRAIN-INPUTS-V1:" req.inputs
     , leb128 req.maxFuel
     , leb128 req.maxMemoryBytes
     , leb128 req.maxOutputBytes
@@ -372,11 +390,11 @@ private def CustodyTurnRequest.wire (req : CustodyTurnRequest) :
     , [if req.allowHashDigest then (1 : UInt8) else 0, req.tierTag]
     ]
 
-def CustodyTurnRequest.preimage (req : CustodyTurnRequest) : List UInt8 :=
-  encodeSandboxFields req.wire.2
+def CustodyTurnRequest.preimage (req : CustodyTurnRequest) (sha : Hash) : List UInt8 :=
+  encodeSandboxFields (req.wire sha).2
 
-def custodyTurnRequestDigest (req : CustodyTurnRequest) : ByteArray :=
-  let wire := req.wire
+def custodyTurnRequestDigest (req : CustodyTurnRequest) (sha : Hash := sha256Bytes) : ByteArray :=
+  let wire := req.wire sha
   sandboxDomainHash wire.1 wire.2
 
 private theorem bool_of_flag_byte_eq {b₁ b₂ : Bool}
@@ -384,33 +402,41 @@ private theorem bool_of_flag_byte_eq {b₁ b₂ : Bool}
   cases b₁ <;> cases b₂ <;> first | rfl | cases h
 
 /-- **8-Field Turn-Request Envelope Binding (`0 Classical`)**:
-    Equal digests bind the program and input digests, fuel/memory/output caps, read/emit
-    slot lists, permission bit and tier, or give a collision on these request preimages. -/
-theorem custodyTurnRequestDigest_binds {q₁ q₂ : CustodyTurnRequest}
-    (h : custodyTurnRequestDigest q₁ = custodyTurnRequestDigest q₂) :
+    Equal digests bind the program digest, the input slots, fuel/memory/output caps, read/emit
+    slot lists, permission bit and tier, or give a collision on these request preimages or in
+    the SHA-256 message under `"OBEND-GRAIN-INPUTS-V1:"`. -/
+theorem custodyTurnRequestDigest_binds (sha : Hash) {q₁ q₂ : CustodyTurnRequest}
+    (hw₁ : SlotEntriesFit q₁.inputs) (hw₂ : SlotEntriesFit q₂.inputs)
+    (h : custodyTurnRequestDigest q₁ sha = custodyTurnRequestDigest q₂ sha) :
     q₁ = q₂ ∨
       CollisionAmong (cshake256Bytes (asciiTagBytes "OBEND.CUSTODY.REQUEST/v1"))
-        (fun x => x = q₁.preimage ∨ x = q₂.preimage) := by
+        (fun x => x = q₁.preimage sha ∨ x = q₂.preimage sha) ∨
+      CollisionAmong sha
+        (fun x => x = encodeSlotEntriesPreimage "OBEND-GRAIN-INPUTS-V1:" q₁.inputs ∨
+          x = encodeSlotEntriesPreimage "OBEND-GRAIN-INPUTS-V1:" q₂.inputs) := by
   cases extractCshake32 (asciiTagBytes "OBEND.CUSTODY.REQUEST/v1")
-      q₁.preimage q₂.preimage h with
-  | inr hc => exact .inr hc.down
+      (q₁.preimage sha) (q₂.preimage sha) h with
+  | inr hc => exact .inr (.inl hc.down)
   | inl hp =>
-    left
     have hf := encodeSandboxFields_injective hp.down
     simp only [CustodyTurnRequest.wire, List.cons.injEq, and_true] at hf
     obtain ⟨hProg, hIn, hFuel, hMem, hOut, hRead, hEmit, hFlags⟩ := hf
-    cases q₁
-    cases q₂
-    simp only [CustodyTurnRequest.mk.injEq]
-    exact ⟨byteArray_eq_of_toList_eq hProg,
-      byteArray_eq_of_toList_eq hIn,
-      leb128_injective hFuel,
-      leb128_injective hMem,
-      leb128_injective hOut,
-      encodeSlotIndices_injective hRead,
-      encodeSlotIndices_injective hEmit,
-      bool_of_flag_byte_eq hFlags.1,
-      hFlags.2⟩
+    cases slotEntriesDigest_binds sha "OBEND-GRAIN-INPUTS-V1:" hw₁ hw₂ hIn with
+    | inr hInCol => exact .inr (.inr hInCol.down)
+    | inl hInputs =>
+      left
+      cases q₁
+      cases q₂
+      simp only [CustodyTurnRequest.mk.injEq]
+      exact ⟨byteArray_eq_of_toList_eq hProg,
+        hInputs.down,
+        leb128_injective hFuel,
+        leb128_injective hMem,
+        leb128_injective hOut,
+        encodeSlotIndices_injective hRead,
+        encodeSlotIndices_injective hEmit,
+        bool_of_flag_byte_eq hFlags.1,
+        hFlags.2⟩
 
 /-! ## 4. Grain Kernel Session Verifier & R4 Halted-Receipt MAC (`grain.rs`) -/
 
@@ -521,31 +547,85 @@ theorem r4KernelProofMac_unbounded_width_collides_without_hash_collision :
   · intro hw
     exact (by decide : m₁.sessionKey.size ≠ 32) hw.1
 
-/-! The same known-answer vector runs through Rust's `digest_slot_entries`. -/
+/-! ## 5. Vectors shared with the Rust tests -/
+
 private def emittedVector : List (UInt64 × ByteArray) :=
   [(0x8001020304050607, ⟨#[]⟩), (1, ⟨#[0, 255, 128]⟩)]
 
-example : EmittedSlotsFit emittedVector := by
+example : SlotEntriesFit emittedVector := by
   constructor
   · decide +kernel
   · intro e he
     simp only [emittedVector, List.mem_cons, List.not_mem_nil, or_false] at he
     rcases he with rfl | rfl <;> decide
 
-example : encodeEmittedSlotsPreimage emittedVector =
+example : encodeSlotEntriesPreimage "OBEND.CUSTODY.EMITTED/v1" emittedVector =
     "OBEND.CUSTODY.EMITTED/v1".toUTF8.data.toList ++
     [0,0,0,0,0,0,0,2, 128,1,2,3,4,5,6,7, 0,0,0,0,0,0,0,0,
      0,0,0,0,0,0,0,1, 0,0,0,0,0,0,0,3, 0,255,128] := by
-  rw [encodeEmittedSlotsPreimage_eq]
+  rw [encodeSlotEntriesPreimage_eq]
   rfl
 
-#guard custodyEmittedSlotsDigest emittedSha256 emittedVector ==
+#guard slotEntriesDigest sha256Bytes "OBEND.CUSTODY.EMITTED/v1" emittedVector ==
   [0x8e,0xf9,0x5b,0xb2,0x80,0xd8,0xfb,0xd3,0x4d,0x6d,0x64,0xf8,0xeb,0x6b,0x1c,0x5c,
    0x84,0x9c,0x0e,0xcd,0x60,0xba,0x35,0x99,0xa3,0xb1,0xed,0x3c,0x89,0x4a,0xc8,0xb4]
 
-#tooth encodeEmittedSlotsPreimage_injective by mutation emittedSlotBody := fun _ => []
+private def bytes32 (b : UInt8) : ByteArray := ⟨(List.replicate 32 b).toArray⟩
+
+/-- Every field has its own value, so a reordered, dropped or differently framed field changes
+    the digest. The stack top is `-2` and the registers are `1, -1, 0x0102030405060708`, twelve
+    zeros and `i64::MIN`. -/
+private def executionVector : CustodyExecutionEnvelope where
+  programDigest := bytes32 0x11
+  inputDigest := bytes32 0x22
+  outputDigest := bytes32 0x33
+  fuelConsumed := 300
+  peakMemoryBytes := 70000
+  tierTag := 3
+  terminationTag := 1
+  commitment := bytes32 0x44
+  emittedSlots := emittedVector
+  stackTop := some 0xFFFFFFFFFFFFFFFE
+  registers :=
+    ([1, 0xFFFFFFFFFFFFFFFF, 0x0102030405060708] : List UInt64) ++ List.replicate 12 0 ++ [0x8000000000000000]
+  lastHashDigest := bytes32 0x55
+  ticket := bytes32 0x66
+
+#guard (custodyExecutionDigest executionVector).data.toList ==
+  [0xe6,0xcf,0xbe,0xaf,0x7e,0x23,0x17,0x25,0xc5,0xe2,0x53,0x66,0xba,0xf6,0xe4,0xa9,
+   0xb4,0x4c,0x2d,0x58,0xf3,0x9d,0x1c,0x8f,0xa6,0x4a,0xf8,0x24,0x12,0x64,0x36,0xb3]
+
+/-- `GrainProgram::new("halt", vec![GrainOp::Halt])` under `GrainProgram::digest`. -/
+private def haltProgramDigest : ByteArray :=
+  ⟨(sha256Bytes ("OBEND-GRAIN-PROGRAM-V1:".toUTF8.data.toList ++ be 8 4 ++
+    "halt".toUTF8.data.toList ++ be 8 1 ++ [0xFF])).toArray⟩
+
+private def requestVector : CustodyTurnRequest where
+  programDigest := haltProgramDigest
+  inputs := [(7, ⟨#[9, 8]⟩), (0x8001020304050607, ⟨#[]⟩)]
+  maxFuel := 300
+  maxMemoryBytes := 70000
+  maxOutputBytes := 129
+  allowedReadSlots := [129, 2, 2]
+  allowedEmitSlots := [8, 300]
+  allowHashDigest := true
+  tierTag := 3
+
+#guard (custodyTurnRequestDigest requestVector).data.toList ==
+  [0xd0,0xdd,0xd5,0x6e,0x0e,0xd0,0x10,0xbe,0x87,0x58,0xa3,0x83,0x87,0xd1,0x7c,0x79,
+   0xe2,0xb1,0x06,0xbd,0x6b,0xa5,0x84,0x6b,0xdb,0x4e,0x3a,0x72,0xda,0x49,0x4a,0xb2]
+
+#guard (kernelVerifierId (bytes32 0x11) (bytes32 0x22)).data.toList ==
+  [0x3e,0xa0,0x72,0x7e,0x73,0x86,0x7a,0x2f,0x1d,0x38,0xfe,0x62,0x1a,0x90,0x82,0xdb,
+   0x1e,0x07,0x8a,0xb0,0x49,0x8d,0x87,0xae,0x26,0xdd,0x51,0xab,0x50,0xcb,0x4b,0x37]
+
+#guard (r4KernelProofMac ⟨bytes32 0x11, bytes32 0x22, bytes32 0x33⟩).data.toList ==
+  [0x3b,0xe1,0x34,0x70,0x47,0x80,0x55,0x05,0x47,0x27,0xa1,0xa0,0x2b,0x26,0xa4,0x6a,
+   0x57,0x04,0x93,0x3d,0x39,0x90,0x13,0x79,0x77,0xa6,0x23,0x6e,0x40,0x63,0x78,0x91]
+
+#tooth encodeSlotEntriesPreimage_injective by mutation slotEntriesBody := fun _ => []
 #tooth custodyExecutionDigest_binds by mutation custodyExecutionDigest := fun _ _ => ByteArray.empty
-#tooth custodyTurnRequestDigest_binds by mutation custodyTurnRequestDigest := fun _ => ByteArray.empty
+#tooth custodyTurnRequestDigest_binds by mutation custodyTurnRequestDigest := fun _ _ => ByteArray.empty
 #tooth kernelVerifierId_binds by mutation kernelVerifierId := fun _ _ => ByteArray.empty
 #tooth r4KernelProofMac_binds by mutation r4KernelProofMac := fun _ => ByteArray.empty
 

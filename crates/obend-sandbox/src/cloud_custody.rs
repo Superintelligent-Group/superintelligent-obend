@@ -1327,6 +1327,46 @@ mod tests {
             )
         );
     }
+    // Shared with Obend.Polis.SandboxDomainTags. Every field has its own value, so a
+    // reordered, dropped or differently framed field changes the digest.
+    #[test]
+    fn execution_and_request_wire_vectors() {
+        let mut registers = [0i64; 16];
+        registers[0] = 1;
+        registers[1] = -1;
+        registers[2] = 0x0102_0304_0506_0708;
+        registers[15] = i64::MIN;
+        let receipt = GrainExecutionReceipt {
+            program_digest: [0x11; 32],
+            input_digest: [0x22; 32],
+            output_digest: [0x33; 32],
+            fuel_consumed: 300,
+            peak_memory_bytes: 70000,
+            tier: ReproducibilityTier::R3ReceiptAttested,
+            termination: GrainTermination::OutOfFuel,
+            commitment: [0x44; 32],
+            emitted_slots: vec![(0x8001_0203_0405_0607, vec![]), (1, vec![0, 255, 128])],
+            stack_top: Some(-2),
+            registers,
+            last_hash_digest: [0x55; 32],
+            kernel_proof: None,
+        };
+        assert_eq!(
+            hex(execution_payload(&receipt, [0x66; 32])),
+            "e6cfbeaf7e231725c5e25366baf6e4a9b44c2d58f39d1c8fa64af824126436b3"
+        );
+        let program = GrainProgram::new("halt", vec![GrainOp::Halt]);
+        let inputs = [(7, vec![9, 8]), (0x8001_0203_0405_0607, vec![])];
+        let executor = GrainExecutor::new(
+            GrainBudget::new(300, 70000, 129),
+            GrainCapabilities::strict(vec![129, 2, 2], vec![8, 300], true),
+        )
+        .with_tier(ReproducibilityTier::R3ReceiptAttested);
+        assert_eq!(
+            hex(turn_request_digest(&program, &inputs, &executor)),
+            "d0ddd56e0ed010be8758a38387d17c79e2b106bd6ba5846bdb4e3a72da494ab2"
+        );
+    }
     #[test]
     fn execution_lease_atomicity_and_schedule() {
         let mut p = parent();
