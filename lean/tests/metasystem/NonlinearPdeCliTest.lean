@@ -46,6 +46,16 @@ def shallowWater : String :=
   "(conservation-law (name ShallowWater1D) (coords x) (vars h hu) (params (g 1)) (domain (> h 0))
      (fluxes (x hu (+ (/ (sq hu) h) (* 1/2 (* g (sq h)))))) (wavespeed 128 1/128) (limiter minmod))"
 
+/-- 2D isothermal Euler `(rho, rhou, rhov)` with unit sound speed; both density fluxes are odd
+under mirroring `(rhou, rhov) ↦ (-rhou, -rhov)`. -/
+def isothermalEuler2D : String :=
+  "(conservation-law (name IsothermalEuler2D) (coords x y) (vars rho rhou rhov) (params (cs2 1))
+     (domain (> rho 0))
+     (fluxes
+       (x rhou (+ (/ (sq rhou) rho) (* cs2 rho)) (/ (* rhou rhov) rho))
+       (y rhov (/ (* rhou rhov) rho) (+ (/ (sq rhov) rho) (* cs2 rho))))
+     (wavespeed 128 1/128) (limiter minmod))"
+
 def gridJson (g : List (List Rat)) : Json := .arr (g.toArray.map fun r => .arr (r.toArray.map ratJson))
 
 def readGrid (j : Json) : Option (List (List Rat)) :=
@@ -161,6 +171,18 @@ def basin : Json :=
 #guard (solved basin).bind (integral · "finalIntegrals" 0) == some 5
 #guard (solved basin).bind (exitCode false) == some 0
 
+def box2D : Json :=
+  request isothermalEuler2D [3, 4] 2
+    [[1, 0, 0], [1, 1/4, 0], [1, 0, -1/4], [1, 0, 0],
+     [2, 1/2, 1/4], [2, 0, -1/2], [1, -1/4, 1/4], [1, 0, 0],
+     [1, 0, 0], [1, -1/4, 0], [2, 1/4, -1/4], [1, 0, 0]]
+    [("boundary", toJson "reflective"), ("reflectNegVars", toJson [1, 2]), ("strang", toJson true)]
+
+-- 2D isothermal Euler in a reflective box with Strang splitting: total density is exact.
+#guard (solved box2D).bind (integral · "initialIntegrals" 0) == some 15
+#guard (solved box2D).bind (integral · "finalIntegrals" 0) == some 15
+#guard (solved box2D).bind (exitCode false) == some 0
+
 def torus2D (strang : Bool) : Json :=
   request burgers2D [3, 3] 2 [[1], [0], [0], [0], [2], [0], [0], [0], [1/2]] [("strang", toJson strang)]
 
@@ -252,6 +274,44 @@ def atWall : Vec := fun c => if c == 0 then 3 else 1
 example (G : RatGrid) := rolloutRat_periodic_conserves_integral acousticSpec [6]
   (by decide) true 7 G 1 (by decide)
 
+def shallowWaterSpec : ConservationLawSpec :=
+  { name := "ShallowWater1D", coords := ["x"], vars := ["h", "hu"], params := [("g", 1)]
+    domain := [.stateVar 0]
+    fluxes := [[.var 1, .add (.divSafe (.mul (.var 1) (.var 1)) (.var 0))
+      (.mul (.const (1 / 2)) (.mul (.param 0) (.mul (.var 0) (.var 0))))]]
+    aMax := 128, cfl := 1 / 128, limiter := .minmod }
+
+def isothermalEuler2DSpec : ConservationLawSpec :=
+  { name := "IsothermalEuler2D", coords := ["x", "y"], vars := ["rho", "rhou", "rhov"]
+    params := [("cs2", 1)], domain := [.stateVar 0]
+    fluxes := [
+      [.var 1, .add (.divSafe (.mul (.var 1) (.var 1)) (.var 0)) (.mul (.param 0) (.var 0)),
+        .divSafe (.mul (.var 1) (.var 2)) (.var 0)],
+      [.var 2, .divSafe (.mul (.var 1) (.var 2)) (.var 0),
+        .add (.divSafe (.mul (.var 2) (.var 2)) (.var 0)) (.mul (.param 0) (.var 0))]]
+    aMax := 128, cfl := 1 / 128, limiter := .minmod }
+
+-- (a) 1D linear acoustics reflective box: pressure integral conserved across multi-step rollouts.
+example (useStrang : Bool) (steps : Nat) (G : RatGrid) :=
+  rolloutRat_reflective_conserves_component acousticSpec [1] [6] (by decide) useStrang steps G 0
+    (by decide) (by decide) (fun axis hAxis u => by
+      have ha : axis = 0 := by simp at hAxis; omega
+      subst ha; simp [acousticSpec, getOr, evalFlux, negateVars])
+
+-- (b) 1D nonlinear shallow water reflective basin: water depth `h` conserved across multi-step rollouts.
+example (useStrang : Bool) (steps : Nat) (G : RatGrid) :=
+  rolloutRat_reflective_conserves_component shallowWaterSpec [1] [4] (by decide) useStrang steps G 0
+    (by decide) (by decide) (fun axis hAxis u => by
+      have ha : axis = 0 := by simp at hAxis; omega
+      subst ha; simp [shallowWaterSpec, getOr, evalFlux, negateVars])
+
+-- (c) 2D isothermal Euler reflective box: density `rho` conserved across Strang multi-step rollouts.
+example (steps : Nat) (G : RatGrid) :=
+  rolloutRat_reflective_conserves_component isothermalEuler2DSpec [1, 2] [3, 4] (by decide)
+    true steps G 0 (by decide) (by decide) (fun axis hAxis u => by
+      have ha : axis = 0 ∨ axis = 1 := by simp at hAxis; omega
+      rcases ha with rfl | rfl <;> simp [isothermalEuler2DSpec, getOr, evalFlux, negateVars])
+
 def statementA : PdeTrajectoryStatement :=
   { specName := "A", law := "(law)", dims := [2], boundaryTag := "periodic", reflectNegVars := []
     steps := 1, backend := "rat", useStrang := false, initialRat := [[1], [2]], finalRat := [[2], [1]] }
@@ -284,6 +344,10 @@ def numeratorBytes (q : Rat) : List UInt8 := intBytes q.num
 #tooth rolloutRat_periodic_conserves_integral by mutation cellUpdate := leakyCellUpdate
 #tooth rolloutRat_periodic_conserves_integral by mutation ghostIndex := stuckGhost
 #tooth periodicSweep_conserves_integral by mutation cellUpdate := leakyCellUpdate
+#tooth reflectiveSweep_conserves_component by mutation cellUpdate := leakyCellUpdate
+#tooth rolloutRat_reflective_conserves_component by mutation cellUpdate := leakyCellUpdate
+#tooth rolloutRat_reflective_conserves_component by mutation ghostIndex := stuckGhost
+#tooth rolloutRat_reflective_conserves_component by mutation reconL := wrongCellRecon
 #tooth reflectiveWall_zero_normal_flux by mutation rusanovNonlinearFlux := upwindLeftFlux
 #tooth reflectiveWallFace_zero_flux by mutation reconL := wrongCellRecon
 #tooth pdeTrajectoryDigest_binding by mutation pdeTrajectoryBytes := nameOnlyBytes
