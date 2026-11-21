@@ -12,6 +12,8 @@ import all Obend.Core.Term
 import all Obend.Core.Ty
 import all Obend.Hardware.CircuitDae
 import all Obend.Hardware.GlitchAndTempestSafe
+import all Obend.Geometry.CochainAndGauge
+import all Obend.Hardware.PCB
 import all Obend.Hardware.HDL
 import all Obend.Hardware.PipelinedRiscCore
 import all Obend.Judge.Class
@@ -27,6 +29,8 @@ open Obend.Analysis
 open Obend.Hardware.HDL
 open Obend.Hardware.PipelinedRisc
 open Obend.Hardware.CircuitDae
+open Obend.Geometry.CochainAndGauge
+open Obend.Hardware.PCB
 open Obend.Hardware.GlitchAndTempestSafe
 
 set_option autoImplicit false
@@ -211,77 +215,102 @@ theorem test_dualRail_never_unauthorized_store
     exact (singleRail_powerGlitch_skips_auth_check.2.2.2.2.2.2 m).1
 
 -- ============================================================================
--- 3. Multi-GHz Coupled-PCB TEMPEST Safety (Symmetric, PRNG-Masked & Imperfect DFM)
+-- 3. Coupled Switching-Current → 3D DEC Maxwell Radiation & `PCB` FEEC/DFM Safety
 -- ============================================================================
 
 def symmetric2p5GhzPcb : CoupledPcbPairSpec :=
-  ⟨CanonicalRat.mk 2 25, CanonicalRat.mk 1 2000, CanonicalRat.mk 1 2000,
-   CanonicalRat.mk 3 100, CanonicalRat.mk 1 50, CanonicalRat.mk 1 50000⟩
+  ⟨CanonicalRat.mk 2 25, CanonicalRat.mk 1 2000, CanonicalRat.mk 1 2000, CanonicalRat.mk 3 100⟩
 
 def asymmetricSkewed5GhzPcb : CoupledPcbPairSpec :=
-  ⟨CanonicalRat.mk 2 25, CanonicalRat.mk 1 1500, -(CanonicalRat.mk 1 3000),
-   CanonicalRat.mk 3 100, CanonicalRat.mk 1 50, CanonicalRat.mk 1 50000⟩
+  ⟨CanonicalRat.mk 2 25, CanonicalRat.mk 1 1500, -(CanonicalRat.mk 1 3000), CanonicalRat.mk 3 100⟩
 
 def edge5GhzSkewed : HighSpeedEdgeSpec :=
   ⟨5, CanonicalRat.mk 4 5, CanonicalRat.mk 2 25, CanonicalRat.mk 3 2000⟩
 
 def imperfectRealized2p5GhzPcb : CoupledPcbPairSpec :=
-  ⟨CanonicalRat.mk 2 25, CanonicalRat.mk 3 5000, -(CanonicalRat.mk 1 5000),
-   CanonicalRat.mk 3 100, CanonicalRat.mk 1 50, CanonicalRat.mk 1 50000⟩
+  ⟨CanonicalRat.mk 2 25, CanonicalRat.mk 3 5000, -(CanonicalRat.mk 1 5000), CanonicalRat.mk 3 100⟩
 
 def imperfectRealized2p5GhzEdge : HighSpeedEdgeSpec :=
   ⟨CanonicalRat.mk 5 2, CanonicalRat.mk 4 5, CanonicalRat.mk 2 25, CanonicalRat.mk 1 1000⟩
 
-theorem test_symmetric_and_masked_5ghz_tempest_zero_leakage
-    (distinguisher : List RadiatedEmObservation → CanonicalRat) :
+theorem test_symmetric_and_masked_3d_dec_tempest_zero_leakage
+    (distinguisher : List BoundaryEmFieldObs3D → CanonicalRat) :
     let edgeSym5Ghz : HighSpeedEdgeSpec := ⟨5, CanonicalRat.mk 4 5, CanonicalRat.mk 2 25, 0⟩
+    let stepYee := fun (_ : Nat) (dt : CanonicalRat) (j : List CanonicalRat) (st : DecMaxwellState) =>
+      stepDecMaxwell certifiedCubeDecEnclosure.complex certifiedCubeDecEnclosure.metric dt j st
     (∀ isSpacer s : Bool,
       pcbCommonModeCurrent symmetric2p5GhzPcb edgeSym5Ghz isSpacer s = 0 ∧
+      vecEntry (switchingCurrent1Chain certifiedCubeDecEnclosure symmetric2p5GhzPcb edgeSym5Ghz isSpacer s)
+        certifiedCubeDecEnclosure.traceEdgeCm = 0 ∧
       pcbPdnSupplyCurrent symmetric2p5GhzPcb edgeSym5Ghz isSpacer false =
         pcbPdnSupplyCurrent symmetric2p5GhzPcb edgeSym5Ghz isSpacer true) ∧
-    (let envSeq := fun idx => (asymmetricSkewed5GhzPcb, edge5GhzSkewed, idx % 2 == 1)
+    (let envSeq := fun idx => ((1 / 4 : CanonicalRat), asymmetricSkewed5GhzPcb, edge5GhzSkewed, idx % 2 == 1)
      uniformMaskExpectation 4
-       (fun m => distinguisher (observeMaskedEmTrace envSeq 0 [false, true, false, true] m)) =
+       (fun m => distinguisher (observeMaskedDecMaxwellTrace certifiedCubeDecEnclosure stepYee envSeq 0
+         (quiescentDecState unitCubeComplex3D) [false, true, false, true] m)) =
      uniformMaskExpectation 4
-       (fun m => distinguisher (observeMaskedEmTrace envSeq 0 [true, true, false, false] m))) := by
+       (fun m => distinguisher (observeMaskedDecMaxwellTrace certifiedCubeDecEnclosure stepYee envSeq 0
+         (quiescentDecState unitCubeComplex3D) [true, true, false, false] m))) := by
+  have hEnc : checkDecShieldedEnclosure certifiedCubeDecEnclosure = true := by decide +kernel
   have hSym := balanced_wddl_zero_secret_dependent_power_and_cm
-    symmetric2p5GhzPcb ⟨5, CanonicalRat.mk 4 5, CanonicalRat.mk 2 25, 0⟩ rfl rfl
-  have hMask := (masked_dualRail_exact_mutual_info_zero
-    asymmetricSkewed5GhzPcb edge5GhzSkewed false ⟨0, 0, 0, 0, 0, 0, 0⟩
-    4 (fun idx => (asymmetricSkewed5GhzPcb, edge5GhzSkewed, idx % 2 == 1))
+    certifiedCubeDecEnclosure hEnc symmetric2p5GhzPcb ⟨5, CanonicalRat.mk 4 5, CanonicalRat.mk 2 25, 0⟩ rfl rfl
+  let stepYee := fun (_ : Nat) (dt : CanonicalRat) (j : List CanonicalRat) (st : DecMaxwellState) =>
+    stepDecMaxwell certifiedCubeDecEnclosure.complex certifiedCubeDecEnclosure.metric dt j st
+  have hMask := (masked_dualRail_decMaxwell_mutual_info_zero
+    certifiedCubeDecEnclosure stepYee (1 / 4) asymmetricSkewed5GhzPcb edge5GhzSkewed false
+    (quiescentDecState unitCubeComplex3D) ⟨[], [], 0⟩
+    4 (fun idx => ((1 / 4 : CanonicalRat), asymmetricSkewed5GhzPcb, edge5GhzSkewed, idx % 2 == 1))
     [false, true, false, true] [true, true, false, false] rfl rfl distinguisher).2
-  exact ⟨fun isSpacer s => ⟨(hSym.2.2 isSpacer s).1, hSym.2.1 isSpacer⟩, hMask⟩
+  exact ⟨fun isSpacer s => ⟨(hSym.2.2.1 isSpacer s).1, (hSym.2.2.1 isSpacer s).2, hSym.2.1 isSpacer⟩, hMask⟩
 
-theorem test_imperfect_pcb_snr_below_noise_floor_at_any_standoff
-    (isSpacer s : Bool) (rDistM : CanonicalRat) (hR : 1 ≤ rDistM) :
-    ratAbs (pcbCommonModeCurrent imperfectRealized2p5GhzPcb imperfectRealized2p5GhzEdge isSpacer s) ≤
-      cmLeakageBound certified2p5GhzStriplineEnv ∧
-    interceptedSnr certified2p5GhzStriplineEnv imperfectRealized2p5GhzPcb imperfectRealized2p5GhzEdge
-      isSpacer s rDistM < CanonicalRat.mk 1 4 ∧
+theorem test_imperfect_pcb_dec_poynting_snr_and_dfm_sound
+    (turns : List DecMaxwellMidpointTurn) (cpuTurns : List DualRailCpuTurn)
+    (dt rDistM : CanonicalRat) (hDt : 0 < dt) (hLen : 1 ≤ turns.length)
+    (hTr : ValidDecMaxwellTrace certifiedCubeDecEnclosure.complex certifiedCubeDecEnclosure.metric
+      certifiedCubeDecEnclosure.gLoss certifiedCubeDecEnclosure.gRad (quiescentDecState unitCubeComplex3D) turns)
+    (hDriv : DrivenByDfmSwitchingTrace certified2p5GhzStriplineEnv certifiedCubeDecEnclosure
+      imperfectRealized2p5GhzPcb imperfectRealized2p5GhzEdge dt turns)
+    (hR : 1 ≤ rDistM) (hUnreset : cpuTurns.all isUnresetTurn = true) :
+    ratAbs (sampleBoardCorner.c11CornerAttoF - sampleBoardCorner.c22CornerAttoF) <
+      sampleDiffSensitivity.maxCapImbalanceAttoF ∧
+    interceptedDecTraceSnr certified2p5GhzStriplineEnv certifiedCubeDecEnclosure dt turns rDistM <
+      CanonicalRat.mk 1 4 ∧
     CanonicalRat.ofNat certified2p5GhzStriplineEnv.snrMaxMilli / 1000 < 1 := by
-  have hChk : checkTempestEmcEnvelope certified2p5GhzStriplineEnv = true := certified2p5GhzStriplineEnv_valid
-  have hDfm : RealizesPcbDfm certified2p5GhzStriplineEnv imperfectRealized2p5GhzPcb imperfectRealized2p5GhzEdge :=
-    ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl,
-     by decide +kernel, by decide +kernel, by decide +kernel, by decide +kernel⟩
-  have hRes := (imperfect_pcb_tempest_snr_below_noise_floor certified2p5GhzStriplineEnv).1
-    imperfectRealized2p5GhzPcb imperfectRealized2p5GhzEdge
-    isSpacer s rDistM hChk hDfm hR
+  have hDfmOk : checkDfmDiffImpedanceAndSkew ipcClass3RfFab ipcClass3RfLayout
+      coupledDiffSampleExtraction sampleDiffSensitivity = true := by decide +kernel
+  have hFab : cornerInsideFabEnvelope ipcClass3RfFab sampleBoardCorner :=
+    ⟨by decide, by decide, by decide, by decide⟩
+  have hPhys : cornerConsistentWithFemAndSensitivity coupledDiffSampleExtraction
+      sampleDiffSensitivity sampleBoardCorner :=
+    ⟨by decide +kernel, by decide +kernel, by decide +kernel, by decide +kernel,
+     by decide +kernel, by decide +kernel, by decide +kernel⟩
+  have hReal : RealizesPcbDfm certified2p5GhzStriplineEnv imperfectRealized2p5GhzPcb imperfectRealized2p5GhzEdge :=
+    ⟨rfl, rfl, rfl, rfl, by decide +kernel, by decide +kernel, by decide +kernel, by decide +kernel⟩
+  have hMain := (dualRail_decMaxwell_poynting_tempest_sound
+    certifiedDualRailWindow (progToImem authGuardProg)
+    ipcClass3RfFab ipcClass3RfLayout coupledDiffSampleExtraction sampleDiffSensitivity hDfmOk
+    certified2p5GhzStriplineEnv certified2p5GhzStriplineEnv_valid
+    certifiedCubeDecEnclosure (by decide +kernel)).2.2
+    sampleBoardCorner imperfectRealized2p5GhzPcb imperfectRealized2p5GhzEdge
+    dt rDistM turns cpuTurns unauthInitIsaState 0#64 0#64 hFab hPhys hReal hDt hLen hTr hDriv hR hUnreset
   have hQuarter : CanonicalRat.ofNat certified2p5GhzStriplineEnv.snrMaxMilli / 1000 = CanonicalRat.mk 1 4 := by
     decide +kernel
-  rw [hQuarter] at hRes
-  exact ⟨hRes.1, hRes.2.1, by decide +kernel⟩
+  rw [hQuarter] at hMain
+  exact ⟨hMain.1, hMain.2.1, by decide +kernel⟩
 
 -- ============================================================================
--- 4. Total `Obend.Judge` & `"tempest-glitch-emc@1"` Wire Roundtrip + Refusals
+-- 4. Honest `Obend.Judge` (`SA-P1-12`) & `"tempest-glitch-emc@1"` Wire Roundtrip + Refusals
 -- ============================================================================
 
 def cyclicRtlBadTempestProblem : TempestGlitchEmcProblem :=
   { certifiedTempestGlitchProblem with guardRtl := cyclicBadGuardRtlModule }
 
 def sparseViaBadTempestProblem : TempestGlitchEmcProblem :=
-  { certifiedTempestGlitchProblem with pcbEnv := { certified2p5GhzStriplineEnv with viaPitchUm := 5000 } }
+  { certifiedTempestGlitchProblem with pcbEnv := { certified2p5GhzStriplineEnv with viaPitchNm := 5000000 } }
 
--- Execute codec regressions without normalizing the complete string parser in kernel fixture proofs.
+def weakSeedBadTempestProblem : TempestGlitchEmcProblem :=
+  { certifiedTempestGlitchProblem with prngMaskSeedBits := 64 }
+
 #guard decide (decodeTempestGlitchEmcProblem (encodeTempestGlitchEmcProblem certifiedTempestGlitchProblem) =
   .ok certifiedTempestGlitchProblem)
 #guard decide (decodeTempestGlitchEmcProblem (encodeTempestGlitchEmcProblem groundSlotBadTempestProblem) =
@@ -295,32 +324,39 @@ def sparseViaBadTempestProblem : TempestGlitchEmcProblem :=
   (encodeTempestGlitchEmcProblem groundSlotBadTempestProblem)
   (encodeTempestGlitchEmcCert certifiedTempestGlitchCert) with
   | .refused (.judge .groundSlotOrMissingGroundPlanes) [] => true | _ => false
+
 example :
     tempestGlitchEmcFormat.name ++ "@" ++ tempestGlitchEmcFormat.version = tempestGlitchEmcWireTag ∧
+    TempestGlitchEmcFragment certifiedTempestGlitchProblem ∧
     checkTempestGlitchEmc 0 certifiedTempestGlitchProblem certifiedTempestGlitchCert = .uncovered ∧
     checkTempestGlitchEmc 1 certifiedTempestGlitchProblem certifiedTempestGlitchCert = .ok ∧
     checkTempestGlitchEmc 1 cyclicRtlBadTempestProblem certifiedTempestGlitchCert =
       .refused .invalidDualRailGuardRtl [] ∧
     checkTempestGlitchEmc 1 sparseViaBadTempestProblem certifiedTempestGlitchCert =
       .refused .sparseStitchingViaFence [] ∧
-    checkTempestGlitchEmc 1 certifiedTempestGlitchProblem ⟨certifiedPdnDaeCert, 64⟩ =
+    checkTempestGlitchEmc 1 weakSeedBadTempestProblem certifiedTempestGlitchCert =
       .refused .insufficientPrngMaskEntropy [] := by
-  exact ⟨rfl, by decide +kernel, certifiedTempestGlitch_valid, by decide +kernel⟩
+  exact ⟨rfl, ⟨by decide, by decide, by decide, by decide⟩,
+         by decide +kernel, certifiedTempestGlitch_valid, by decide +kernel⟩
 
 theorem test_planted_tempest_and_rtl_refusals_impossible (c' : TempestGlitchEmcCert) :
     ¬ TempestGlitchEmcMeaning groundSlotBadTempestProblem c' ∧
     ¬ TempestGlitchEmcMeaning cyclicRtlBadTempestProblem c' ∧
-    ¬ TempestGlitchEmcMeaning sparseViaBadTempestProblem c' :=
+    ¬ TempestGlitchEmcMeaning sparseViaBadTempestProblem c' ∧
+    ¬ TempestGlitchEmcMeaning weakSeedBadTempestProblem c' :=
   ⟨tempestGlitchEmcJudge.refuted (groundSlotBadTempest_refused 0) rfl c',
    tempestGlitchEmcJudge.refuted (c := certifiedTempestGlitchCert) (r := 1)
      (by decide +kernel : checkTempestGlitchEmc 1 cyclicRtlBadTempestProblem certifiedTempestGlitchCert =
        .refused .invalidDualRailGuardRtl []) rfl c',
    tempestGlitchEmcJudge.refuted (c := certifiedTempestGlitchCert) (r := 1)
      (by decide +kernel : checkTempestGlitchEmc 1 sparseViaBadTempestProblem certifiedTempestGlitchCert =
-       .refused .sparseStitchingViaFence []) rfl c'⟩
+       .refused .sparseStitchingViaFence []) rfl c',
+   tempestGlitchEmcJudge.refuted (c := certifiedTempestGlitchCert) (r := 1)
+     (by decide +kernel : checkTempestGlitchEmc 1 weakSeedBadTempestProblem certifiedTempestGlitchCert =
+       .refused .insufficientPrngMaskEntropy []) rfl c'⟩
 
 -- ============================================================================
--- 5. `#tooth` Universal Theorem Mutation Kills (`8` witnesses, `≥ 6` required)
+-- 5. `#tooth` Universal Theorem Mutation Kills (`10` witnesses, `≥ 6` required)
 -- ============================================================================
 
 #tooth Obend.Hardware.GlitchAndTempestSafe.subset_arrival_valid_implies_exact by
@@ -336,13 +372,22 @@ theorem test_planted_tempest_and_rtl_refusals_impossible (c' : TempestGlitchEmcC
   mutation Obend.Hardware.GlitchAndTempestSafe.commitIsaFromDualRailBundle :=
     fun _ s _ => { s with pc := s.pc + 99#64 }
 
+#tooth Obend.Hardware.GlitchAndTempestSafe.switching_current_bounds_radiated_flux by
+  mutation Obend.Hardware.GlitchAndTempestSafe.traceSourceEnergyEnvelope := fun _ _ _ => -1
+
 #tooth Obend.Hardware.GlitchAndTempestSafe.balanced_wddl_zero_secret_dependent_power_and_cm by
   mutation Obend.Hardware.GlitchAndTempestSafe.pcbCommonModeCurrent := fun _ _ _ _ => 1
+
+#tooth Obend.Hardware.GlitchAndTempestSafe.masked_dualRail_decMaxwell_mutual_info_zero by
+  mutation Obend.Hardware.GlitchAndTempestSafe.railSwap := fun w _ => w
 
 #tooth Obend.Hardware.GlitchAndTempestSafe.masked_dualRail_exact_mutual_info_zero by
   mutation Obend.Hardware.GlitchAndTempestSafe.railSwap := fun w _ => w
 
 #tooth Obend.Hardware.GlitchAndTempestSafe.imperfect_pcb_tempest_snr_below_noise_floor by
+  mutation Obend.Hardware.GlitchAndTempestSafe.checkTempestEmcEnvelope := fun _ => true
+
+#tooth Obend.Hardware.GlitchAndTempestSafe.dualRail_decMaxwell_poynting_tempest_sound by
   mutation Obend.Hardware.GlitchAndTempestSafe.checkTempestEmcEnvelope := fun _ => true
 
 #tooth Obend.Hardware.GlitchAndTempestSafe.checkTempestGlitchEmc_sound by

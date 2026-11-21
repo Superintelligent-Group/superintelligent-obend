@@ -86,10 +86,44 @@ def unitCubeMetric : DecHodgeMetric where
   let ρ2 := vecSubN K.numV ρ1 (vecScaleN K.numV dt2 (divDual0 K j2))
   let ρ3 := vecSubN K.numV ρ2 (vecScaleN K.numV dt3 (divDual0 K j3))
   let stFin := runDecMaxwellSteps K M st0 [(dt1, j1), (dt2, j2), (dt3, j3)]
+  let stY1 := stepDecMaxwell K M dt1 j1 st0
+  let stY2 := stepDecMaxwell K M dt1 j2 stY1
+  let eMidY := midpointCochain K.numE st0.eField stY1.eField
   d2 K b0 == zeroCochain 1 &&
   d2 K stFin.bField == zeroCochain 1 &&
   divDual0 K (applyHodge M.star1 K.numE stFin.eField) == ρ3 &&
-  stFin.bField != b0
+  stFin.bField != b0 &&
+  yeeBilinearEnergy K M stY1.eField stY1.bField stY2.bField -
+    yeeBilinearEnergy K M st0.eField st0.bField stY1.bField ==
+    -(dt1 * vecDotN K.numE j1 eMidY)
+
+-- Concrete 3D unit-cube midpoint DEC Maxwell step & exact discrete Poynting energy balance `#guard`
+def cubeLossCond : List CanonicalRat := mkVec 12 (fun _ => 1)
+def cubeRadCond  : List CanonicalRat := [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+def cubeMidNext  : DecMaxwellState :=
+  { eField := [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    bField := vecScaleN 6 (-1) (d1 unitCubeComplex3D [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) }
+def cubeMidJSw : List CanonicalRat :=
+  let K := unitCubeComplex3D
+  let M := unitCubeMetric
+  let eMid : List CanonicalRat := [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  let bMid := vecScaleN 6 (1 / 2) cubeMidNext.bField
+  let hMid := applyHodge M.star2 6 bMid
+  vecSubN 12 (vecSubN 12 (bdry2 K hMid) (applyHodge (vecAddN 12 cubeLossCond cubeRadCond) 12 eMid))
+    (applyHodge M.star1 12 cubeMidNext.eField)
+
+#guard
+  let K := unitCubeComplex3D
+  let M := unitCubeMetric
+  let st0 : DecMaxwellState := ⟨zeroCochain 12, zeroCochain 6⟩
+  let eMid := midpointCochain 12 st0.eField cubeMidNext.eField
+  checkConductanceNonneg 12 cubeLossCond &&
+  checkConductanceNonneg 12 cubeRadCond &&
+  checkDecMaxwellMidpointStep K M cubeLossCond cubeRadCond 1 cubeMidJSw st0 cubeMidNext &&
+  decide (0 < radPower K cubeRadCond eMid) &&
+  emEnergy K M cubeMidNext - emEnergy K M st0 + lossPower K cubeLossCond eMid + radPower K cubeRadCond eMid ==
+    -(vecDotN 12 cubeMidJSw eMid) &&
+  d2 K cubeMidNext.bField == zeroCochain 1
 
 /-- Inhabitedness witness for `UndirectedWalk` and `hodgeLaplacian0_kernel_iff_locally_constant`
     connecting opposite corners `0` and `7` of `unitCubeComplex3D`. -/
@@ -428,5 +462,22 @@ def walkIntegralUnsigned (ω : List CanonicalRat) : List SignedEdgeStep → Cano
 
 #tooth Obend.Geometry.CochainAndGauge.sheaf_spanning_tree_exact_iff
   by mutation Obend.Geometry.CochainAndGauge.walkIntegral := walkIntegralUnsigned
+
+/-- 12. **Sign-Inverted Radiation Admittance (`radPower` negates boundary flux):**
+    breaks `dec_maxwell_poynting_energy_balance` on radiative 3D DEC steps. -/
+def radPowerNegated (K : CellComplex3D) (gRad eField : List CanonicalRat) : CanonicalRat :=
+  -(vecDotN K.numE eField (applyHodge gRad K.numE eField))
+
+#tooth Obend.Geometry.CochainAndGauge.dec_maxwell_poynting_energy_balance
+  by mutation Obend.Geometry.CochainAndGauge.radPower := radPowerNegated
+
+/-- 13. **Dropped Magnetic Bilinear Coupling (`yeeBilinearEnergy` ignores `B^n · ⋆_2 B^{n+1}`):**
+    breaks `stepDecMaxwell_yee_bilinear_balance` across staggered Yee leapfrog steps. -/
+def yeeBilinearEnergyNoMag (K : CellComplex3D) (M : DecHodgeMetric)
+    (eHalf _bPrev _bNext : List CanonicalRat) : CanonicalRat :=
+  (1 / 2) * vecDotN K.numE eHalf (applyHodge M.star1 K.numE eHalf)
+
+#tooth Obend.Geometry.CochainAndGauge.stepDecMaxwell_yee_bilinear_balance
+  by mutation Obend.Geometry.CochainAndGauge.yeeBilinearEnergy := yeeBilinearEnergyNoMag
 
 end Obend.Tests.Metasystem.DiracDoubleCatAndGauge
