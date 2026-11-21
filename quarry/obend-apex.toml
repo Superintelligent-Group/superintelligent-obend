@@ -2143,6 +2143,27 @@ module = "Obend.Polis.SandboxDomainTags"
 theorem = "custodyExecutionDigest_binds"
 description = "Byte-exact `obend-sandbox` Grain & cloud custody wire framing (`custodyExecutionDigest_binds`, `custodyTurnRequestDigest_binds`, `kernelVerifierId_binds`, and `r4KernelProofMac_binds` with unbounded-width collision counterexample)."
 
+[[apex]]
+id = "analysis-symmetric-hyperbolic-energy-and-kreiss-oliger"
+subsystem = "Analysis"
+module = "Obend.Analysis.SymmetricHyperbolicEnergy"
+theorem = "symmetricHyperbolic_gronwall_stability"
+description = "General d-dimensional Friedrichs symmetric-hyperbolic systems (`checkSpdGramCoercive_sound`, `centeredDiff_h0_skew_adjoint`, `rusanov_symmetric_energy_dissipative`, `kreissOliger4_energy_nonpositive`), discrete Gronwall H0-norm stability and strict contraction (`symmetricHyperbolic_gronwall_stability`), `symmetricHyperbolicJudge`, and `runSymHypRolloutTrace_dissipative_sound`."
+
+[[apex]]
+id = "analysis-relativity-bssn-z4c-3d-constraint-damping"
+subsystem = "Analysis"
+module = "Obend.Analysis.RelativityBssnZ4c3D"
+theorem = "z4c3d_total_constraint_energy_damped"
+description = "3+1 conformal Z4c constraint-propagation symmetric hyperbolicity (`z4c3d_constraint_symmetric_hyperbolic`), light-cone eigenpairs `{-beta_n, -beta_n +- alpha}` (`z4c3d_characteristic_eigenpairs`), C3 axis equivariance (`z4c3d_cyclic_axis_equivariant`), and exponential 3D constraint-energy damping vs undamped `kappa_1 = 0` ADM (`z4c3d_total_constraint_energy_damped`)."
+
+[[apex]]
+id = "analysis-relativity-bssn-z4c-3d-solver-and-slab-reduction"
+subsystem = "Analysis"
+module = "Obend.Analysis.RelativityBssnZ4c3D"
+theorem = "z4c3d_slab_reduction_matches_1d"
+description = "10-variable 3D `#pde_solver BssnZ4cConstraint3D` (`EndToEndPdeCert`), autonomous constraint-sector Jacobian linearization weld (`bssnZ4cConstraint3D_constraint_sector_eq_z4c3d`), and 1-step plus n-step planar `(y, z)`-slab reduction to `BonaMassoZ4c1D` (`z4c3d_slab_reduction_matches_1d`)."
+
 # ==============================================================================
 # Planned Wave 5+ Vertical Spine Apex Theorems (`master_interface_and_systems_architecture.md`)
 # ==============================================================================

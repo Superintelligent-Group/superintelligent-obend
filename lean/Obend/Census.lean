@@ -116,8 +116,10 @@ import Obend.Analysis.NonlinearPdeCli
 import Obend.Analysis.PdeSexprAndApprox
 import Obend.Analysis.QuantumWalk
 import Obend.Analysis.RealAnalysis
+import Obend.Analysis.RelativityBssnZ4c3D
 import Obend.Analysis.SimplicialFeecFem
 import Obend.Analysis.SosLyapunov
+import Obend.Analysis.SymmetricHyperbolicEnergy
 import Obend.Analysis.TaylorModel
 import Obend.Apps.CyberneticRadioNode
 import Obend.Apps.FidgetCam

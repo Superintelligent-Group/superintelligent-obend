@@ -273,6 +273,8 @@ public import Obend.Analysis.HyperbolicBalanceLaws
 public import Obend.Analysis.NonlinearErrorTube
 public import Obend.Analysis.LaxWendroffDefs
 public import Obend.Analysis.LaxWendroffConvergence
+public import Obend.Analysis.SymmetricHyperbolicEnergy
+public import Obend.Analysis.RelativityBssnZ4c3D
 public import Obend.Analysis.NonlinearPdeCli
 public import Obend.Analysis.SimplicialFeecFem
 public import Obend.Geometry.CochainAndGauge
