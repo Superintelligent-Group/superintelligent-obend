@@ -2,6 +2,7 @@
 
 Sent by the root (session 01a1ad7d, message 531, 2026-11-05T21:14:23.322Z) to agent a024526b, verbatim:
 
+```text
     A note from Claude, coordinating for ember on obend. Read /Users/ember/dev/obend/HARDWARE.md first (the program; you are lane 1, rung 3), then sections 3.5 and 3.6 and change 2 of /Users/ember/dev/obend/review/EXPERT-fpga-silicon-20261103.md, which is the finding you are answering: `RtlExpr` is 64-bit everywhere, every emitted module has one clock, and the CDC checker proves a property about clock domains the emitted RTL does not have.
     
     Work in the warm worktree /private/tmp/claude-501/-Users-ember-dev-obend/01a18fe9-771b-71b2-b01f-da7ed6517d48/scratchpad/build (it has a built .lake; start with `git fetch /Users/ember/dev/obend dev && git checkout -B lane-widths FETCH_HEAD`). Never touch /Users/ember/dev/obend's working tree.
@@ -23,3 +24,4 @@ Sent by the root (session 01a1ad7d, message 531, 2026-11-05T21:14:23.322Z) to ag
     Stopping processes: PID file or nothing (incident 2026-10-10). A subagent ran `pkill -f "cat" -u ember` to clear its own stuck `cat`. `-f` matches the whole command line, every app lives under `/Applications`, and 44 of ember's apps and agents got SIGTERM. Never kill by pattern. No `pkill -f <anything>`, no `pkill -x <bare word>`, no `killall`, no `kill -u`. A process you started is stopped by the PID in its PID file, and only that. Every detached job writes one (`nohup ... & echo $! > job.pid`). No PID file, no kill: tell me instead. If you must look first, `pgrep -fl` and read the list; it is never the argument to a kill.
     
     Commit named files on lane-widths with `git commit -F msg -- <paths>` (write the message to a file; prose with backticks gets eaten by zsh otherwise), ending the message with the line `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`. Do not merge to dev. Update /Users/ember/dev/obend's copies of nothing; update the worktree's `hardware/README.md` and the §3.5/3.6 claims in `QUALIFICATION-AND-SILICON-LEAN.md` to say what is now true. Report back in a few sentences: the commit, what the gates showed (paste the refusal text and the Verilator lint line), and what you left out.
+```

@@ -2,6 +2,7 @@
 
 Sent by the root (session 01a1ad7d, message 830, 2026-11-06T00:25:58.616Z) to agent aa533a9d, verbatim:
 
+```text
     A note from Claude, coordinating for ember on obend. This is workstream 1 of /Users/ember/dev/collected-writings/prompts/PIECES.md ("The membrane as a form"); read that section and section 2 of the same file first, then ember's own words in /Users/ember/dev/collected-writings/prompts/EMBER-PRINCIPLES.md (the "screenshot should not kill the computer" paragraph and the object-level substitution principle), then /Users/ember/dev/collected-writings/prompts/ASTRA-READING.md (its claim that turning a captured live situation into a parameterized one inside the object language is the most under-appreciated idea, and its discriminating experiment). Those are the idea. The code is obend.
     
     Ground truth, read whole before designing (absolute paths; these are the real modules, not a summary):
@@ -24,3 +25,4 @@ Sent by the root (session 01a1ad7d, message 830, 2026-11-06T00:25:58.616Z) to ag
     Stopping processes: PID file or nothing (incident 2026-10-10). A subagent ran `pkill -f "cat" -u ember` to clear its own stuck `cat`. `-f` matches the whole command line, every app lives under `/Applications`, and 44 of ember's apps and agents got SIGTERM. Never kill by pattern. No `pkill -f <anything>`, no `pkill -x <bare word>`, no `killall`, no `kill -u`. A process you started is stopped by the PID in its PID file, and only that. Every detached job writes one (`nohup ... & echo $! > job.pid`). No PID file, no kill: tell me instead. If you must look first, `pgrep -fl` and read the list; it is never the argument to a kill.
     
     Commit named files on lane-form with `git commit -F msg -- <paths>` (message in a file; unsigned with `-c commit.gpgsign=false` if 1Password refuses), ending with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`. Do not merge. Report the theorem statements verbatim, the walkthrough's refusal texts, and what you left out.
+```

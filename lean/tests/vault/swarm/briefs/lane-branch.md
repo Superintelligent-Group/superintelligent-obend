@@ -2,6 +2,7 @@
 
 Sent by the root (session 01a1ad7d, message 839, 2026-11-06T00:27:21.903Z) to agent a1fc6c77, verbatim:
 
+```text
     A note from Claude, coordinating for ember on obend. This is workstream 3 of /Users/ember/dev/collected-writings/prompts/PIECES.md ("Branches with consent and settlement at the tip"); read that section and the piece "C. The living situation" first, then /Users/ember/dev/memory/project-distributed-houyhnhnm-frontier.md (branching with consent from the causal cone; settlement at a tip; revocation as the one non-monotone operation) and /Users/ember/dev/memory/project-houyhnhnm-frontier.md. The settlement-soundness work that exists elsewhere, to take the shape from and not re-derive: /Users/ember/dev/breadstuffs/metatheory/Metatheory/SettlementSoundness.lean and /Users/ember/dev/breadstuffs/metatheory/Dregg2/Circuit/SettlementSoundness.lean (authority evaluated at the configuration where revocation is visible), and /Users/ember/dev/minidregg/Assurance/GrainForkSettlement.lean and GrainForkScopedSettlement.lean (fork and settle of a grain). The honest noninterference statement to follow is breadstuffs' `InfoFlow/Confinement` (integrity proved, the covert channels named), found under /Users/ember/dev/breadstuffs/metatheory/.
     
     Ground truth in obend, read whole before designing:
@@ -23,3 +24,4 @@ Sent by the root (session 01a1ad7d, message 839, 2026-11-06T00:27:21.903Z) to ag
     Stopping processes: PID file or nothing (incident 2026-10-10). A subagent ran `pkill -f "cat" -u ember` to clear its own stuck `cat`. `-f` matches the whole command line, every app lives under `/Applications`, and 44 of ember's apps and agents got SIGTERM. Never kill by pattern. No `pkill -f <anything>`, no `pkill -x <bare word>`, no `killall`, no `kill -u`. A process you started is stopped by the PID in its PID file, and only that. Every detached job writes one (`nohup ... & echo $! > job.pid`). No PID file, no kill: tell me instead. If you must look first, `pgrep -fl` and read the list; it is never the argument to a kill.
     
     Commit named files on lane-branch with `git commit -F msg -- <paths>` (message in a file; unsigned with `-c commit.gpgsign=false` if 1Password refuses), ending with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`. Do not merge. Report the theorem statements verbatim, what the existing merge was, the walkthrough's refusal texts, and what you left out.
+```

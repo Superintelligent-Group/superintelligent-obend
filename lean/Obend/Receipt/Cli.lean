@@ -38,16 +38,34 @@ def verifyCommand (path : String) (prev : Option String) (root : Option Nat) : I
   let j ← readJson path
   -- A claim receipt (`Obend.Logic.Receipt`): re-checked from the receipt and its quoted statement.
   if (j.getObjValAs? String "kind").toOption == some "claim" then
+    if prev.isSome || root.isSome then
+      IO.eprintln "refused: --prev and --root are unsupported for claim receipts"
+      return 3
     match Obend.Logic.Receipt.verifyClaim j with
-    | .ok lines => for l in lines do IO.println l
-                   IO.println "verified"; return 0
+    | .ok lines =>
+      if (j.getObjValAs? String "verdict").toOption != some "ok" then
+        for l in lines do IO.eprintln l
+        IO.eprintln "refused: claim receipt records a refutation, not an established claim"
+        return 3
+      for l in lines do IO.println l
+      IO.println "verified"; return 0
     | .error e => IO.eprintln s!"refused: {e}"; return 3
   -- A transported theorem receipt (`Obend.Lower.Transport`, format `transport@1`).
   if (j.getObjValAs? String "kind").toOption == some "transport" then
+    if prev.isSome || root.isSome then
+      IO.eprintln "refused: --prev and --root are unsupported for transport receipts"
+      return 3
     let some stmt := (j.getObjVal? "statement").toOption
       | do IO.eprintln "refused: missing statement"; return 3
     let some cert := (j.getObjVal? "certificate").toOption
       | do IO.eprintln "refused: missing certificate"; return 3
+    if let .ok vStr := j.getObjValAs? String "verdict" then
+      unless vStr == "ok" do
+        IO.eprintln s!"refused: transport@1 receipt verdict is '{vStr}', expected 'ok'"
+        return 3
+    else if (j.getObjVal? "verdict").isOk then
+      IO.eprintln "refused: transport@1 receipt verdict is not 'ok'"
+      return 3
     match Obend.Lower.transportFormat.checkBytes 0 stmt.compress cert.compress with
     | .ok =>
       IO.println "transport@1: verified"

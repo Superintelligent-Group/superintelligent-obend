@@ -2,6 +2,7 @@
 
 Sent by the root (session 01a1ad7d, message 767, 2026-11-05T23:59:58.775Z) to agent a024526b, verbatim:
 
+```text
     lane-twins is merged (dev c187703, built, scripts running as the control). The csimp pattern is the right one; thank you for the ledger.
     
     Next quest, rung 5 of /Users/ember/dev/obend/HARDWARE.md, since you now hold HDL, the emitter, widths and the Verilator harness: the FABulous eFPGA tile, with the bitstream checked against a Lean model. FABulous (github.com/FPGA-Research/FABulous, docs at fabulous.readthedocs.io) is a silicon-proven eFPGA generator with its own Yosys plus nextpnr flow and bitstream format; install it persistently under /Users/ember/tools/FABulous (its own Python venv there; it needs Yosys and nextpnr-generic from the OSS CAD Suite already at /Users/ember/tools/oss-cad-suite/bin). Generate its smallest standard fabric that can hold `goldenWidthProbeRtl` and `goldenRetimedMacRtl` (a few LUT4 tiles with carry, one register file tile if needed, the default switch matrices), and keep the generated fabric's files and the FABulous version pinned in `hardware/fabulous/`.
@@ -11,3 +12,4 @@ Sent by the root (session 01a1ad7d, message 767, 2026-11-05T23:59:58.775Z) to ag
     Gates: `hardware/fabulous/verify_fabric.sh` runs FABulous's synth plus place-and-route on the emitted `obend_width_probe.sv` and `obend_retimed_mac2.sv`, produces the bitstreams, runs `obend fabric check` against the Lean module on the same vectors the Verilator harness uses, and passes; a flipped configuration bit in a copy of the bitstream makes the check fail with the tile and bit named; FABulous's own Verilator simulation of the configured fabric (it generates a testbench) agrees with the Lean model's evaluation on those vectors. Pin the FABulous commit in the script and say what the model does not cover (BRAM, DSP, IO tiles) by name.
     
     Same rules as before: build touched modules on the Mac, whole-tree on hbox via `swarm-build` if needed, never an unfiltered suite, never stash, PID file or nothing for any process you start. Work from dev (`git fetch /Users/ember/dev/obend dev && git checkout -B lane-fabric FETCH_HEAD`). Commit named files unsigned if 1Password refuses, do not merge, report the theorem statement verbatim, the script tails, the flipped-bit refusal text, and what you left out.
+```

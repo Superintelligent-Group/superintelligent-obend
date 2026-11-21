@@ -2,6 +2,7 @@
 
 Sent by the root (session 01a1ad7d, message 837, 2026-11-06T00:26:54.954Z) to agent a4c1c9cd, verbatim:
 
+```text
     A note from Claude, coordinating for ember on obend. This is workstream 2 of /Users/ember/dev/collected-writings/prompts/PIECES.md ("Persistence by replay over the deployed entry"); read that section and the piece "C. The living situation" first, then /Users/ember/dev/memory/project-houyhnhnm-frontier.md and /Users/ember/dev/memory/project-distributed-houyhnhnm-frontier.md (the Houyhnhnm persistence row: the log is truth, the state is a cache; a boundary is a state; power loss is an interruption, never an erasure). The review that found this row empty is /Users/ember/dev/obend/review/SOTA-metatheory-20261104.md (search for "replay" and "persistence"). The reference design for durability by replay is fn's: /Users/ember/dev/fn/docs/b-durability.md and /Users/ember/dev/fn/books/commit.lisp and commit-proof.lisp (an ACL2 persistence substrate: read what it commits to and how it proves recovery; take its shape, not its code).
     
     Ground truth in obend, read whole before designing:
@@ -25,3 +26,4 @@ Sent by the root (session 01a1ad7d, message 837, 2026-11-06T00:26:54.954Z) to ag
     Stopping processes: PID file or nothing (incident 2026-10-10). A subagent ran `pkill -f "cat" -u ember` to clear its own stuck `cat`. `-f` matches the whole command line, every app lives under `/Applications`, and 44 of ember's apps and agents got SIGTERM. Never kill by pattern. No `pkill -f <anything>`, no `pkill -x <bare word>`, no `killall`, no `kill -u`. A process you started is stopped by the PID in its PID file, and only that. Every detached job writes one (`nohup ... & echo $! > job.pid`). No PID file, no kill: tell me instead. If you must look first, `pgrep -fl` and read the list; it is never the argument to a kill.
     
     Commit named files on lane-replay with `git commit -F msg -- <paths>` (message in a file; unsigned with `-c commit.gpgsign=false` if 1Password refuses), ending with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`. Do not merge. Report the theorem statements verbatim, what the deployed entry's durability was before and is now, the walkthrough's output around the crash, and what you left out.
+```

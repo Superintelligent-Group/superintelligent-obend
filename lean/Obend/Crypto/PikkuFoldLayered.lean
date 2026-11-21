@@ -603,10 +603,12 @@ theorem verifyBoundedChallengeFold_forking_extract {m n : Nat} (A : IntMatrix m 
     (hRel₂ : matVecModQ A q w₂ = foldModQ q c₂ cm₁ cm₂) :
     let Δw := intSub (intScale c₂ w₁) (intScale c₁ w₂)
     let δ := c₂ - c₁
+    Δw.coeffs.size = n ∧ cm₁.coeffs.size = m ∧ cm₂.coeffs.size = m ∧
     c₁ ≠ c₂ ∧ δ ≠ 0 ∧ δ.natAbs ≤ 2 * bChal ∧
     normInfFast Δw.coeffs ≤ 2 * bChal * nextRoundCap ∧
     matVecModQ A q Δw = Sized.ofFn (fun i => (δ * cm₁.spec i) % (q : Int)) := by
-  refine ⟨hcNe, by omega, by omega, ?_, ?_⟩
+  refine ⟨(intSub (intScale c₂ w₁) (intScale c₁ w₂)).size_eq, cm₁.size_eq, cm₂.size_eq,
+    hcNe, by omega, by omega, ?_, ?_⟩
   · have hb₁ : normInfFast (intScale c₂ w₁).coeffs ≤ bChal * nextRoundCap :=
       Nat.le_trans (normInfFast_scale_le c₂ w₁) (Nat.mul_le_mul hc₂ hw₁)
     have hb₂ : normInfFast (intScale c₁ w₂).coeffs ≤ bChal * nextRoundCap :=
@@ -633,12 +635,15 @@ theorem verifyBoundedChallengeFold_forking_within_sisBeta {m n : Nat} (A : IntMa
     (hRel₁ : matVecModQ A q w₁ = foldModQ q c₁ cm₁ cm₂)
     (hRel₂ : matVecModQ A q w₂ = foldModQ q c₂ cm₁ cm₂) :
     let Δw := intSub (intScale c₂ w₁) (intScale c₁ w₂)
+    Δw.coeffs.size = n ∧ cm₁.coeffs.size = m ∧ cm₂.coeffs.size = m ∧
+    β₁ + bChal * β₂ ≤ nextRoundCap ∧
     normInfFast Δw.coeffs < sisBetaBound ∧
     matVecModQ A q Δw = Sized.ofFn (fun i => ((c₂ - c₁) * cm₁.spec i) % (q : Int)) := by
   have hExt := verifyBoundedChallengeFold_forking_extract A q bChal nextRoundCap cm₁ cm₂ c₁ c₂ w₁ w₂
     hcNe hc₁ hc₂ hw₁ hw₂ hRel₁ hRel₂
   simp only [checkNormRefreshGate, Bool.and_eq_true, decide_eq_true_eq] at hGate
-  exact ⟨Nat.lt_of_le_of_lt hExt.2.2.2.1 hGate.2, hExt.2.2.2.2⟩
+  rcases hExt with ⟨hSzW, hSz1, hSz2, _, _, _, hNorm, hMod⟩
+  exact ⟨hSzW, hSz1, hSz2, hGate.1.2, Nat.lt_of_le_of_lt hNorm hGate.2, hMod⟩
 
 /-- **Quantitative Parallel Challenge Soundness / Anti-Grinding Bound (`parallelBoundedChalHitProb_le`)**:
     Sampling $k$ small-norm challenges from `[-bChal, bChal]^k` (`uniformVecDist bChal target.length`)

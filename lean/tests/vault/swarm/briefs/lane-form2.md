@@ -2,6 +2,7 @@
 
 Sent by the root (session 01a1ad7d, message 944, 2026-11-06T01:13:21.937Z) to agent aa533a9d, verbatim:
 
+```text
     lane-form is being merged into dev now (after lane-branch, which landed `Obend.Vault.Branch` and a small `lawOfLine` seam in Store.lean; the only conflict was the umbrella module's doc list, resolved by keeping both). The theorems are the right ones; `admit_conserves_total` as what `carry_conserves_total_book` becomes for a form is exactly the reopening of the strong hole the brief asked for. About the Mac disk at 98%: that is ember's to manage, not ours; write nothing large there and say so if a build needs room.
     
     Next quest, from your own left-out list, in this order:
@@ -9,3 +10,4 @@ Sent by the root (session 01a1ad7d, message 944, 2026-11-06T01:13:21.937Z) to ag
     2. Then the real substitution principle: holes in the object language. The form's residual is its own small expression language today; ember's principle is that substituting variables and continuing the computation should live at the object level, which here is Core's `Term` with `.hole n σ`. Move the residual to Core terms with the theorem that Core's evaluation is stable under hole filling (`eval (fill t a) = fill (residual t) a` in whatever form the step relation makes true; if it is only true for a fragment, name the fragment and refuse the rest), so a form can abstract any write a page law can judge, not only transfers. If this turns out to be a larger piece than one quest, do part 1, state exactly what part 2 needs from Core, and stop there.
     
     Work from dev once the merge lands (`git fetch /Users/ember/dev/obend dev && git checkout -B lane-form2 FETCH_HEAD`; I will send one line when it is in). Same rules as before. The replay lane is touching Store.lean's disk writes and the receipt chain at the same time; name any seam you need from Store rather than rewriting its persistence. Report the theorem statements verbatim, the walkthrough refusals, and what you left out.
+```

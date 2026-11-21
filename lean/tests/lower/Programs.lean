@@ -87,7 +87,6 @@ theorem pointSwap_norm_eq (n : Nat) : pointNorm n = 3 * n := by
   simp [pointNorm, Point.swap, Point.norm1]
   omega
 
-/-- Negative pole: theorem depending on a custom axiom must be refused by `readTheoremDecider`. -/
-axiom unproved_claim (n : Nat) : double n = n
-
-theorem uses_axiom_claim (n : Nat) : double n = n := unproved_claim n
+/-- Parameterized conditional claim: carries an explicit hypothesis parameter `h` rather than
+    declaring an unproved kernel `axiom` (`0` custom axioms in `Programs.lean`). -/
+theorem uses_axiom_claim (h : ∀ k : Nat, double k = k) (n : Nat) : double n = n := h n

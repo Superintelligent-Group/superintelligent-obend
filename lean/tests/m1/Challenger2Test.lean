@@ -73,7 +73,7 @@ theorem test_obend_law_split (b : Bool) (n : Nat) :
     (if b then n + 0 else 0 + n) = n := by
   obend_law
 
-theorem test_obend_law_trivial : True := by
+theorem test_obend_law_zero_comm (n : Nat) : n + 0 = 0 + n := by
   obend_law
 
 
@@ -169,16 +169,16 @@ def testLowerBridge : IO Unit := do
   assertOk "unsupported Term.mix rejected" ((lowerTerm env tMix).isNone == true)
 
   let tPerform := Term.perform (.nat 0)
-  assertOk "unsupported Term.perform rejected" ((lowerTerm env tPerform).isNone == true)
+  assertOk "supported Term.perform lowered" ((lowerTerm env tPerform).isSome == true)
 
   let tSplit := Term.split (.nat 0) ["x"] (.nat 0)
-  assertOk "unsupported Term.split rejected" ((lowerTerm env tSplit).isNone == true)
+  assertOk "supported Term.split lowered" ((lowerTerm env tSplit).isSome == true)
 
   let tInject := Term.inject "lbl" (.nat 0)
-  assertOk "unsupported Term.inject rejected" ((lowerTerm env tInject).isNone == true)
+  assertOk "supported Term.inject lowered" ((lowerTerm env tInject).isSome == true)
 
   let tCase := Term.case (.nat 0) [("lbl", .nat 1)]
-  assertOk "unsupported Term.case rejected" ((lowerTerm env tCase).isNone == true)
+  assertOk "supported Term.case lowered" ((lowerTerm env tCase).isSome == true)
 
   let tHole := Term.hole 0 []
   assertOk "unsupported Term.hole rejected" ((lowerTerm env tHole).isNone == true)
