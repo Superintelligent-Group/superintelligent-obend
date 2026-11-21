@@ -38,7 +38,7 @@ Not covered, by name:
 -/
 public import Obend.Hardware.Hvm.Model
 public import Obend.Hardware.ReductionMachine.Arena
-@[expose] public section
+public section
 
 namespace Obend.Hardware.Hvm
 open Obend.Hardware.ReductionMachine
@@ -187,6 +187,11 @@ inductive Interacts : Cfg → Cfg → Prop where
       Interacts ⟨root, pre ++ (a, b) :: post⟩
         ⟨root, pre ++ [(mkBin kb (.var v0) (.var v1), a1), (mkBin kb (.var v2) (.var v3), a2),
           (mkBin ka (.var v0) (.var v2), b1), (mkBin ka (.var v1) (.var v3), b2)] ++ post⟩
+
+example (root : HTree) :
+    Interacts ⟨root, [(.era, .con (.var 0) (.var 1))]⟩
+      ⟨root, [(.era, .var 0), (.era, .var 1)]⟩ :=
+  .rule (pre := []) (post := []) (a := .era) (b := .con (.var 0) (.var 1)) rfl (by decide)
 
 theorem Interacts.step {book : List HDef} {c c' : Cfg} : Interacts c c' → Step book c c'
   | .rule h _ => .rule h
@@ -660,7 +665,7 @@ theorem ite_neg' {α : Sort _} {c : Prop} [Decidable c] (h : ¬c) (a b : α) : (
   simp [h]
 
 /-- The arena `Arena.apply` gives for a commutation of `l ~ r`. -/
-def commArena (A : Arena) (l r : INetNode) : Arena :=
+@[expose] def commArena (A : Arena) (l r : INetNode) : Arena :=
   { (commuteSpawnedNodes l r A.next).foldl Arena.place ((A.drop l.id).drop r.id) with
     next := A.next + 4 }.splice (commuteSplices l r A.next)
 
@@ -1002,7 +1007,7 @@ def X : List Nat := P.ir ++ P.ipre ++ P.ipost
 /-- The pair's auxiliary ports. -/
 def Ds : List PortRef := P.kids.map Kid.d
 
-theorem paired : Paired A (P.K ++ P.D) := P.hP
+theorem paired (P : PairData A ρ root pre post) : Paired A (P.K ++ P.D) := P.hP
 
 theorem mem_D {x : Nat} {p : PortRef} (h : (x, p) ∈ P.D) : ∃ k ∈ P.kids, k.d = p ∧ k.u = .var x := by
   obtain ⟨k, hk, hx⟩ := List.mem_flatMap.1 h

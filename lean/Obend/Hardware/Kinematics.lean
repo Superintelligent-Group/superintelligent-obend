@@ -39,7 +39,7 @@ machine-tool kinematics, and jerk-limited trajectory generation** within `Obend.
   tool axis and every re-orientation is a rapid on or above the clearance plane.
 -/
 public import Obend.Hardware.GeometryCAM
-@[expose] public section
+public section
 
 namespace Obend.Hardware.Kinematics
 set_option autoImplicit false
@@ -56,8 +56,9 @@ structure Vec3 where
 /-- Zero 3D vector $(0, 0, 0)$. -/
 def Vec3.zero : Vec3 := { x := 0, y := 0, z := 0 }
 
-/-- Componentwise 3D vector addition $\mathbf{a} + \mathbf{b}$. -/
-def Vec3.add (a b : Vec3) : Vec3 where
+/-- Componentwise 3D vector addition $\mathbf{a} + \mathbf{b}$. Exposed: `SymplecticVehicle6Dof`
+unfolds it to carry sums across its exact rational embedding (`fromKinematics_add`). -/
+@[expose] def Vec3.add (a b : Vec3) : Vec3 where
   x := a.x + b.x
   y := a.y + b.y
   z := a.z + b.z
@@ -268,6 +269,13 @@ theorem ruckig_directional_limits_sound
   unfold checkRuckigDirectionalLimits at h
   simp only [Bool.and_eq_true, decide_eq_true_eq] at h
   exact ⟨h.1.1, h.1.2, h.2⟩
+
+/-- The envelope check accepts a state inside its limits, so the premise of
+`ruckig_directional_limits_sound` is inhabited. -/
+example :
+    checkRuckigDirectionalLimits { posScaled6 := 0, velScaled2 := 4, acc := 2 } 1 (-10) 10 (-5) 5 3 =
+      true := by
+  decide
 
 /-! ## 4. 5-Axis CNC 21-Parameter Volumetric Geometric Error & Abbe Lever-Arm Compensation -/
 
@@ -805,7 +813,7 @@ theorem passMoves_axis (cfg : PostConfig) (p : CamPass) : ∀ m ∈ passMoves cf
   split
   · simp
   · intro m hm
-    simp only [List.mem_cons, List.mem_append, List.mem_map, List.mem_singleton] at hm
+    simp only [List.mem_cons, List.mem_append, List.mem_map] at hm
     rcases hm with h | h | ⟨r, _, h⟩ | h | h <;> first | (subst h; rfl) | cases h
 
 theorem passMoves_head (cfg : PostConfig) (p : CamPass) (m : NcMove)

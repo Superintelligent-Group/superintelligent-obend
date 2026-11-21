@@ -20,7 +20,7 @@ module
 public import Obend.Hardware.Gpu.Rdna2.Block
 public import Obend.Hardware.Gpu.ArrayEmit
 
-@[expose] public section
+public section
 
 namespace Obend.Hardware.Gpu.Rdna2.Schedule
 
@@ -29,7 +29,7 @@ open Obend.Hardware.Gpu.ArrayEmit Obend.Hardware.Gpu.ArraySchedule
 open Obend.Hardware.Gpu.Rdna2 Obend.Hardware.Gpu.Rdna2.Block Tm
 
 /-- The flat memory whose device space is `f`, every other space zero. -/
-def ofDevice (f : Nat → Word) : FlatMemory := fun a => if a.1 = .device then f a.2 else 0
+@[expose] def ofDevice (f : Nat → Word) : FlatMemory := fun a => if a.1 = .device then f a.2 else 0
 
 /-- The stages of one action, each awaiting the LDS its dump allocates: an elementwise action is one
 dispatch meaning `Action.eval`; a collective is one `blockSpec` per dispatch, with no constants. -/
@@ -53,7 +53,7 @@ def actionBounded (p : GpuProgram) (words : Nat) : Action → Bool
   | .collective _ => true
 
 /-- The certificate of a schedule's dumps `progs` (dispatch `k` with `ldss[k]` dwords of LDS). -/
-def certifySchedule (p : GpuProgram) (sched : Schedule) (ldss : List Nat) (progs : List Program)
+@[expose] def certifySchedule (p : GpuProgram) (sched : Schedule) (ldss : List Nat) (progs : List Program)
     (rs : List Residual) : Bool :=
   let acts := sched.actions.toList
   sched.words < 2 ^ 29 && p.words ≤ sched.words && (specsOf p sched.words acts).length == ldss.length &&
@@ -201,5 +201,50 @@ theorem certifySchedule_sound (p : GpuProgram) (sched : Schedule) (ldss : List N
       exact actionSpecs_den p _ a g ha), specsOf_foldl]
     simp only [projB, hi, ite_true]
   · simp at hcp
+
+/-! ## Schedule certificate witnesses -/
+
+/-- A stage inside its buffer: four words, `[0, 2)` then `[2, 4)`, concatenated into `[4, 8)` of eight. -/
+example : ∃ (p : GpuProgram) (words : Nat) (a : Action), actionBounded p words a = true :=
+  ⟨{ words := 8, wireBase := [], wireLen := [], consts := [], tables := [], inputs := [], outputs := [],
+     stages := [⟨[⟨4, 4, .concat 0 2 2⟩]⟩] }, 8, .elementwise 0 ⟨[⟨4, 4, .concat 0 2 2⟩]⟩, by decide⟩
+
+/-- The same stage in a buffer of seven words writes past its end. -/
+example : actionBounded
+    { words := 8, wireBase := [], wireLen := [], consts := [], tables := [], inputs := [], outputs := [],
+      stages := [⟨[⟨4, 4, .concat 0 2 2⟩]⟩] } 7 (.elementwise 0 ⟨[⟨4, 4, .concat 0 2 2⟩]⟩) = false := by
+  decide
+
+/-- That stage's schedule is one dispatch: its four threads, with the LDS its dump states. -/
+example : ∃ (p : GpuProgram) (words : Nat) (acts : List Action) (ldss : List Nat),
+    (scheduleSpecs p words acts ldss).map (fun s => (s.threads, s.lds)) = [(4, 16)] :=
+  ⟨{ words := 8, wireBase := [], wireLen := [], consts := [], tables := [], inputs := [], outputs := [],
+     stages := [⟨[⟨4, 4, .concat 0 2 2⟩]⟩] }, 8, [.elementwise 0 ⟨[⟨4, 4, .concat 0 2 2⟩]⟩], [16],
+   by decide⟩
+
+/-- A zero-length output still compiles to one dispatch, as in stage zero of the
+`soac-empty` dump. The wire buffer remains allocated. No wave launches, so any
+instruction stream suffices, but the dump must contain a program for that dispatch. -/
+example (prog : Program) :
+    ∃ (p : GpuProgram) (sched : Schedule) (ldss : List Nat) (progs : List Program) (rs : List Residual),
+      p.stages ≠ [] ∧ compile p = .ok sched ∧
+      certifySchedule p sched ldss progs rs = true ∧
+      certifySchedule p sched ldss [] rs = false := by
+  let stage : GpuStage := ⟨[⟨0, 0, .const 0⟩]⟩
+  let p : GpuProgram :=
+    { words := 1, wireBase := [0], wireLen := [0], consts := [],
+      tables := [], inputs := [], outputs := [0], stages := [stage] }
+  refine ⟨p, ⟨1, #[.elementwise 0 stage]⟩, [0], [prog], [], by simp [p], rfl, ?_, rfl⟩
+  simp [p, stage, certifySchedule, scheduleSpecs, specsOf, actionSpecs, checkProgram, checkStage,
+    checkStageW, show (⟨[⟨0, 0, .const 0⟩]⟩ : GpuStage).threads = 0 from rfl,
+    gpuTableUpTo, Kernel.owns, groupsOf, lanes, parMap_eq, mergeWaves, tableStored,
+    Std.HashSet.fold_eq_foldl_toList, actionBounded] <;> decide
+
+/-- A schedule with a dispatch is refused against a dump that lacks its stage. -/
+example : certifySchedule
+    { words := 8, wireBase := [], wireLen := [], consts := [], tables := [], inputs := [], outputs := [],
+      stages := [⟨[⟨4, 4, .concat 0 2 2⟩]⟩] }
+    ⟨8, #[.elementwise 0 ⟨[⟨4, 4, .concat 0 2 2⟩]⟩]⟩ [16] [] [] = false := by
+  decide
 
 end Obend.Hardware.Gpu.Rdna2.Schedule

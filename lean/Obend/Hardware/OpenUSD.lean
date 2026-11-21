@@ -24,7 +24,7 @@ public import Obend.Hardware.Kinematics
 public import Obend.Law.Contract
 public import Obend.Law.Proofs.Claim
 public import Obend.Leaf.Flatten
-@[expose] public section
+public section
 
 namespace Obend.Hardware.OpenUSD
 open Obend.Core.Term (Term Evaluates Value Step Steps)
@@ -37,20 +37,24 @@ open Obend.Hardware.Accelerators
 open Obend.Hardware.GeometryCAM
 set_option autoImplicit false
 
+/-! `Obend.Vault.PhysicalProjection.physical_openusd_lifecycle_fixture` reduces path relocation,
+1D affine cancellation and the final lifecycle state in the kernel. `FidgetCam` also reduces arc
+strengths when proving local-arc dominance. These computations determine which bodies are exposed. -/
+
 /-! ## 1. OpenUSD `SdfPath` Hierarchy & Non-Destructive `Relocates` (`E` in `LIVERPS`) -/
 
 /-- An OpenUSD hierarchical scene path (e.g. `["Factory", "StatorAssy", "Slot_01", "Microchannel"]`). -/
 abbrev SdfPath := List String
 
 /-- Relocate an `SdfPath` by replacing prefix `src` with `dst` if `src` is a prefix of `p`. -/
-def relocateSuffix (dst : SdfPath) : SdfPath → SdfPath → Option SdfPath
+@[expose] def relocateSuffix (dst : SdfPath) : SdfPath → SdfPath → Option SdfPath
   | [], rest => some (dst ++ rest)
   | s :: srcRest, p :: pathRest =>
     if s == p then relocateSuffix dst srcRest pathRest else none
   | _ :: _, [] => none
 
 /-- Apply a non-destructive OpenUSD `relocates` arc `(srcPrefix ↦ dstPrefix)` to `path`. -/
-def applyUsdRelocate (srcPrefix dstPrefix path : SdfPath) : SdfPath :=
+@[expose] def applyUsdRelocate (srcPrefix dstPrefix path : SdfPath) : SdfPath :=
   match relocateSuffix dstPrefix srcPrefix path with
   | some relocated => relocated
   | none           => path
@@ -86,15 +90,15 @@ def AffineForm1D.eval (af : AffineForm1D) (eps1 eps2 : Int) : Int :=
   af.c0 + af.c1 * eps1 + af.c2 * eps2
 
 /-- Integer absolute value $|z|$. -/
-def intAbs (z : Int) : Int :=
+@[expose] def intAbs (z : Int) : Int :=
   if 0 ≤ z then z else -z
 
 /-- Total uncertainty radius $|c_1| + |c_2|$ of an `AffineForm1D`. -/
-def AffineForm1D.radius (af : AffineForm1D) : Int :=
+@[expose] def AffineForm1D.radius (af : AffineForm1D) : Int :=
   intAbs af.c1 + intAbs af.c2
 
 /-- Convert an `AffineForm1D` into its guaranteed bounding interval `[c0 - radius, c0 + radius]`. -/
-def AffineForm1D.toInterval (af : AffineForm1D) : FloatInterval where
+@[expose] def AffineForm1D.toInterval (af : AffineForm1D) : FloatInterval where
   lo := af.c0 - af.radius
   hi := af.c0 + af.radius
 
@@ -105,7 +109,7 @@ def AffineForm1D.add (a b : AffineForm1D) : AffineForm1D where
   c2 := a.c2 + b.c2
 
 /-- Affine subtraction $\hat{a} - \hat{b}$ (preserves noise-symbol correlations!). -/
-def AffineForm1D.sub (a b : AffineForm1D) : AffineForm1D where
+@[expose] def AffineForm1D.sub (a b : AffineForm1D) : AffineForm1D where
   c0 := a.c0 - b.c0
   c1 := a.c1 - b.c1
   c2 := a.c2 - b.c2
@@ -696,7 +700,7 @@ structure UsdPhysicalState where
   deriving DecidableEq, Repr
 
 /-- Physical safety invariant for a part across its OpenUSD lifecycle. -/
-def checkPartLifecycleInvariant (minWallUm maxTempMilliC : Int) (st : UsdPhysicalState) : Bool :=
+@[expose] def checkPartLifecycleInvariant (minWallUm maxTempMilliC : Int) (st : UsdPhysicalState) : Bool :=
   decide (minWallUm ≤ st.wallThicknessUm ∧ st.peakTempMilliC ≤ maxTempMilliC)
 
 /-- A 2-state OpenUSD temporal transition (`CellContract` step) from `oldSt` to `newSt`. -/
@@ -715,7 +719,7 @@ def checkUsdTimeSampleChain
     checkUsdTimeSampleChain minWallUm maxTempMilliC next rest
 
 /-- Retrieve the final physical state at the end of a `timeSamples` chain. -/
-def finalUsdState (initSt : UsdPhysicalState) : List UsdPhysicalState → UsdPhysicalState
+@[expose] def finalUsdState (initSt : UsdPhysicalState) : List UsdPhysicalState → UsdPhysicalState
   | []          => initSt
   | next :: rest => finalUsdState next rest
 
@@ -911,7 +915,7 @@ inductive UsdArcKind where
   deriving DecidableEq, Repr
 
 /-- Numerical strength rank for `LIVERPS` (`7` = strongest `localArc`, `1` = weakest `specializesArc`). -/
-def UsdArcKind.strength : UsdArcKind → Nat
+@[expose] def UsdArcKind.strength : UsdArcKind → Nat
   | .localArc       => 7
   | .inheritsArc    => 6
   | .variantArc     => 5
@@ -919,7 +923,6 @@ def UsdArcKind.strength : UsdArcKind → Nat
   | .referencesArc  => 3
   | .payloadArc     => 2
   | .specializesArc => 1
-
 
 /-- An OpenUSD `PrimSpec` authoring attribute/method opinions `fields` at hierarchical path `path`
 through LIVERPS composition arc `arc : UsdArcKind`. -/
@@ -1024,7 +1027,7 @@ theorem insertPrimByStrength_localArc_head
     unfold insertPrimByStrength
     rw [hLocal]
     have hLe : q.arc.strength ≤ UsdArcKind.localArc.strength := usdArcKind_strength_le_local q.arc
-    rw [if_pos hLe]
+    rw [ite_eq_left hLe]
 
 /-- **Formal LIVERPS $\leftrightarrow$ `Core4` `Term.mix` & `Obend.Leaf.flatten` Dominance Theorem
 (`liverps_local_dominates_term`)**:
@@ -1174,10 +1177,10 @@ theorem liverps_stronger_arc_dominates_term
   have hNotLe : ¬ (strongSpec.arc.strength ≤ weakSpec.arc.strength) := Nat.not_le_of_gt hLt
   have hSortFwd : sortPrimsByLiverps [strongSpec, weakSpec] = [strongSpec, weakSpec] := by
     dsimp only [sortPrimsByLiverps, insertPrimByStrength]
-    rw [if_pos hLe]
+    rw [ite_eq_left hLe]
   have hSortRev : sortPrimsByLiverps [weakSpec, strongSpec] = [strongSpec, weakSpec] := by
     dsimp only [sortPrimsByLiverps, insertPrimByStrength]
-    rw [if_neg hNotLe]
+    rw [ite_eq_right hNotLe]
   let CFwd := primSpecsToComposition (collectTargetPrims layersFwd target) seedFields
   let CRev := primSpecsToComposition (collectTargetPrims layersRev target) seedFields
   have hCFwdEq : CFwd = { top := strongSpec.toLayer, below := [weakSpec.toLayer], seed := seedFields } := by
@@ -1244,7 +1247,7 @@ theorem liverps_sublayer_tiebreak_dominates_term
   have hLe : spec1.arc.strength ≤ spec0.arc.strength := Nat.le_refl _
   have hSort : sortPrimsByLiverps [spec0, spec1] = [spec0, spec1] := by
     dsimp only [sortPrimsByLiverps, insertPrimByStrength]
-    rw [if_pos hLe]
+    rw [ite_eq_left hLe]
   let C := primSpecsToComposition (collectTargetPrims layers target) seedFields
   have hCEq : C = { top := spec0.toLayer, below := [spec1.toLayer], seed := seedFields } := by
     dsimp only [C, primSpecsToComposition]

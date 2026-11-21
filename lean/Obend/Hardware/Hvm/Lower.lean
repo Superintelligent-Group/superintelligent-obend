@@ -6,7 +6,8 @@ See `Obend.Hardware.Hvm` for what is lowered, what is refused, and the theorem.
 -/
 public import Obend.Hardware.Hvm.Net
 public import Obend.Leaf.Static
-@[expose] public section
+import all Obend.Hardware.Hvm.Net
+public section
 namespace Obend.Hardware.Hvm
 open Obend.Core.Term
 open Obend.Leaf
@@ -557,6 +558,8 @@ def binOp : Primitive → Option (Scalar × Scalar × Scalar × FExp)
   | .conjunction => some (.bool, .bool, .bool, .op .and (.var 1) (.var 0))
   | _ => none
 
+example : binOp .less = some (.nat, .nat, .bool, .op .lt (.var 1) (.var 0)) := rfl
+
 theorem ck_of_lt {v : Nat} (h : v < u24Mod) : ck v = some v := by simp [ck, h]
 
 /-- **The primitives are sound**: where the body evaluates exactly, Core4's primitive gives the
@@ -595,10 +598,10 @@ theorem binOp_sound {op : Primitive} {sl sr s : Scalar} {body : FExp} (hb : binO
     simp only [evalE, cons_succ, cons_zero, Option.bind_some, ck_of_lt hx, ck_of_lt hy, exactOp] at h
     refine ⟨?_, trivial⟩
     by_cases hxy : x < y
-    · simp only [hxy, ite_true, c1, Option.bind_some, c0] at h
+    · simp only [hxy, ite_true, c1, c0] at h
       cases h
       simp [primitiveResult, Scalar.lit, Nat.sub_eq_zero_of_le (Nat.le_of_lt hxy)]
-    · simp only [hxy, ite_false, c0, Option.bind_some] at h
+    · simp only [hxy, ite_false, c0] at h
       simp only [show y ≤ x by omega, ite_true, Option.bind_some] at h
       obtain ⟨rfl, -⟩ := ck_some h
       simp [primitiveResult, Scalar.lit]
@@ -623,7 +626,7 @@ theorem binOp_sound {op : Primitive} {sl sr s : Scalar} {body : FExp} (hb : binO
     · simp only [Scalar.valid]; split <;> omega
   · -- lessEqual
     simp only [evalE, cons_succ, cons_zero, Option.bind_some, ck_of_lt hx, ck_of_lt hy, exactOp, c1] at h
-    simp only [show (if y < x then 1 else 0) < u24Mod by split <;> decide, ck_of_lt, Option.bind_some] at h
+    simp only [show (if y < x then 1 else 0) < u24Mod by split <;> decide, ck_of_lt] at h
     obtain ⟨rfl, -⟩ := ck_some h
     refine ⟨?_, ?_⟩
     · by_cases hxy : y < x
@@ -663,7 +666,7 @@ def lvlRange (a : Nat) : Nat → List Nat
   | k + 1 => a :: lvlRange (a + 1) k
 
 /-- The translation monad: a counter for fresh names, and the definitions emitted. -/
-def Tr (α : Type) : Type := Nat → Except String (α × List FDef × Nat)
+@[expose] def Tr (α : Type) : Type := Nat → Except String (α × List FDef × Nat)
 
 instance : Monad Tr where
   pure a := fun k => Except.ok (a, [], k)
@@ -673,10 +676,10 @@ instance : Monad Tr where
       | Except.error e => Except.error e
     | Except.error e => Except.error e
 
-def Tr.fail {α : Type} (e : String) : Tr α := fun _ => Except.error e
+@[expose] def Tr.fail {α : Type} (e : String) : Tr α := fun _ => Except.error e
 def Tr.fresh : Tr Nat := fun k => Except.ok (k, [], k + 1)
 def Tr.emit (d : FDef) : Tr Unit := fun k => Except.ok ((), [d], k)
-def Tr.ofExcept {α : Type} : Except String α → Tr α
+@[expose] def Tr.ofExcept {α : Type} : Except String α → Tr α
   | .ok a => fun k => Except.ok (a, [], k)
   | .error e => fun _ => Except.error e
 
@@ -706,19 +709,21 @@ theorem Tr.fail_ok {α : Type} {e : String} {k : Nat} {r : α × List FDef × Na
     False := by
   cases h
 
+/-- The lifted switches of `mkIfs`: one per slot, each branch a definition named from a fresh
+counter. -/
+def mkIfs.liftIfs (pfx : String) (d : Nat) (v : FExp) : List FExp → List FExp → Tr (List FExp)
+  | z :: zs, s :: ss => do
+    let k ← Tr.fresh
+    let es ← mkIfs.liftIfs pfx d v zs ss
+    pure (.ifzL d s!"{pfx}.b{k}z" s!"{pfx}.b{k}s" v z s :: es)
+  | _, _ => pure []
+
 /-- Switches over one condition, one per slot: all inline when every branch is call-free, all with
 their branches lifted to definitions otherwise (so the untaken branch is voided before it is
 expanded). One decision for all slots keeps them evaluating in one environment. -/
 def mkIfs (pfx : String) (d : Nat) (v : FExp) (zs ss : List FExp) : Tr (List FExp) :=
   if zs.all callFree && ss.all callFree then pure ((zs.zip ss).map fun p => .ifz v p.1 p.2)
-  else liftIfs pfx d v zs ss
-where
-  liftIfs (pfx : String) (d : Nat) (v : FExp) : List FExp → List FExp → Tr (List FExp)
-    | z :: zs, s :: ss => do
-      let k ← Tr.fresh
-      let es ← liftIfs pfx d v zs ss
-      pure (.ifzL d s!"{pfx}.b{k}z" s!"{pfx}.b{k}s" v z s :: es)
-    | _, _ => pure []
+  else mkIfs.liftIfs pfx d v zs ss
 
 /-- The switch chains over a sum's tag, one per slot: arm `k`'s slots under `k` predecessors. -/
 def swChains (pfx : String) : Nat → FExp → List (List FExp) → Tr (List FExp)
@@ -743,7 +748,7 @@ def joinS : HSort → HSort → Except String HSort
 
 mutual
 /-- A best-effort sort of a term (unproved: `toS` checks what it is given). -/
-def sortOf (Γ : List CEnt) : Term → Except String HSort
+@[expose] def sortOf (Γ : List CEnt) : Term → Except String HSort
   | .nat _ => .ok (.val (.sc .nat))
   | .boolean _ => .ok (.val (.sc .bool))
   | .bound i => match Γ[i]? with
@@ -816,7 +821,7 @@ end
 mutual
 /-- **The translation of a term** at sort `σ`: one `FExp` per slot, at FExp depth `dep`, or the
 reason it is refused. -/
-def toS (pfx : String) (Γ : List CEnt) (dep : Nat) : Term → HSort → Tr (List FExp)
+@[expose] def toS (pfx : String) (Γ : List CEnt) (dep : Nat) : Term → HSort → Tr (List FExp)
   | .nat v, σ => if σ = .val (.sc .nat) ∧ v < u24Mod then pure [.lit v]
       else Tr.fail s!"literal {v}: not a natural below 2^24 here"
   | .boolean b, σ => if σ = .val (.sc .bool) then pure [.lit (if b then 1 else 0)]
@@ -955,6 +960,21 @@ def toArms (pfx : String) (Γ : List CEnt) (pl base : Nat) (sarms : List (String
 termination_by arms => sizeOf arms
 end
 
+example (k : Nat) : toS "r" [] 0 (.record [("n", .nat 3)]) (.val (.rcd [("n", .nat)])) k =
+    .ok ([.lit 3], [], k) := by
+  simp [toS, toFields]
+  rfl
+
+example (k : Nat) : toFields "r" [] 0 [("n", .nat 3)] [("n", .nat)] k =
+    .ok ([.lit 3], [], k) := by
+  simp [toFields, toS]
+  rfl
+
+example (k : Nat) : toArms "r" [] 0 1 [("n", .sc .nat)] (.val (.sc .nat)) [("n", .bound 0)] k =
+    .ok ([("n", [.var 0])], [], k) := by
+  simp [toArms, armIdx, toS]
+  rfl
+
 /-! ## 6. Facts the soundness proof uses -/
 
 theorem Tr.ofExcept_ok {α : Type} {e : Except String α} {k k' : Nat} {a : α} {ds : List FDef}
@@ -994,25 +1014,25 @@ theorem pushAll_get : ∀ (xs : List (Option Nat)) (η : Nat → Option Nat) (i 
   | x :: xs, η, i => by
     simp only [pushAll, pushAll_get xs (cons x η) i, List.length_cons]
     by_cases h : i < xs.length
-    · rw [if_pos h, if_pos (by omega)]
+    · rw [ite_eq_left h, ite_eq_left (by omega)]
       rw [show xs.length + 1 - 1 - i = (xs.length - 1 - i) + 1 by omega]
       simp
-    · rw [if_neg h]
+    · rw [ite_eq_right h]
       by_cases h' : i = xs.length
       · subst h'; simp
-      · rw [if_neg (by omega)]
+      · rw [ite_eq_right (by omega)]
         obtain ⟨j, hj⟩ : ∃ j, i - xs.length = j + 1 := ⟨i - xs.length - 1, by omega⟩
         rw [hj]; simp only [cons_succ]; congr 1; omega
 
 theorem lvlVal_push (xs : List (Option Nat)) (η : Nat → Option Nat) (dep ℓ : Nat) (h : ℓ < dep) :
     lvlVal (dep + xs.length) (pushAll xs η) ℓ = lvlVal dep η ℓ := by
   simp only [lvlVal, pushAll_get]
-  rw [if_neg (by omega)]; congr 1; omega
+  rw [ite_eq_right (by omega)]; congr 1; omega
 
 theorem lvlVal_push_new (xs : List (Option Nat)) (η : Nat → Option Nat) (dep i : Nat) (h : i < xs.length) :
     lvlVal (dep + xs.length) (pushAll xs η) (dep + i) = xs.getD i none := by
   simp only [lvlVal, pushAll_get]
-  rw [if_pos (by omega)]; congr 1; omega
+  rw [ite_eq_left (by omega)]; congr 1; omega
 
 theorem lvlVal_restrict (d : Nat) (η : Nat → Option Nat) (ℓ : Nat) (h : ℓ < d) :
     lvlVal d (restrict d η) ℓ = lvlVal d η ℓ := by
@@ -1105,7 +1125,7 @@ theorem inst_lift (s u : Term) (σ : Nat → Term) :
   rw [instantiate_eq, Obend.Core.TermTraverse.substitute_comp]
   congr 1; funext i
   cases i with
-  | zero => simp [liftSubstitution, Term.substitute, single]
+  | zero => simp [liftSubstitution, single]
   | succ i => simp only [liftSubstitution, cons_succ]; exact shift_one_cancel _ _
 
 theorem ifz_eval_aux (D : List FDef) (f : Nat) (η : Nat → Option Nat) (v : FExp) (x : Nat)
@@ -1326,7 +1346,7 @@ theorem liftN_inst (τ : Nat → Term) (a : Term) : ∀ (j i : Nat),
     (liftN j (liftSubstitution τ) i).substitute (liftN j (single a)) = liftN j (cons a τ) i
   | 0, 0 => by simp [liftN, liftSubstitution, single]
   | 0, i + 1 => by simp only [liftN, liftSubstitution, cons_succ]; exact shift_one_cancel _ _
-  | j + 1, 0 => by simp [liftN, liftSubstitution, Term.substitute]
+  | j + 1, 0 => by simp [liftN, liftSubstitution]
   | j + 1, i + 1 => by
     simp only [liftN, liftSubstitution]
     rw [Obend.Core.TermTraverse.rename_substitute, ← liftN_inst τ a j i,
@@ -1364,6 +1384,11 @@ theorem steps_lams (B : Term) : ∀ (args : List Term) (τ : Nat → Term),
 
 /-- Every definition emitted is the one `D` finds by its name. -/
 def DefsIn (D : List FDef) (ds : List FDef) : Prop := ∀ d ∈ ds, D.find? (·.name == d.name) = some d
+
+example (d : FDef) : DefsIn [d] [d] := by
+  intro e he
+  obtain rfl := List.mem_singleton.mp he
+  simp
 
 theorem DefsIn.append {D ds₁ ds₂ : List FDef} (h : DefsIn D (ds₁ ++ ds₂)) : DefsIn D ds₁ ∧ DefsIn D ds₂ :=
   ⟨fun d hd => h d (List.mem_append_left _ hd), fun d hd => h d (List.mem_append_right _ hd)⟩
@@ -1440,6 +1465,15 @@ theorem EnvOk.consEnt {D : List FDef} {fuel : Nat} {Γ : List CEnt} {dep : Nat} 
   | zero => simp only [List.getElem?_cons_zero, Option.some.injEq] at hi; subst hi; exact he
   | succ i => simp only [List.getElem?_cons_succ] at hi; exact h i e' hi
 
+example (n fuel : Nat) : EnvOk [] fuel [.val (.val (.sc .nat)) [0]] 1
+    (fun _ => some n) (fun _ => .nat n) := by
+  intro i e hi
+  cases i with
+  | zero =>
+    cases hi
+    exact ⟨by simp, [n], rfl, n, rfl, .refl _, trivial⟩
+  | succ i => simp at hi
+
 theorem letChain_all (D : List FDef) (f : Nat) (η : Nat → Option Nat) (as : List FExp) (xs : List Nat)
     (hxs : Fa2 (fun e w => evalE D f η e = some w) as xs) : ∀ (bs : List FExp) (ws : List Nat),
     Fa2 (fun e w => evalE D f η e = some w) (bs.map (letChain as)) ws →
@@ -1489,17 +1523,17 @@ theorem bindEnv_revRange_get : ∀ (N : Nat) (vs : List (Option Nat)), vs.length
     simp only [revRange, bindEnv]
     by_cases h : i = N
     · subst h; simp
-    · rw [if_neg h, bindEnv_revRange_get N vs hl i]
+    · rw [ite_eq_right h, bindEnv_revRange_get N vs hl i]
       by_cases h' : i < N
-      · rw [if_pos h', if_pos (by omega), show N + 1 - 1 - i = (N - 1 - i) + 1 by omega]; simp
-      · rw [if_neg h', if_neg (by omega)]
+      · rw [ite_eq_left h', ite_eq_left (by omega), show N + 1 - 1 - i = (N - 1 - i) + 1 by omega]; simp
+      · rw [ite_eq_right h', ite_eq_right (by omega)]
   | 0, _ :: _, hl, _ => by simp at hl
   | _ + 1, [], hl, _ => by simp at hl
 
 theorem lvlVal_bindEnv (N : Nat) (vs : List (Option Nat)) (hl : vs.length = N) (ℓ : Nat) (hℓ : ℓ < N) :
     lvlVal N (bindEnv (revRange N) vs) ℓ = vs.getD ℓ none := by
   simp only [lvlVal, bindEnv_revRange_get N vs hl]
-  rw [if_pos (by omega)]; congr 1; omega
+  rw [ite_eq_left (by omega)]; congr 1; omega
 
 theorem lvlRange_split : ∀ (a m₁ m₂ : Nat), lvlRange a (m₁ + m₂) = lvlRange a m₁ ++ lvlRange (a + m₁) m₂
   | a, 0, m₂ => by simp [lvlRange]
@@ -1530,14 +1564,14 @@ theorem restrict_push_eq (η : Nat → Option Nat) (dep : Nat) (xs : List (Optio
   rw [bindEnv_revRange_get _ _ (by simp [lvlRange_length])]
   simp only [restrict]
   by_cases hi : i < dep + xs.length
-  · rw [if_pos hi, if_pos hi, pushAll_get]
+  · rw [ite_eq_left hi, ite_eq_left hi, pushAll_get]
     by_cases hx : i < xs.length
-    · rw [if_pos hx, getD_app, if_neg (by simp [lvlRange_length]; omega)]
+    · rw [ite_eq_left hx, getD_app, ite_eq_right (by simp [lvlRange_length]; omega)]
       simp only [List.length_map, lvlRange_length]; congr 1; omega
-    · rw [if_neg hx, getD_app, if_pos (by simp [lvlRange_length]; omega),
+    · rw [ite_eq_right hx, getD_app, ite_eq_left (by simp [lvlRange_length]; omega),
         getD_lvlRange_map _ 0 dep _ (by omega)]
       simp only [lvlVal]; congr 1; omega
-  · rw [if_neg hi, if_neg hi]
+  · rw [ite_eq_right hi, ite_eq_right hi]
 
 theorem lvlRange_map_eq (f : Nat → Option Nat) : ∀ (a m : Nat) (l : List (Option Nat)), l.length = m →
     (∀ i < m, f (a + i) = l.getD i none) → (lvlRange a m).map f = l
@@ -2016,7 +2050,7 @@ theorem toS_sound_aux (pfx : String) (D : List FDef) (fuel : Nat) (IHf : ∀ f' 
                           (bindEnv (revRange (dep + as.length)) ((lvlRange 0 dep).map (lvlVal dep η) ++ ws0.map some)) ℓ =
                           lvlVal dep η ℓ := by
                         intro ℓ hℓ
-                        rw [lvlVal_bindEnv _ _ hvl ℓ (by omega), getD_app, if_pos (by simp [lvlRange_length]; omega),
+                        rw [lvlVal_bindEnv _ _ hvl ℓ (by omega), getD_app, ite_eq_left (by simp [lvlRange_length]; omega),
                           getD_lvlRange_map _ 0 dep ℓ hℓ, Nat.zero_add]
                       have sb := IHf f' hlt body _ (dep + as.length) _ k3 [b] ds7 k4 h7 hD7
                       have hbase : EnvOk D f' Γ (dep + as.length)
@@ -2036,7 +2070,7 @@ theorem toS_sound_aux (pfx : String) (D : List FDef) (fuel : Nat) (IHf : ∀ f' 
                           a0 (.val sa (lvlRange dep as.length)) := by
                         refine ⟨fun ℓ hℓ => by have := mem_lvlRange.1 hℓ; omega, ws0, ?_, hda⟩
                         refine lvlRange_map_eq _ dep as.length _ hws0 (fun i hi => ?_)
-                        rw [lvlVal_bindEnv _ _ hvl _ (by omega), getD_app, if_neg (by simp [lvlRange_length])]
+                        rw [lvlVal_bindEnv _ _ hvl _ (by omega), getD_app, ite_eq_right (by simp [lvlRange_length])]
                         simp [lvlRange_length]
                       have hE' := ((hbase.consEnt hfn).consEnt (t := i0.substitute σc) (e := .none) trivial).consEnt hval
                       obtain ⟨w', hw', dS⟩ := sb _ _ hE' [w0] (.cons hev .nil)
@@ -2078,7 +2112,7 @@ theorem toS_sound_aux (pfx : String) (D : List FDef) (fuel : Nat) (IHf : ∀ f' 
       | rcd sfs =>
         dsimp only at h
         by_cases hnd : (sfs.map (·.1)).Nodup
-        · rw [if_pos hnd] at h
+        · rw [ite_eq_left hnd] at h
           simp only [Term.record.sizeOf_spec] at ht
           have IHfs : ∀ p ∈ fs, ∀ (σ : HSort) (k : Nat) (slots : List FExp) (ds : List FDef) (k' : Nat),
               toS pfx Γ dep p.2 σ k = .ok (slots, ds, k') → DefsIn D ds → SoundAt D fuel Γ dep p.2 σ slots :=
@@ -2101,7 +2135,7 @@ theorem toS_sound_aux (pfx : String) (D : List FDef) (fuel : Nat) (IHf : ∀ f' 
           · rw [List.map_map]; simp only [Function.comp_def]; rw [show (fs.map fun x => x.1) = sfs.map (·.1) from hnm]
             exact hnd
           · simp [hp, ← hpn]
-        · rw [if_neg hnd] at h; exact absurd h Tr.fail_ok'
+        · rw [ite_eq_right hnd] at h; exact absurd h Tr.fail_ok'
     | get t n =>
       unfold toS at h
       obtain ⟨st, ds1, k1, ds2, h1, h2, rfl⟩ := Tr.bind_ok h
@@ -2135,7 +2169,7 @@ theorem toS_sound_aux (pfx : String) (D : List FDef) (fuel : Nat) (IHf : ∀ f' 
               have hjx : j < xs.length := by omega
               -- the selected slot is the variable that holds field `j`
               simp only [evalE, pushAll_get, List.length_map] at hv
-              rw [if_pos (by omega), show xs.length - 1 - (ts.length - 1 - j) = j by omega] at hv
+              rw [ite_eq_left (by omega), show xs.length - 1 - (ts.length - 1 - j) = j by omega] at hv
               simp only [List.getD_eq_getElem?_getD, List.getElem?_map, List.getElem?_eq_getElem hjx,
                 Option.map_some, Option.getD_some, Option.bind_some] at hv
               obtain ⟨rfl, -⟩ := ck_some hv
@@ -2153,7 +2187,7 @@ theorem toS_sound_aux (pfx : String) (D : List FDef) (fuel : Nat) (IHf : ∀ f' 
       | sum arms =>
         dsimp only at h
         by_cases hnd : (arms.map (·.1)).Nodup
-        · rw [if_pos hnd] at h
+        · rw [ite_eq_left hnd] at h
           cases hi : armIdx arms l with
           | none => simp only [hi] at h; exact absurd h Tr.fail_ok'
           | some q =>
@@ -2180,12 +2214,12 @@ theorem toS_sound_aux (pfx : String) (D : List FDef) (fuel : Nat) (IHf : ∀ f' 
                 by simp only [Term.substitute]; exact .refl _, ?_⟩
               rw [List.take_append_of_le_length (by omega), List.take_of_length_le (by omega)]
               exact dp
-        · rw [if_neg hnd] at h; exact absurd h Tr.fail_ok'
+        · rw [ite_eq_right hnd] at h; exact absurd h Tr.fail_ok'
     | case sc arms =>
       unfold toS at h
       by_cases hw0 : σ.width = 0
-      · rw [if_pos hw0] at h; exact absurd h Tr.fail_ok'
-      rw [if_neg hw0] at h
+      · rw [ite_eq_left hw0] at h; exact absurd h Tr.fail_ok'
+      rw [ite_eq_right hw0] at h
       obtain ⟨ss, ds1, k1, ds2, h1, h2, rfl⟩ := Tr.bind_ok h
       obtain ⟨-, rfl⟩ := Tr.ofExcept_ok h1
       cases ss with
@@ -2193,7 +2227,7 @@ theorem toS_sound_aux (pfx : String) (D : List FDef) (fuel : Nat) (IHf : ∀ f' 
       | sum sarms =>
         dsimp only at h2
         by_cases hc : (sarms.map (·.1)).Nodup ∧ sarms ≠ []
-        · rw [if_pos hc] at h2
+        · rw [ite_eq_left hc] at h2
           obtain ⟨fsc, ds3, k2, ds4, h3, h4, rfl⟩ := Tr.bind_ok h2
           obtain ⟨tr, ds5, k3, ds6, h5, h6, rfl⟩ := Tr.bind_ok h4
           cases hm : sarms.mapM (fun lv => tr.lookup lv.1) with
@@ -2201,7 +2235,7 @@ theorem toS_sound_aux (pfx : String) (D : List FDef) (fuel : Nat) (IHf : ∀ f' 
           | some perArm =>
             simp only [hm] at h6
             by_cases hc2 : perArm.all (·.length = σ.width) ∧ fsc.length = 1 + maxW sarms
-            · rw [if_pos hc2] at h6
+            · rw [ite_eq_left hc2] at h6
               obtain ⟨sw, ds7, k4, ds8, h7, h8, rfl⟩ := Tr.bind_ok h6
               obtain ⟨rfl, -, -⟩ := Tr.pure_ok h8
               obtain ⟨-, hD2⟩ := hD.append
@@ -2234,7 +2268,7 @@ theorem toS_sound_aux (pfx : String) (D : List FDef) (fuel : Nat) (IHf : ∀ f' 
                   cases hxs with | cons hh0 _ => exact evalE_lt D fuel _ η t0 hh0
                 have hscr : evalE D fuel (pushAll ((t0 :: rest).map some) η) (.var (fsc.length - 1)) = some t0 := by
                   simp only [evalE, pushAll_get, List.length_map]
-                  rw [if_pos (by simp at hxl ⊢; omega), show (t0 :: rest).length - 1 - (fsc.length - 1) = 0 by
+                  rw [ite_eq_left (by simp at hxl ⊢; omega), show (t0 :: rest).length - 1 - (fsc.length - 1) = 0 by
                     simp at hxl ⊢; omega]
                   simp [ck_of_lt ht0M]
                 have ht0 : t0 < perArm.length := by
@@ -2277,8 +2311,8 @@ theorem toS_sound_aux (pfx : String) (D : List FDef) (fuel : Nat) (IHf : ∀ f' 
                 refine DecH.steps (steps_trans (steps_case _ hsteps)
                   (steps_one (.caseInject l p _ (body.substitute (liftSubstitution σc)) hf'))) ?_
                 rw [inst_lift]; exact db
-            · rw [if_neg hc2] at h6; exact absurd h6 Tr.fail_ok'
-        · rw [if_neg hc] at h2; exact absurd h2 Tr.fail_ok'
+            · rw [ite_eq_right hc2] at h6; exact absurd h6 Tr.fail_ok'
+        · rw [ite_eq_right hc] at h2; exact absurd h2 Tr.fail_ok'
     | _ => unfold toS at h; exact absurd h Tr.fail_ok'
 
 /-- **The translation is sound, at every fuel.** -/
@@ -2371,7 +2405,7 @@ theorem DecH.probes {σ : HSort} {ws : List Nat} {t : Term} (d : DecH σ ws t) :
       simp only [applyPath, PStep.apply]
       have hl : l ∈ arms.map (·.1) := List.mem_map.2 ⟨(l, v), List.mem_of_getElem? ha, rfl⟩
       have hst := steps_trans (steps_case _ hs) (steps_one (.caseInject l p _ _ (find?_tag l _ hl)))
-      rw [show instantiate (Term.label l) p = .label l by simp [instantiate, Term.substitute]] at hst
+      rw [show instantiate (Term.label l) p = .label l by simp [instantiate]] at hst
       exact halts_of_steps hst (.label l) (.label l)
     intro po hpo
     simp only [HSort.observe, ha] at hpo
@@ -2387,7 +2421,7 @@ theorem DecH.probes {σ : HSort} {ws : List Nat} {t : Term} (d : DecH σ ws t) :
           | cons r rs => simp [VSort.width] at hw; simp [hw]
         simp only [applyPath, PStep.apply, this]
         have hst := steps_trans (steps_case _ hs) (steps_one (.caseInject l p [(l, .bound 0)] (.bound 0) (by simp)))
-        rw [show instantiate (Term.bound 0) p = p by simp [instantiate, Term.substitute]] at hst
+        rw [show instantiate (Term.bound 0) p = p by simp [instantiate]] at hst
         exact (dS.steps hst).halts
     | rcd fs =>
       simp only [List.mem_cons, List.mem_map] at hpo
@@ -2399,7 +2433,7 @@ theorem DecH.probes {σ : HSort} {ws : List Nat} {t : Term} (d : DecH σ ws t) :
           have hjl : j < fs.length := (List.getElem?_eq_some_iff.1 hj.1).1
           refine List.mem_iff_getElem?.2 ⟨j, ?_⟩
           rw [List.getElem?_zip_eq_some]
-          exact ⟨hj.1, by simp [VSort.width, List.getElem?_take, hjl, hj.2]⟩
+          exact ⟨hj.1, by simp [VSort.width, hjl, hj.2]⟩
         have := decRcd_probe dp q hq'
         simp only [applyPath, PStep.apply]
         obtain ⟨v', hev, hob⟩ := this
@@ -2599,6 +2633,19 @@ def lowerBookToHvm (B : Book) : Option HvmBook :=
   | .ok H => some H
   | .error _ => none
 
+-- A one-argument identity method reaches the book checker and retains its argument slot.
+example : lowerBookToHvm ⟨[.slot ⟨"id", 0, .method, .lam (.lam (.bound 0)), []⟩]⟩ =
+    some ⟨[⟨"id", 1, .val (.sc .nat), [.var 0], defNet "id" [0] [.var 0]⟩], []⟩ := by
+  have hn : nameOk "id" = true := by rw [nameOk, String.all_bool_eq]; decide
+  have hs : sortOf (memberEnv 1) (.bound 0) = .ok (.val (.sc .nat)) := by rw [sortOf]; rfl
+  have ht : toS "id" (memberEnv 1) 1 (.bound 0) (.val (.sc .nat)) 0 = .ok ([.var 0], [], 0) := by
+    rw [toS]; rfl
+  simp only [lowerBookToHvm, lowerBookToHvmE, Book.slots, Book.defs, List.filterMap_cons,
+    BookItem.def?, List.filterMap_nil, List.map_cons, List.map_nil, lowerAll, lowerMember, hn,
+    ite_true, evalBook, List.find?_cons, BEq.rfl, List.isEmpty_nil, dataPinSpecialize,
+    dataPinSteps, dataPinPass, peelLams, hs, ht]
+  rfl
+
 /-- `@main = r & @m ~ (#x₁ (… (#xₖ r)))`. -/
 def mainDef (d : HvmMember) (xs : List Nat) : HDef :=
   ⟨"main", .var 0, [(.ref d.member, argTree (xs.map fun x => nul (some x)) (.var 0))]⟩
@@ -2661,11 +2708,11 @@ theorem consAll_get : ∀ (as : List Term) (τ : Nat → Term) (i : Nat),
   | a :: as, τ, i => by
     simp only [consAll, consAll_get as (cons a τ) i, List.length_cons]
     by_cases h : i < as.length
-    · rw [if_pos h, if_pos (by omega), show as.length + 1 - 1 - i = (as.length - 1 - i) + 1 by omega]; simp
-    · rw [if_neg h]
+    · rw [ite_eq_left h, ite_eq_left (by omega), show as.length + 1 - 1 - i = (as.length - 1 - i) + 1 by omega]; simp
+    · rw [ite_eq_right h]
       by_cases h' : i = as.length
       · subst h'; simp
-      · rw [if_neg (by omega)]
+      · rw [ite_eq_right (by omega)]
         obtain ⟨j, hj⟩ : ∃ j, i - as.length = j + 1 := ⟨i - as.length - 1, by omega⟩
         rw [hj]; simp only [cons_succ]; congr 1; omega
 
@@ -2683,12 +2730,12 @@ theorem memberEnv_get (k i : Nat) : (memberEnv k)[i]? =
     if i < k then some (.val (.val (.sc .nat)) [k - 1 - i]) else if i = k then some .none else none := by
   simp only [memberEnv]
   by_cases h : i < k
-  · rw [if_pos h, List.getElem?_append_left (by simp [natEnv_length]; omega), natEnv_get k i h]
-  · rw [if_neg h, List.getElem?_append_right (by simp [natEnv_length]; omega)]
+  · rw [ite_eq_left h, List.getElem?_append_left (by simp [natEnv_length]; omega), natEnv_get k i h]
+  · rw [ite_eq_right h, List.getElem?_append_right (by simp [natEnv_length]; omega)]
     simp only [natEnv_length]
     by_cases h' : i = k
     · subst h'; simp
-    · rw [if_neg h']; simp; omega
+    · rw [ite_eq_right h']; simp; omega
 
 theorem applyAll_nats : ∀ (t : Term) (xs : List Nat), applyAll t (xs.map .nat) = applyPath (xs.map .arg) t
   | _, [] => rfl
@@ -2745,7 +2792,7 @@ theorem lowerBookToHvm_sound {B : Book} {H : HvmBook} (hH : lowerBookToHvm B = s
     rw [hall] at hEx
     dsimp only at hEx
     by_cases hchk : (HvmBook.mk ms dss).checkB = true
-    · rw [if_pos hchk] at hEx
+    · rw [ite_eq_left hchk] at hEx
       cases hEx
       simp only [HvmBook.checkB, Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true] at hchk
       obtain ⟨⟨⟨hnd, hex⟩, hfd⟩, hmem⟩ := hchk
@@ -2783,7 +2830,7 @@ theorem lowerBookToHvm_sound {B : Book} {H : HvmBook} (hH : lowerBookToHvm B = s
           rw [← hdef]
           have := find?_of_mem_nodup (d := d.hdef) hnd (List.mem_append_left _ (List.mem_append_left _
             (List.mem_map.2 ⟨d, hdm, rfl⟩)))
-          rwa [hdef] at this ⊢
+          rw [hdef] at this ⊢ <;> assumption
         have := main_reduces _ m (revRange d.arity) d.slots ((x :: rest).map some) (ws.map some) hb
           (defOk_of _ _ (hmem d hdm)) (by simp [revRange_length, hlen]) (by simp [fa2_length hw])
           (fun i f v hf hv => by
@@ -2817,12 +2864,12 @@ theorem lowerBookToHvm_sound {B : Book} {H : HvmBook} (hH : lowerBookToHvm B = s
                 List.getElem?_eq_getElem hj]
               rfl
             · rw [consAll_get]
-              rw [if_pos (by simp; omega)]
+              rw [ite_eq_left (by simp; omega)]
               simp only [List.length_cons, List.length_map]
               rw [show rest.length + 1 + 1 - 1 - i = (d.arity - 1 - i) + 1 by omega]
-              simp only [List.getD_cons_succ, List.getD_eq_getElem?_getD, List.getElem?_map]
+              simp only [List.getD_eq_getElem?_getD]
               rw [List.getElem?_eq_getElem (by simpa using hj)]
-              simp only [Option.map_some, Option.getD_some, Scalar.lit, List.getElem_map, List.getElem_cons_succ]
+              simp only [Option.getD_some, Scalar.lit, List.getElem_map, List.getElem_cons_succ]
               exact .refl _
           · split at hi
             · simp only [Option.some.injEq] at hi; subst hi; trivial
@@ -2845,4 +2892,4 @@ theorem lowerBookToHvm_sound {B : Book} {H : HvmBook} (hH : lowerBookToHvm B = s
         have h2 := halts_bequiv (BEquiv.symm (bequiv_dataPinSpecialize c)) h1
         simp only [List.cons_append, applyPath, PStep.apply, List.nil_append] at h2
         exact halts_bequiv (bequiv_dataPinSpecialize _) h2
-    · rw [if_neg hchk] at hEx; cases hEx
+    · rw [ite_eq_right hchk] at hEx; cases hEx
