@@ -6,7 +6,9 @@ Provides:
 1. **Derived `Rehydration` Liveness-Type as a Confinement Readout**:
    - `AttestedRoot`, `Interaction`, `InteractionLog`, `confined`, `classify`,
    - `WitnessReceipt`, `witnessChainOf`, `wellLinked`, `confined_chain_covers_log`,
-   - `replayedDeterministic_iff_confined`, `replayedDeterministic_replays`.
+   - `replayedDeterministic_iff_confined`, `replayedDeterministic_replays`,
+   - `extractChainCollisionOrEq` (first-divergence collision extractor), `extractChainCollisionOrEq_sound`,
+     `chain_tamper_evident`, `chain_tamper_evident_iff`.
 2. **`Sturdyref`, Per-Viewer `Membrane`, and Multi-Hop Reshare Attenuation (`Membrane.reshare`)**:
    - `MembraneViewer`, `membraneShows`, `projectMembrane`, `Membrane.reshare`,
    - `Sturdyref`, `rehydrateSturdyref`, `reshare_chain_attenuates`.
@@ -73,7 +75,7 @@ inductive Rehydration where
 deriving DecidableEq, Repr
 
 /-- Whether a `Rehydration` liveness-type is faithful by construction (`Live` or `ReplayedDeterministic`). -/
-@[expose] def Rehydration.isFaithful : Rehydration → Bool
+def Rehydration.isFaithful : Rehydration → Bool
   | .Live                    => true
   | .ReplayedDeterministic   => true
   | .ReconstructedApproximate => false
@@ -94,7 +96,11 @@ theorem classify_live (log : InteractionLog) :
 theorem replayedDeterministic_iff_confined (log : InteractionLog) :
     classify log false = .ReplayedDeterministic ↔ confined log = true := by
   unfold classify
-  cases hc : confined log <;> simp
+  cases hc : confined log <;> constructor
+  · intro h; contradiction
+  · intro h; contradiction
+  · intro _; rfl
+  · intro _; rfl
 
 /-- **DUAL KEYSTONE (`reconstructedApproximate_iff_unconfined`)**:
     For a non-`Live` context (`reachable = false`), `classify log false = .ReconstructedApproximate`
@@ -173,67 +179,141 @@ theorem genesis_is_last {H : WitnessReceipt → Nat} (HFresh : ∀ p, H p ≠ ge
     have hlink : r.prevHash = H p := hwl.1
     exact absurd (hgen ▸ hlink).symm (HFresh p)
 
-/-- **`chain_tamper_evident_or`** — two well-linked chains sharing the same head receipt are
-identical, or the receipt hash failed (`Bad`; at a real hash, its collision). This is the
-spine's form (`Obend.Receipt.chain_binds_or`): `Function.Injective H` holds of no fixed-width
-hash of an infinite type, so `chain_tamper_evident` below says nothing at `deployed`. -/
-theorem chain_tamper_evident_or {H : WitnessReceipt → Nat} {Bad : Prop}
-    (HBind : ∀ a b, H a = H b → a = b ∨ Bad) (HFresh : ∀ p, H p ≠ genesisSentinel) :
-    ∀ (c d : ReceiptChain), wellLinked H c → wellLinked H d →
-      c.head? = d.head? → c = d ∨ Bad := by
-  intro c
-  induction c with
-  | nil =>
-    intro d _ _ hhead
-    cases d with
-    | nil => exact .inl rfl
-    | cons => simp at hhead
-  | cons r ctail ih =>
-    intro d hc hd hhead
-    cases d with
-    | nil => simp at hhead
-    | cons s dtail =>
-      simp only [List.head?_cons, Option.some.injEq] at hhead
-      subst hhead
-      cases ctail with
-      | nil =>
-        have hgen : r.prevHash = genesisSentinel := hc
-        rw [genesis_is_last HFresh hd hgen]
-        exact .inl rfl
-      | cons cp crest =>
-        have hcp : r.prevHash = H cp := hc.1
-        cases dtail with
-        | nil =>
-          have hgen : r.prevHash = genesisSentinel := hd
-          exact absurd (hgen ▸ hcp).symm (HFresh cp)
-        | cons dp drest =>
-          have hdp : r.prevHash = H dp := hd.1
-          rcases HBind cp dp (hcp.symm.trans hdp) with hheads | bad
-          · have hctail : wellLinked H (cp :: crest) := hc.2
-            have hdtail : wellLinked H (dp :: drest) := hd.2
-            rcases ih (dp :: drest) hctail hdtail (by simp [hheads]) with htails | bad
-            · rw [htails]
-              exact .inl rfl
-            · exact .inr bad
-          · exact .inr bad
+/-- The first divergence of two receipt chains: beneath the shared receipts `common` they hold
+    distinct receipts `recA` and `recB`, and those two hash to the same link. -/
+structure ReceiptCollisionWitness (H : WitnessReceipt → Nat) (c d : ReceiptChain) where
+  common : ReceiptChain
+  recA : WitnessReceipt
+  recB : WitnessReceipt
+  restA : ReceiptChain
+  restB : ReceiptChain
+  splitA : c = common ++ recA :: restA
+  splitB : d = common ++ recB :: restB
+  distinct : recA ≠ recB
+  sameDigest : H recA = H recB
 
-/-- The outright reading: `chain_tamper_evident_or` at `Bad := False`. -/
-theorem chain_tamper_evident {H : WitnessReceipt → Nat}
-    (HInj : Function.Injective H) (HFresh : ∀ p, H p ≠ genesisSentinel) :
-    ∀ (c d : ReceiptChain), wellLinked H c → wellLinked H d →
-      c.head? = d.head? → c = d := by
-  intro c d hc hd hhead
-  rcases chain_tamper_evident_or (Bad := False) (fun a b e => .inl (HInj e)) HFresh c d hc hd hhead with
-    he | f
-  · exact he
-  · exact f.elim
+/-- `c` and `d` collide at their first divergence. The scope is the one pair of receipts the link
+    check compares there, at equal depth beneath a common prefix; a collision between receipts at
+    different depths, or inside one chain, does not satisfy it. -/
+def ReceiptCollisionOn (H : WitnessReceipt → Nat) (c d : ReceiptChain) : Prop :=
+  ∃ common a b restA restB,
+    c = common ++ a :: restA ∧ d = common ++ b :: restB ∧ a ≠ b ∧ H a = H b
+
+theorem ReceiptCollisionWitness.toCollisionOn {H : WitnessReceipt → Nat} {c d : ReceiptChain}
+    (w : ReceiptCollisionWitness H c d) : ReceiptCollisionOn H c d :=
+  ⟨w.common, w.recA, w.recB, w.restA, w.restB, w.splitA, w.splitB, w.distinct, w.sameDigest⟩
+
+/-- Colliding chains differ: beneath the common prefix they hold distinct receipts. -/
+theorem ReceiptCollisionOn.chains_ne {H : WitnessReceipt → Nat} {c d : ReceiptChain}
+    (h : ReceiptCollisionOn H c d) : c ≠ d := by
+  obtain ⟨common, a, b, restA, restB, rfl, rfl, hne, -⟩ := h
+  intro hcd
+  induction common with
+  | nil => exact hne (List.cons.inj hcd).1
+  | cons _ _ ih => exact ih (List.cons.inj hcd).2
+
+/-- The colliding receipts are members of the two chains. The converse fails: membership alone
+    says nothing about depth. -/
+theorem ReceiptCollisionOn.exists_mem {H : WitnessReceipt → Nat} {c d : ReceiptChain}
+    (h : ReceiptCollisionOn H c d) : ∃ a ∈ c, ∃ b ∈ d, a ≠ b ∧ H a = H b := by
+  obtain ⟨common, a, b, restA, restB, rfl, rfl, hne, heq⟩ := h
+  exact ⟨a, List.mem_append_right _ (List.mem_cons_self ..), b,
+    List.mem_append_right _ (List.mem_cons_self ..), hne, heq⟩
+
+/-- Follow equal heads backwards until genesis or the first pair of distinct predecessors. -/
+def extractChainCollisionOrEq {H : WitnessReceipt → Nat} (HFresh : ∀ p, H p ≠ genesisSentinel)
+    (c d : ReceiptChain) (hc : wellLinked H c) (hd : wellLinked H d)
+    (hhead : c.head? = d.head?) : PSum (PLift (c = d)) (ReceiptCollisionWitness H c d) :=
+  match c, d with
+  | [], [] => .inl ⟨rfl⟩
+  | [], _ :: _ | _ :: _, [] => nomatch hhead
+  | r :: ct, s :: dt => by
+    have hrs : r = s := Option.some.inj hhead
+    subst s
+    cases ct with
+    | nil =>
+      exact .inl ⟨congrArg (List.cons r) (genesis_is_last HFresh hd hc).symm⟩
+    | cons cp crest =>
+      cases dt with
+      | nil => exact False.elim (HFresh cp (hc.1.symm.trans hd))
+      | cons dp drest =>
+        if hcd : cp = dp then
+          match extractChainCollisionOrEq HFresh (cp :: crest) (dp :: drest)
+              hc.2 hd.2 (congrArg some hcd) with
+          | .inl e => exact .inl ⟨congrArg (List.cons r) e.down⟩
+          | .inr w => exact .inr ⟨r :: w.common, w.recA, w.recB, w.restA, w.restB,
+              congrArg (List.cons r) w.splitA, congrArg (List.cons r) w.splitB,
+              w.distinct, w.sameDigest⟩
+        else
+          exact .inr ⟨[r], cp, dp, crest, drest, rfl, rfl, hcd, hc.1.symm.trans hd.1⟩
+termination_by structural c
+
+/-- The extractor answers `inl` exactly when the chains are equal: an honest replay is never
+    charged with a collision, and diverging chains are never reported as agreeing. -/
+theorem extractChainCollisionOrEq_sound {H : WitnessReceipt → Nat}
+    (HFresh : ∀ p, H p ≠ genesisSentinel) (c d : ReceiptChain) (hc : wellLinked H c)
+    (hd : wellLinked H d) (hhead : c.head? = d.head?) :
+    c = d ↔ ∃ e, extractChainCollisionOrEq HFresh c d hc hd hhead = .inl e := by
+  constructor
+  · intro hcd
+    cases hx : extractChainCollisionOrEq HFresh c d hc hd hhead with
+    | inl e => exact ⟨e, rfl⟩
+    | inr w => exact absurd hcd w.toCollisionOn.chains_ne
+  · rintro ⟨e, -⟩
+    exact e.down
+
+/-- Well-linked chains with equal heads agree, or collide at their first divergence. -/
+theorem chain_tamper_evident {H : WitnessReceipt → Nat} (HFresh : ∀ p, H p ≠ genesisSentinel)
+    (c d : ReceiptChain) (hc : wellLinked H c) (hd : wellLinked H d) (hhead : c.head? = d.head?) :
+    c = d ∨ ReceiptCollisionOn H c d :=
+  match extractChainCollisionOrEq HFresh c d hc hd hhead with
+  | .inl e => .inl e.down
+  | .inr w => .inr w.toCollisionOn
+
+/-- The two outcomes of `chain_tamper_evident` exclude each other: well-linked chains with one
+    head are equal exactly when they do not collide at a first divergence. Unlike injectivity of
+    `H`, the right-hand side is a statement about these two chains and holds of honest replays. -/
+theorem chain_tamper_evident_iff {H : WitnessReceipt → Nat} (HFresh : ∀ p, H p ≠ genesisSentinel)
+    (c d : ReceiptChain) (hc : wellLinked H c) (hd : wellLinked H d) (hhead : c.head? = d.head?) :
+    c = d ↔ ¬ ReceiptCollisionOn H c d :=
+  ⟨fun hcd coll => coll.chains_ne hcd, (chain_tamper_evident HFresh c d hc hd hhead).resolve_right⟩
+
+/-- Both outcomes occur. Under a digest that reads only `newCommit` (and never yields the
+    sentinel), two well-linked chains with one head that differ in a predecessor's `oldCommit`
+    are unequal, and the extractor returns that predecessor pair beneath the shared head. -/
+example :
+    ([⟨6, 1, 2, 0⟩, ⟨0, 0, 5, 0⟩] : ReceiptChain) ≠ [⟨6, 1, 2, 0⟩, ⟨0, 9, 5, 0⟩] ∧
+    (match extractChainCollisionOrEq (H := fun r => r.newCommit + 1) (fun _ => Nat.succ_ne_zero _)
+        [⟨6, 1, 2, 0⟩, ⟨0, 0, 5, 0⟩] [⟨6, 1, 2, 0⟩, ⟨0, 9, 5, 0⟩] ⟨rfl, rfl⟩ ⟨rfl, rfl⟩ rfl with
+      | .inl _ => none
+      | .inr w => some (w.common, w.recA, w.recB)) =
+      some (([⟨6, 1, 2, 0⟩] : ReceiptChain), (⟨0, 0, 5, 0⟩ : WitnessReceipt),
+        (⟨0, 9, 5, 0⟩ : WitnessReceipt)) := by
+  decide
+
+/-- The equality outcome: the same digest on one chain replayed twice reports agreement. -/
+example :
+    (match extractChainCollisionOrEq (H := fun r => r.newCommit + 1) (fun _ => Nat.succ_ne_zero _)
+        [⟨6, 1, 2, 0⟩, ⟨0, 0, 5, 0⟩] [⟨6, 1, 2, 0⟩, ⟨0, 0, 5, 0⟩] ⟨rfl, rfl⟩ ⟨rfl, rfl⟩ rfl with
+      | .inl _ => true
+      | .inr _ => false) = true := by
+  decide
+
+/-- Translate an actual chain collision into the caller's hash-failure predicate. -/
+theorem chain_tamper_evident_or {H : WitnessReceipt → Nat} {Bad : Prop}
+    (HBind : ∀ a b, H a = H b → a = b ∨ Bad) (HFresh : ∀ p, H p ≠ genesisSentinel)
+    (c d : ReceiptChain) (hc : wellLinked H c) (hd : wellLinked H d) (hhead : c.head? = d.head?) :
+    c = d ∨ Bad := by
+  rcases chain_tamper_evident HFresh c d hc hd hhead with he | ⟨_, a, b, _, _, -, -, ne, eq⟩
+  · exact .inl he
+  · exact .inr ((HBind a b eq).resolve_left ne)
 
 /-- Pure constructor for a receipt linking onto `prevDigest`. -/
-@[expose] def mkReceipt (prevDigest oldC newC effH : Nat) : WitnessReceipt :=
+def mkReceipt (prevDigest oldC newC effH : Nat) : WitnessReceipt :=
   { prevHash := prevDigest, oldCommit := oldC, newCommit := newC, effectsHash := effH }
 
 /-- Fold a turn-log into a newest-first well-linked receipt chain. -/
-@[expose] def replayFold (H : WitnessReceipt → Nat) : ReceiptChain → List (Nat × Nat × Nat) → ReceiptChain
+def replayFold (H : WitnessReceipt → Nat) : ReceiptChain → List (Nat × Nat × Nat) → ReceiptChain
   | acc, [] => acc
   | acc, (oldC, newC, effH) :: rest =>
       let prevDigest := match acc with
@@ -253,11 +333,11 @@ theorem replayFold_wellLinked (H : WitnessReceipt → Nat) :
       | cons hd tl => exact wellLinked_append hacc rfl
 
 /-- The receipt chain induced by a list of witnessed roots. -/
-@[expose] def witnessChain (H : WitnessReceipt → Nat) (roots : List Nat) : ReceiptChain :=
+def witnessChain (H : WitnessReceipt → Nat) (roots : List Nat) : ReceiptChain :=
   replayFold H [] (roots.map (fun r => (r, r, 0)))
 
 /-- **`rootOf i`** — extracts the attested state root iff `i` is a structurally valid witness. -/
-@[expose] def rootOf : Interaction → Option Nat
+def rootOf : Interaction → Option Nat
   | .attested ar => if ar.holds then some ar.root else none
   | .ambient     => none
 
@@ -268,11 +348,11 @@ theorem rootOf_isSome_iff_witnessed (i : Interaction) :
   | attested ar => cases h : ar.holds <;> simp [rootOf, Interaction.isWitnessed, h]
 
 /-- **`witnessedRoots log`** — the roots a context's interaction log actually replays from. -/
-@[expose] def witnessedRoots (log : InteractionLog) : List Nat :=
+def witnessedRoots (log : InteractionLog) : List Nat :=
   log.filterMap rootOf
 
 /-- **`witnessChainOf H log`** — the receipt chain induced by the witnessed roots of `log`. -/
-@[expose] def witnessChainOf (H : WitnessReceipt → Nat) (log : InteractionLog) : ReceiptChain :=
+def witnessChainOf (H : WitnessReceipt → Nat) (log : InteractionLog) : ReceiptChain :=
   witnessChain H (witnessedRoots log)
 
 theorem witnessChain_wellLinked (H : WitnessReceipt → Nat) (roots : List Nat) :
@@ -286,18 +366,21 @@ theorem witnessChainOf_wellLinked (H : WitnessReceipt → Nat) (log : Interactio
 theorem replayFold_length (H : WitnessReceipt → Nat) :
     ∀ (acc : ReceiptChain) (turns : List (Nat × Nat × Nat)),
       (replayFold H acc turns).length = acc.length + turns.length
-  | acc, [] => by simp [replayFold]
+  | _, [] => rfl
   | acc, (oldC, newC, effH) :: rest => by
       unfold replayFold
       rw [replayFold_length H _ rest]
-      simp [List.length_cons]
-      omega
+      exact Nat.succ_add _ _
 
 theorem witnessChainOf_length (H : WitnessReceipt → Nat) (log : InteractionLog) :
     (witnessChainOf H log).length = (witnessedRoots log).length := by
   unfold witnessChainOf witnessChain
   rw [replayFold_length]
-  simp
+  change 0 + _ = _
+  rw [Nat.zero_add]
+  induction witnessedRoots log with
+  | nil => rfl
+  | cons _ _ ih => exact congrArg Nat.succ ih
 
 theorem witnessedRoots_length_le (log : InteractionLog) :
     (witnessedRoots log).length ≤ log.length := by
@@ -315,17 +398,18 @@ theorem confined_witnessedRoots_length (log : InteractionLog) (hconf : confined 
   induction log with
   | nil => rfl
   | cons i rest ih =>
-    unfold confined at hconf
-    rw [List.all_cons, Bool.and_eq_true] at hconf
     cases i with
-    | ambient => exact absurd hconf.1 (by decide)
+    | ambient => contradiction
     | attested ar =>
-      have har : ar.holds = true := hconf.1
-      have hrest : confined rest = true := hconf.2
-      have hroot : rootOf (Interaction.attested ar) = some ar.root := by
-        simp only [rootOf, har, ite_true]
-      unfold witnessedRoots at ih ⊢
-      rw [List.filterMap_cons, hroot, List.length_cons, List.length_cons, ih hrest]
+      change (ar.holds && confined rest) = true at hconf
+      cases har : ar.holds with
+      | false => rw [har] at hconf; contradiction
+      | true =>
+        rw [har, Bool.true_and] at hconf
+        have hroot : rootOf (.attested ar) = some ar.root := ite_eq_left har
+        unfold witnessedRoots
+        rw [List.filterMap_cons, hroot]
+        exact congrArg Nat.succ (ih hconf)
 
 /-- **THE COVERAGE PAYOFF (`confined_chain_covers_log`)**:
     When `confined log = true`, the replayed receipt chain has one receipt per logged interaction. -/
@@ -395,22 +479,30 @@ theorem ambient_chain_drops_the_reach (H : WitnessReceipt → Nat) (pre post : I
       < (pre ++ Interaction.ambient :: post).length :=
   unconfined_chain_drops_interactions H _ (confined_append_ambient pre post)
 
-/-- **THE REPLAY PAYOFF (`replayedDeterministic_replays`)**:
-    A `ReplayedDeterministic` context replays to a chain that is both tamper-evident
-    (`witnessChainOf H log = other`) and complete (`(witnessChainOf H log).length = log.length`),
-    consuming `hrepl`. -/
-theorem replayedDeterministic_replays
-    {H : WitnessReceipt → Nat} (HInj : Function.Injective H) (HFresh : ∀ p, H p ≠ genesisSentinel)
-    (log : InteractionLog)
-    (hrepl : classify log false = .ReplayedDeterministic)
-    (other : ReceiptChain)
-    (hother : wellLinked H other)
+/-- Compare the replay with another well-linked chain, retaining any colliding receipts. -/
+def replayedDeterministic_replays_extract
+    {H : WitnessReceipt → Nat} (HFresh : ∀ p, H p ≠ genesisSentinel)
+    (log : InteractionLog) (hrepl : classify log false = .ReplayedDeterministic)
+    (other : ReceiptChain) (hother : wellLinked H other)
     (hhead : (witnessChainOf H log).head? = other.head?) :
-    witnessChainOf H log = other ∧ (witnessChainOf H log).length = log.length :=
-  have hconf : confined log = true := (replayedDeterministic_iff_confined log).mp hrepl
-  ⟨chain_tamper_evident HInj HFresh (witnessChainOf H log) other
-      (witnessChainOf_wellLinked H log) hother hhead,
-   confined_chain_covers_log H log hconf⟩
+    PSum (PLift (witnessChainOf H log = other ∧ (witnessChainOf H log).length = log.length))
+      (ReceiptCollisionWitness H (witnessChainOf H log) other) :=
+  match extractChainCollisionOrEq HFresh _ other (witnessChainOf_wellLinked H log) hother hhead with
+  | .inl e => .inl ⟨e.down, confined_chain_covers_log H log ((replayedDeterministic_iff_confined log).mp hrepl)⟩
+  | .inr w => .inr w
+
+/-- Deterministic replay recovers the same chain with one receipt per interaction, or
+    identifies a digest collision between receipts of the replay and the supplied chain. -/
+theorem replayedDeterministic_replays
+    {H : WitnessReceipt → Nat} (HFresh : ∀ p, H p ≠ genesisSentinel)
+    (log : InteractionLog) (hrepl : classify log false = .ReplayedDeterministic)
+    (other : ReceiptChain) (hother : wellLinked H other)
+    (hhead : (witnessChainOf H log).head? = other.head?) :
+    (witnessChainOf H log = other ∧ (witnessChainOf H log).length = log.length) ∨
+      ReceiptCollisionOn H (witnessChainOf H log) other :=
+  match replayedDeterministic_replays_extract HFresh log hrepl other hother hhead with
+  | .inl e => .inl e.down
+  | .inr w => .inr w.toCollisionOn
 
 /-! ## Pillar 2 — `Sturdyref`, Per-Viewer `Membrane`, and Chained Multi-Hop Reshare Attenuation (`Membrane.reshare`) -/
 
@@ -504,7 +596,7 @@ theorem membrane_monotone_both {v₁ v₂ : MembraneViewer}
   exact ⟨fireGate_trans h12 hshows.1, hperm aff.name hshows.2⟩
 
 /-- Decidable check that `child` permits are a subset of `parent` permits on `activeNames`. -/
-@[expose] def permitsSubsetOn (activeNames : List String) (child parent : String → Bool) : Bool :=
+def permitsSubsetOn (activeNames : List String) (child parent : String → Bool) : Bool :=
   activeNames.all (fun n => !child n || parent n)
 
 theorem permitsSubsetOn_iff (activeNames : List String) (child parent : String → Bool) :
@@ -708,7 +800,7 @@ structure TransitionGate where
   link : Data → Data → Bool
 
 /-- **`transitionOK tg old new`** — true iff `pre old`, `post new`, and `link old new` all hold. -/
-@[expose] def transitionOK (tg : TransitionGate) (old new : Data) : Bool :=
+def transitionOK (tg : TransitionGate) (old new : Data) : Bool :=
   tg.pre old && tg.post new && tg.link old new
 
 /-- **`transitionOK_iff`** — decomposes `transitionOK` into its three boolean conjuncts. -/
@@ -728,7 +820,7 @@ structure ReactiveAffordance (φ : Type) where
   closeHeight : Nat
 
 /-- **`inWindow ra height`** — true iff `ra.openHeight ≤ height` and `height ≤ ra.closeHeight`. -/
-@[expose] def inWindow (ra : ReactiveAffordance φ) (height : Nat) : Bool :=
+def inWindow (ra : ReactiveAffordance φ) (height : Nat) : Bool :=
   decide (ra.openHeight ≤ height) && decide (height ≤ ra.closeHeight)
 
 /-- **`inWindow_iff`** — bridges `inWindow` to the arithmetic inequalities `openHeight ≤ height ≤ closeHeight`. -/
@@ -739,7 +831,7 @@ theorem inWindow_iff (ra : ReactiveAffordance φ) (height : Nat) :
 
 /-- **`reactiveOK ra held height old new`** — the 3-dimensional reactive gate:
     capability gate AND relational transition gate AND temporal height window. -/
-@[expose] def reactiveOK (ra : ReactiveAffordance φ) (held : List Auth) (height : Nat) (old new : Data) : Bool :=
+def reactiveOK (ra : ReactiveAffordance φ) (held : List Auth) (height : Nat) (old new : Data) : Bool :=
   fireGate ra.aff.required held && transitionOK ra.gate old new && inWindow ra height
 
 theorem reactiveOK_iff (ra : ReactiveAffordance φ) (held : List Auth) (height : Nat) (old new : Data) :
@@ -753,7 +845,7 @@ theorem reactiveOK_iff (ra : ReactiveAffordance φ) (held : List Auth) (height :
 
 /-- **`fireReactive ra held height old new fc`** — dispatches `ra.aff` via `Obend.Vault.Affordance.fire`
     iff `reactiveOK ra held height old new` holds. -/
-@[expose] def fireReactive (ra : ReactiveAffordance φ) (held : List Auth) (height : Nat) (old new : Data)
+def fireReactive (ra : ReactiveAffordance φ) (held : List Auth) (height : Nat) (old new : Data)
     (fc : FireCtx φ) : Option (AffordanceIntent φ) :=
   if reactiveOK ra held height old new then
     fire ra.aff held fc
@@ -897,7 +989,6 @@ theorem fireReactive_binds_attested_root (ra : ReactiveAffordance φ) (held : Li
     · cases h; rfl
     · contradiction
   · contradiction
-
 
 end Obend.Vault.Rehydration
 

@@ -43,7 +43,8 @@ registered format `judge-succession@1` follow.
 -/
 public import Obend.Judge.Class
 public import Lean.Data.Json
-@[expose] public section
+import Obend.Tactic.Tooth
+public section
 
 namespace Obend.Judge.Genealogy
 
@@ -108,7 +109,7 @@ structure Gate (H : Habitat) where
   basis : List TrustBase
 
 /-- The checker's method for floor `φ` on format `f`, if it has one. -/
-def Gate.method (G : Gate H) (f : String) (φ : H.Floor) : Option Method :=
+@[expose] def Gate.method (G : Gate H) (f : String) (φ : H.Floor) : Option Method :=
   (G.methods.find? fun m => m.1 == f && decide (m.2.1 = φ)).map (·.2.2)
 
 /-- What a run under each trust base returns, given the decision it was asked to run. -/
@@ -120,31 +121,35 @@ def Exec.Holds (X : Exec) (t : TrustBase) : Prop := ∀ b, X.runs t b = true →
 
 /-- The execution in which every run is the decision. The command line's judge runs as compiled code
 and reports under this model; its theorems are stated for every `Exec`. -/
-def Exec.faithful : Exec := ⟨fun _ b => b⟩
+@[expose] def Exec.faithful : Exec := ⟨fun _ b => b⟩
 
 theorem Exec.faithful_holds (t : TrustBase) : Exec.faithful.Holds t := fun _ h => h
 
-/-- Whether the checker discharges floor `φ` for action `a` in state `s`. A pair it has no method
-for is not checked. -/
-def discharge (X : Exec) (G : Gate H) (s : H.State) (a : H.Act) (φ : H.Floor) : Bool :=
-  match G.method (H.format a) φ with
-  | some (.eval t) => X.runs t (decide (H.holds φ (H.step a s)))
-  | some .lemma => H.proved (H.format a) φ
-  | none => true
+/-- **The gate**: an action is admitted when its format is one of the judge's and every floor
+the judge exports is discharged. -/
+@[expose] def admits (X : Exec) (G : Gate H) (s : H.State) (a : H.Act) : Bool :=
+  G.formats.contains (H.format a) && G.floors.all (floorCheck X G s a)
+where
+  floorCheck (X : Exec) (G : Gate H) (s : H.State) (a : H.Act) (φ : H.Floor) : Bool :=
+    match G.method (H.format a) φ with
+    | some (.eval t) => X.runs t (decide (H.holds φ (H.step a s)))
+    | some .lemma => H.proved (H.format a) φ
+    | none => true
 
-/-- **The gate**: an action is admitted when its format is one of the judge's and every floor the
-judge exports is discharged. Its inputs are the judge, the state and the action. -/
-def admits (X : Exec) (G : Gate H) (s : H.State) (a : H.Act) : Bool :=
-  G.formats.contains (H.format a) && G.floors.all (discharge X G s a)
+/-- The single-floor decision used by `admits`. A missing method leaves the floor unchecked. -/
+def discharge (X : Exec) (G : Gate H) (s : H.State) (a : H.Act) (φ : H.Floor) : Bool :=
+  admits.floorCheck X G s a φ
 
 /-- A judge is sound under `X` when every action it admits preserves every floor it exports. -/
-def GateSound (X : Exec) (G : Gate H) : Prop :=
+abbrev GateSound (X : Exec) (G : Gate H) : Prop :=
   ∀ s a, admits X G s a = true → ∀ φ ∈ G.floors, H.holds φ s → H.holds φ (H.step a s)
 
 /-! ## Refusals and the checks -/
 
 /-- Why a judge, or a proposed successor, is refused. -/
 inductive Refusal (H : Habitat) where
+  /-- a floor every successor must keep already fails in the current state -/
+  | currentFloorFails (φ : H.Floor)
   /-- the successor does not export a floor the current judge exports -/
   | dropsFloor (φ : H.Floor)
   /-- a floor of the successor does not hold in the state the succession is proposed in -/
@@ -168,42 +173,58 @@ inductive Refusal (H : Habitat) where
   | labelNotNeeded (t : TrustBase)
 
 /-- Refuse with `r` unless `b`. -/
-def need (b : Bool) (r : Refusal H) : Except (Refusal H) Unit := if b then .ok () else .error r
+@[expose] def need (b : Bool) (r : Refusal H) : Except (Refusal H) Unit := if b then .ok () else .error r
 
 /-- The first refusal of `k` along `l`. -/
-def allE {α : Type} : List α → (α → Except (Refusal H) Unit) → Except (Refusal H) Unit
-  | [], _ => .ok ()
-  | x :: xs, k => match k x with
-    | .ok () => allE xs k
-    | .error e => .error e
+abbrev allE {α : Type} (xs : List α) (k : α → Except (Refusal H) Unit) :
+    Except (Refusal H) Unit := xs.forM k
 
-/-- `a`, then `b`. -/
-def both (a b : Except (Refusal H) Unit) : Except (Refusal H) Unit :=
-  match a with
-  | .ok () => b
+/-- Check `a` and `b`. A necessary precondition can fail early with a more informative
+diagnostic. Its proof preserves the two-obligation acceptance rule `both_ok`. -/
+@[expose, macro_inline] def both (a b : Except (Refusal H) Unit)
+    (firstCheck : Except (Refusal H) Unit := .ok ())
+    (_necessary : a = .ok () → b = .ok () → firstCheck = .ok () := by intros; rfl) :
+    Except (Refusal H) Unit :=
+  match (generalizing := false) firstCheck with
   | .error e => .error e
+  | .ok () => match (generalizing := false) a with
+    | .ok () => b
+    | .error e => .error e
 
 theorem need_ok {b : Bool} {r : Refusal H} : need b r = .ok () ↔ b = true := by
   cases b <;> simp [need]
 
+@[simp] theorem allE_nil {α : Type} (k : α → Except (Refusal H) Unit) :
+    allE [] k = .ok () := by rfl
+
+@[simp] theorem allE_cons {α : Type} (x : α) (xs : List α) (k : α → Except (Refusal H) Unit) :
+    allE (x :: xs) k = (match k x with | .ok () => allE xs k | .error e => .error e) := by
+  change (k x).bind (fun _ => allE xs k) = _
+  cases k x <;> rfl
+
 theorem allE_ok {α : Type} {l : List α} {k : α → Except (Refusal H) Unit} :
     allE l k = .ok () ↔ ∀ x ∈ l, k x = .ok () := by
   induction l with
-  | nil => simp [allE]
+  | nil => simp
   | cons x xs ih =>
-    simp only [allE, List.mem_cons, forall_eq_or_imp]
+    simp only [allE_cons, List.mem_cons, forall_eq_or_imp]
     cases hk : k x with
     | ok u => cases u; simp [ih]
     | error e => simp
 
-theorem both_ok {a b : Except (Refusal H) Unit} : both a b = .ok () ↔ a = .ok () ∧ b = .ok () := by
-  cases a with
-  | ok u => cases u; simp [both]
-  | error e => simp [both]
+theorem both_ok {a b firstCheck : Except (Refusal H) Unit}
+    {h : a = .ok () → b = .ok () → firstCheck = .ok ()} :
+    both a b firstCheck h = .ok () ↔ a = .ok () ∧ b = .ok () := by
+  constructor
+  · cases firstCheck <;> cases a <;> simp [both]
+  · rintro ⟨rfl, rfl⟩
+    have hf := h rfl rfl
+    subst firstCheck
+    rfl
 
 /-- One floor on one format: the checker's method is a theorem the habitat has, or an evaluation
 under a declared trust base on a format other than `revert`'s. -/
-def methodCheck (G : Gate H) (f : String) (φ : H.Floor) : Except (Refusal H) Unit :=
+@[expose] def methodCheck (G : Gate H) (f : String) (φ : H.Floor) : Except (Refusal H) Unit :=
   match G.method f φ with
   | none => .error (.unchecked f φ)
   | some .lemma => need (H.proved f φ) (.unproved f φ)
@@ -213,23 +234,31 @@ def methodCheck (G : Gate H) (f : String) (φ : H.Floor) : Except (Refusal H) Un
 
 /-- **A well-formed judge**: a corrigibility floor among its floors, `revert` among its formats, and
 every floor discharged on every format. -/
-def wellFormed (G : Gate H) : Except (Refusal H) Unit :=
+@[expose] def wellFormed (G : Gate H) : Except (Refusal H) Unit :=
   both (need (G.floors.any H.bedrock) .noBedrock) <|
   both (need (G.formats.contains (H.format H.revert)) .refusesRevert) <|
   allE G.formats fun f => allE G.floors fun φ => methodCheck G f φ
 
 /-- **Non-regression**: the successor exports every floor the current judge exports. -/
-def nonRegression (G G' : Gate H) : Except (Refusal H) Unit :=
+@[expose] def nonRegression (G G' : Gate H) : Except (Refusal H) Unit :=
   allE G.floors fun φ => need (G'.floors.contains φ) (.dropsFloor φ)
 
 /-- **A succession, judged by the current judge** `G` in state `s`: the successor `G'` with the
 labels `L` (the principles it rests on that `G` does not hold). -/
-def succeed (G : Gate H) (s : H.State) (G' : Gate H) (L : List TrustBase) : Except (Refusal H) Unit :=
-  both (nonRegression G G') <|
-  both (wellFormed G') <|
-  both (allE G'.floors fun φ => need (decide (H.holds φ s)) (.floorFails φ)) <|
-  both (allE G'.basis fun t => need (G.basis.contains t || L.contains t) (.stronger t)) <|
-  allE L fun t => need (G'.basis.contains t && !G.basis.contains t) (.labelNotNeeded t)
+@[expose] def succeed (G : Gate H) (s : H.State) (G' : Gate H) (L : List TrustBase) : Except (Refusal H) Unit :=
+  both (nonRegression G G')
+    (both (wellFormed G') <|
+     both (allE G'.floors fun φ => need (decide (H.holds φ s)) (.floorFails φ)) <|
+     both (allE G'.basis fun t => need (G.basis.contains t || L.contains t) (.stronger t)) <|
+     allE L fun t => need (G'.basis.contains t && !G.basis.contains t) (.labelNotNeeded t))
+    (firstCheck := allE G.floors fun φ => need (decide (H.holds φ s)) (.currentFloorFails φ))
+    (_necessary := by
+      intro hn hrest
+      have hnow := (both_ok.1 (both_ok.1 hrest).2).1
+      apply allE_ok.2
+      intro φ hφ
+      have hkept := List.contains_iff_mem.1 (need_ok.1 (allE_ok.1 hn φ hφ))
+      exact need_ok.2 (need_ok.1 (allE_ok.1 hnow φ hkept)))
 
 /-! ## A well-formed judge is sound, and admits `revert` -/
 
@@ -264,7 +293,7 @@ theorem wellFormed_sound (X : Exec) (G : Gate H) (hw : wellFormed G = .ok ())
   have hd := hd φ hφ
   rcases methodCheck_ok (hm _ (List.contains_iff_mem.1 hf) φ hφ) with ⟨_, hp⟩ | ⟨t, he, ht, _⟩
   · exact H.proved_sound hp a s rfl hs
-  · simp only [discharge, he] at hd
+  · simp only [admits.floorCheck, he] at hd
     exact of_decide_eq_true (hb t ht _ hd)
 
 /-- **Every well-formed judge admits `revert`, in every state and under every execution.** -/
@@ -274,7 +303,7 @@ theorem revert_admitted (X : Exec) (G : Gate H) (hw : wellFormed G = .ok ()) (s 
   simp only [admits, Bool.and_eq_true, List.all_eq_true]
   refine ⟨List.contains_iff_mem.2 hr, fun φ hφ => ?_⟩
   rcases methodCheck_ok (hm _ hr φ hφ) with ⟨he, hp⟩ | ⟨t, -, -, hne⟩
-  · simp [discharge, he, hp]
+  · simp [admits.floorCheck, he, hp]
   · exact absurd rfl hne
 
 /-! ## The succession checker's meaning -/
@@ -364,7 +393,7 @@ def labels (steps : List (Succession H)) : List TrustBase := steps.flatMap (·.l
 
 /-- **The Löb cost**: the principles the stronger steps were labelled with hold. Every theorem that
 uses a labelled step carries this hypothesis by name, and the census lists those theorems. -/
-def LobCost (X : Exec) (labels : List TrustBase) : Prop := ∀ t ∈ labels, X.Holds t
+abbrev LobCost (X : Exec) (labels : List TrustBase) : Prop := ∀ t ∈ labels, X.Holds t
 
 theorem chain_invariant (X : Exec) :
     ∀ (steps : List (Succession H)) (G : Gate H), wellFormed G = .ok () → (∀ t ∈ G.basis, X.Holds t) →
@@ -549,10 +578,79 @@ theorem run_floors {Actor : Type} (X : Exec) (actor : Nat → Sys H → Proposal
 
 /-! ## The succession checker as an obend judge -/
 
+/-- Only a failed inherited floor rules out every successor. -/
+def successionRefutes : Refusal H → Bool
+  | .currentFloorFails _ => true
+  | _ => false
+
+private theorem allE_error {α : Type} {xs : List α} {k : α → Except (Refusal H) Unit}
+    {e : Refusal H} (h : allE xs k = .error e) : ∃ x ∈ xs, k x = .error e := by
+  induction xs with
+  | nil => cases h
+  | cons x xs ih =>
+    cases hx : k x with
+    | error r =>
+      simp [hx] at h
+      exact ⟨x, List.mem_cons_self, h ▸ hx⟩
+    | ok u =>
+      obtain ⟨y, hy, he⟩ := ih (by simpa [hx] using h)
+      exact ⟨y, List.mem_cons_of_mem _ hy, he⟩
+
+private theorem both_error {a b : Except (Refusal H) Unit} {e : Refusal H}
+    (h : both a b = .error e) : a = .error e ∨ b = .error e := by
+  cases a <;> simp_all [both]
+
+private theorem need_error {b : Bool} {r e : Refusal H} (h : need b r = .error e) :
+    b = false ∧ r = e := by cases b <;> simp_all [need]
+
+/-- The reported floor belongs to the predecessor and fails there, independently of the proposal. -/
+theorem succeed_currentFloorFails {G G' : Gate H} {s : H.State} {L : List TrustBase} {φ : H.Floor}
+    (h : succeed G s G' L = .error (.currentFloorFails φ)) : φ ∈ G.floors ∧ ¬ H.holds φ s := by
+  unfold succeed at h
+  have first_or_rest {a b firstCheck : Except (Refusal H) Unit}
+      {hn : a = .ok () → b = .ok () → firstCheck = .ok ()} {e : Refusal H}
+      (he : both a b firstCheck hn = .error e) :
+      firstCheck = .error e ∨ both a b = .error e := by
+    cases firstCheck with
+    | ok => exact Or.inr he
+    | error => exact Or.inl he
+  obtain hg | h := first_or_rest h
+  · obtain ⟨ψ, hψ, he⟩ := allE_error hg
+    obtain ⟨hfalse, heq⟩ := need_error he
+    cases heq
+    exact ⟨hψ, of_decide_eq_false hfalse⟩
+  · obtain h | h := both_error h
+    · obtain ⟨_, _, he⟩ := allE_error h
+      cases (need_error he).2
+    obtain h | h := both_error h
+    · unfold wellFormed at h
+      obtain h | h := both_error h
+      · cases (need_error h).2
+      obtain h | h := both_error h
+      · cases (need_error h).2
+      obtain ⟨_, _, hf⟩ := allE_error h
+      obtain ⟨_, _, hm⟩ := allE_error hf
+      unfold methodCheck at hm
+      split at hm
+      · cases hm
+      · cases (need_error hm).2
+      · split at hm
+        · cases hm
+        · cases (need_error hm).2
+    obtain h | h := both_error h
+    · obtain ⟨_, _, he⟩ := allE_error h
+      cases (need_error he).2
+    obtain h | h := both_error h <;>
+      obtain ⟨_, _, he⟩ := allE_error h <;> cases (need_error he).2
+
+#tooth succeed_currentFloorFails by mutation succeed := fun G _ _ _ =>
+  match G.floors with
+  | [] => .ok ()
+  | φ :: _ => .error (.currentFloorFails φ)
+
 /-- **The succession judge**: the object is the current judge and the state, the certificate the
-successor and its labels; acceptance means `Succeeds`. It never refutes (a refused successor says
-nothing of the others), and it is complete where the current judge is well formed and its floors
-hold: the judge succeeds itself. -/
+successor and its labels; acceptance means `Succeeds`. A failed current floor refutes all successors by non-regression.
+A well-formed judge whose floors hold succeeds itself. -/
 instance successionJudge (H : Habitat) : Judge (Gate H × H.State) (Gate H × List TrustBase) where
   Clause := Refusal H
   Meaning o c := Succeeds o.1 o.2 c.1 c.2
@@ -564,8 +662,18 @@ instance successionJudge (H : Habitat) : Judge (Gate H × H.State) (Gate H × Li
     split
     · next hs => intro _; exact succession_sound_meaning hs
     · intro h; cases h
-  refutes _ := false
-  refuted _ h := by cases h
+  refutes := successionRefutes
+  refuted {_ o c r _} h hr c' hs := by
+    cases r <;> try contradiction
+    rename_i φ
+    revert h
+    split
+    · intro h; cases h
+    · next e he =>
+      intro h
+      cases h
+      obtain ⟨hmem, hfail⟩ := succeed_currentFloorFails he
+      exact hfail (hs.holdsNow φ (hs.keeps φ hmem))
   Fragment o := wellFormed o.1 = .ok () ∧ ∀ φ ∈ o.1.floors, H.holds φ o.2
   complete {o} hf _ := ⟨(o.1, []), 0, by simp [succeed_self hf.1 hf.2]⟩
   mono _ _ := rfl
@@ -576,10 +684,10 @@ instance successionJudge (H : Habitat) : Judge (Gate H × H.State) (Gate H × Li
 abbrev Store := List (String × Nat)
 
 /-- A cell's value (0 when absent). -/
-def Store.get (st : Store) (c : String) : Nat := (st.lookup c).getD 0
+abbrev Store.get (st : Store) (c : String) : Nat := (st.lookup c).getD 0
 
 /-- Set a cell, keeping the store sorted. -/
-def Store.set : Store → String → Nat → Store
+@[expose] def Store.set : Store → String → Nat → Store
   | [], c, v => [(c, v)]
   | (d, w) :: rest, c, v =>
     if c = d then (c, v) :: rest
@@ -604,18 +712,6 @@ inductive RecAct where
   | forget
   deriving DecidableEq, Repr
 
-def RecAct.format : RecAct → String
-  | .write .. => "write@1"
-  | .revert => "revert@1"
-  | .forget => "forget@1"
-
-def recStep : RecAct → Rec → Rec
-  | .write c v, r => { r with store := r.store.set c v, past := r.store :: r.past }
-  | .revert, r => match r.past with
-    | [] => r
-    | p :: ps => { r with store := p, past := ps }
-  | .forget, r => { r with past := [] }
-
 /-- The oldest judged store: where reverting all the way leads. -/
 def Rec.bottom (r : Rec) : Store := (r.store :: r.past).getLast (List.cons_ne_nil _ _)
 
@@ -625,10 +721,10 @@ inductive RecFloor where
   | home (h : Nat)
   /-- every judged store keeps cell `c` at most `max` -/
   | cap (c : String) (max : Nat)
-  deriving DecidableEq, Repr
+  deriving @[expose] DecidableEq, Repr
 
-def RecFloor.holds : RecFloor → Rec → Prop
-  | .home h, r => r.bottom = r.home ∧ r.past.length ≤ h
+@[expose] def RecFloor.holds : RecFloor → Rec → Prop
+  | .home h, r => (r.store :: r.past).getLast (List.cons_ne_nil _ _) = r.home ∧ r.past.length ≤ h
   | .cap c m, r => ∀ st ∈ r.store :: r.past, st.get c ≤ m
 
 /-- **The corrigibility floor is decidable**, and so is every floor of the record. -/
@@ -636,60 +732,71 @@ instance floor_decidable : ∀ (φ : RecFloor) (r : Rec), Decidable (φ.holds r)
   | .home _, _ => inferInstanceAs (Decidable (_ ∧ _))
   | .cap _ _, _ => inferInstanceAs (Decidable (∀ st ∈ _, _))
 
-/-- The record's theorems: `revert` preserves every floor; `forget` preserves every cap. -/
-def recProved : String → RecFloor → Bool
-  | "revert@1", _ => true
-  | "forget@1", .cap _ _ => true
-  | _, _ => false
-
-theorem revert_keeps (φ : RecFloor) (r : Rec) (h : φ.holds r) : φ.holds (recStep .revert r) := by
-  rcases r with ⟨st, past, home⟩
-  cases past with
-  | nil => exact h
-  | cons p ps =>
-    cases φ with
-    | home k =>
-      obtain ⟨hb, hl⟩ := h
-      refine ⟨?_, by simp [recStep] at hl ⊢; omega⟩
-      simpa [recStep, Rec.bottom, List.getLast_cons] using hb
-    | cap c m =>
-      intro x hx
-      exact h x (List.mem_cons_of_mem _ hx)
-
-theorem forget_keeps_cap (c : String) (m : Nat) (r : Rec) (h : (RecFloor.cap c m).holds r) :
-    (RecFloor.cap c m).holds (recStep .forget r) := by
-  intro x hx
-  simp only [recStep, List.mem_singleton] at hx
-  subst hx
-  exact h _ List.mem_cons_self
-
-theorem recProved_sound {f : String} {φ : RecFloor} (hp : recProved f φ = true) :
-    ∀ a r, RecAct.format a = f → φ.holds r → φ.holds (recStep a r) := by
-  intro a r hf hr
-  subst hf
-  cases a with
-  | write c v => simp [recProved, RecAct.format] at hp
-  | revert => exact revert_keeps φ r hr
-  | forget =>
-    cases φ with
-    | home _ => simp [recProved, RecAct.format] at hp
-    | cap c m => exact forget_keeps_cap c m r hr
-
 /-- **The record as a habitat.** -/
-@[reducible] def record : Habitat where
+abbrev record : Habitat where
   State := Rec
   Act := RecAct
   Floor := RecFloor
   holds := RecFloor.holds
-  step := recStep
-  format := RecAct.format
-  proved := recProved
-  proved_sound := recProved_sound
+  step
+    | .write c v, r => { r with store := r.store.set c v, past := r.store :: r.past }
+    | .revert, r => match r.past with
+      | [] => r
+      | p :: ps => { r with store := p, past := ps }
+    | .forget, r => { r with past := [] }
+  format
+    | .write .. => "write@1"
+    | .revert => "revert@1"
+    | .forget => "forget@1"
+  proved
+    | "revert@1", _ => true
+    | "forget@1", .cap _ _ => true
+    | _, _ => false
+  proved_sound := by
+    intro f φ hp a r hf hr
+    subst f
+    cases a with
+    | write => cases hp
+    | revert =>
+      rcases r with ⟨st, past, home⟩
+      cases past with
+      | nil => exact hr
+      | cons p ps =>
+        cases φ with
+        | home k =>
+          obtain ⟨hb, hl⟩ := hr
+          exact ⟨by simpa [RecFloor.holds, List.getLast_cons] using hb, by simp at hl ⊢; omega⟩
+        | cap c m => exact fun x hx => hr x (List.mem_cons_of_mem _ hx)
+    | forget =>
+      cases φ with
+      | home => cases hp
+      | cap c m =>
+        intro st hst
+        simp only [List.mem_singleton] at hst
+        exact hst ▸ hr _ List.mem_cons_self
   revert := .revert
   revert_proved φ := by cases φ <;> rfl
   bedrock
     | .home _ => true
     | .cap _ _ => false
+
+def recStep : RecAct → Rec → Rec := record.step
+
+def RecAct.format : RecAct → String := record.format
+
+/-- Revert preserves every floor, and forgetting the past preserves every cap. -/
+def recProved : String → RecFloor → Bool := record.proved
+
+theorem recProved_sound {f : String} {φ : RecFloor} (hp : recProved f φ = true) :
+    ∀ a r, RecAct.format a = f → φ.holds r → φ.holds (recStep a r) :=
+  record.proved_sound hp
+
+theorem revert_keeps (φ : RecFloor) (r : Rec) (h : φ.holds r) : φ.holds (recStep .revert r) :=
+  recProved_sound (record.revert_proved φ) .revert r rfl h
+
+theorem forget_keeps_cap (c : String) (m : Nat) (r : Rec) (h : (RecFloor.cap c m).holds r) :
+    (RecFloor.cap c m).holds (recStep .forget r) :=
+  recProved_sound (show recProved "forget@1" (.cap c m) = true from rfl) .forget r rfl h
 
 theorem ok_of_toBool {ε : Type} {e : Except ε Unit} (h : e.toBool = true) : e = .ok () := by
   cases e with
@@ -740,6 +847,22 @@ def lobSuccessor : Gate record :=
 
 /-- Three writes behind the home store. -/
 def lobState : Rec := ⟨[("a", 0)], [[("a", 0)], [("a", 0)], [("a", 0)]], [("a", 0)]⟩
+
+example : Admitted lobGenesis [⟨lobState, lobSuccessor, [.compiled]⟩] := ⟨rfl, trivial⟩
+example : LobCost Exec.faithful [.compiled] := fun t _ => Exec.faithful_holds t
+example : recProved "forget@1" (.cap "a" 100) = true := rfl
+example : recProved "forget@1" (.home 3) = false := rfl
+example : (successionJudge record).Fragment (lobGenesis, lobState) :=
+  ⟨rfl, by decide +kernel⟩
+
+-- A fourth write exceeds the home bound. Even keeping every floor and paying the label fails.
+example : (successionJudge record).check 0 (lobGenesis, recStep (.write "a" 200) lobState)
+    (lobSuccessor, [.compiled]) = .refused (.currentFloorFails (.home 3)) [] := rfl
+example (c : Gate record × List TrustBase) :
+    ¬ Succeeds lobGenesis (recStep (.write "a" 200) lobState) c.1 c.2 :=
+  (successionJudge record).refuted
+    (show (successionJudge record).check 0 (lobGenesis, recStep (.write "a" 200) lobState)
+      (lobSuccessor, [.compiled]) = .refused (.currentFloorFails (.home 3)) [] from rfl) rfl c
 
 /-- **The Löb cost is load-bearing.** Under any execution whose kernel runs are right but whose
 compiled runs can say yes to a false decision, a kernel-only genesis admits, labelled `compiled`, a
@@ -873,6 +996,7 @@ end Wire
 
 /-- A refusal, said with the judges' names. -/
 def Refusal.text (G G' : Gate record) : Refusal record → String
+  | .currentFloorFails φ => s!"the inherited floor `{φ}` of {G.name} fails now, ruling out every successor"
   | .dropsFloor φ => s!"{G'.name} drops the floor `{φ}`, which {G.name} exports"
   | .floorFails φ => s!"the floor `{φ}` of {G'.name} does not hold now"
   | .noBedrock => s!"{G'.name} exports no corrigibility floor (`home N`)"
@@ -894,10 +1018,16 @@ def plantedSuccessor : Gate record :=
   { name := "g1", formats := ["write@1", "revert@1"], floors := [.home 3],
     methods := [("write@1", .home 3, .eval .kernel), ("revert@1", .home 3, .lemma)], basis := [.kernel] }
 
+-- A cap can fail while the home floor still holds. Checking the predecessor first also gives
+-- the same global reason when the proposed successor drops that cap.
+example : (successionJudge record).check 0
+    (lobGenesis, ⟨[("a", 200)], [lobState.home], lobState.home⟩) (plantedSuccessor, []) =
+    .refused (.currentFloorFails (.cap "a" 100)) [] := rfl
+
 -- fixture kept (2026-11-05): consumed by `successionFormat.bad_refused`
 theorem planted_refused :
     (successionJudge record).check 0 (lobGenesis, lobState) (plantedSuccessor, []) =
-      .refused (.dropsFloor (.cap "a" 100)) [] := rfl
+      .refused (.dropsFloor (.cap "a" 100)) [] := by rfl
 
 /-- **The registered format `judge-succession@1`.** The object is the current judge and the state,
 the certificate the successor and its labels; the command line runs the checker compiled. -/

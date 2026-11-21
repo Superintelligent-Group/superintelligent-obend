@@ -22,15 +22,27 @@ Mathlib-free port of `breadstuffs/metatheory/Market/NettingVault.lean` and
      balances across all accounts and assets as settling `q.grossObligations`, while conserving
      `globalAssetSum` and compiling to balanced `Register.Movement` lines (`toMovements_balanced`).
 4. **Total `Judge` & Real `Lean.Json` Wire Format (`netting@1`)**:
-   - `nettingJudge` with non-tautological declarative `Meaning := NettingSpec` and `nettingFormat`
-     with structural `Lean.Json` codecs (`encodeNettingQuery`/`decodeNettingQuery`,
+   - `nettingJudge` with declarative `Meaning := NettingSpec` and `nettingFormat` with structural
+     `Lean.Json` codecs (`encodeNettingQuery`/`decodeNettingQuery`,
      `encodeNettingCert`/`decodeNettingCert`).
+   - A query is nettable exactly when its gross batch is well formed (`GrossWellFormed`: positive
+     amounts, distinct endpoints; `nettingSpec_solvable_iff`). The judge checks the batch first
+     (`checkWellFormedGross`), and a `malformedGrossObligation` refusal is a refutation: no
+     certificate nets that query (`checkNetting_refuted`), and the index it carries is the first
+     offending obligation (`checkWellFormedGross_error`). The refusals about the certificate
+     (`zeroAmountTransfer`, `selfLoopTransfer`, `grossExposureIncreased`, `positionMismatch`) say
+     nothing about other certificates and are not refuting.
+
+Encapsulation: the bodies exported are the specification's vocabulary (`Obligation.delta`,
+`grossExposure`, `netPosition`, `GrossWellFormed`, `NettingSpec`), the refuting-clause table
+`nettingRefutes` and the registered `nettingFormat`. The checkers, the settlement and the codecs
+are sealed behind their theorems.
 -/
 public import Lean.Data.Json
 public import Obend.Judge.Class
 public import Obend.Ledger.Book
 
-@[expose] public section
+public section
 namespace Obend.Judge
 
 open Lean (Json ToJson toJson)
@@ -53,7 +65,7 @@ def Obligation.toPosting (ob : Obligation) : ResourcePosting :=
   ⟨ob.payer, ob.payee, ob.asset, ob.amount⟩
 
 /-- Signed impact of a single obligation on `(acc, ast)` (`+amount` if `payee`, `-amount` if `payer`). -/
-def Obligation.delta (ob : Obligation) (acc : AccountId) (ast : AssetId) : Int :=
+@[expose] def Obligation.delta (ob : Obligation) (acc : AccountId) (ast : AssetId) : Int :=
   if ast = ob.asset then
     (if acc = ob.payee then (ob.amount : Int) else 0) -
       (if acc = ob.payer then (ob.amount : Int) else 0)
@@ -61,16 +73,14 @@ def Obligation.delta (ob : Obligation) (acc : AccountId) (ast : AssetId) : Int :
     0
 
 /-- Gross liquidity exposure across a list of obligations: `∑ ob.amount`. -/
-def grossExposure (obs : List Obligation) : Nat :=
+@[expose] def grossExposure (obs : List Obligation) : Nat :=
   (obs.map Obligation.amount).sum
-
-@[simp] theorem grossExposure_nil : grossExposure [] = 0 := rfl
 
 @[simp] theorem grossExposure_cons (ob : Obligation) (rest : List Obligation) :
     grossExposure (ob :: rest) = ob.amount + grossExposure rest := rfl
 
 /-- Net signed position of `(acc, ast)` induced by `obs` (incoming minus outgoing). -/
-def netPosition (obs : List Obligation) (acc : AccountId) (ast : AssetId) : Int :=
+@[expose] def netPosition (obs : List Obligation) (acc : AccountId) (ast : AssetId) : Int :=
   (obs.map (fun ob => ob.delta acc ast)).sum
 
 @[simp] theorem netPosition_nil (acc : AccountId) (ast : AssetId) :
@@ -200,17 +210,36 @@ inductive NettingRefusal where
   | selfLoopTransfer (index : Nat) (account : AccountId)
   | grossExposureIncreased (gross net : Nat)
   | positionMismatch (account : AccountId) (asset : AssetId) (expected actual : Int)
+  /-- the query's gross obligation at `index` moves nothing or pays its own payer -/
+  | malformedGrossObligation (index : Nat)
   deriving DecidableEq, Repr
+
+/-- A gross batch is well formed when every obligation moves a strictly positive amount between
+distinct endpoints. -/
+@[expose] def GrossWellFormed (obs : List Obligation) : Prop :=
+  ∀ g ∈ obs, 0 < g.amount ∧ g.payer ≠ g.payee
 
 /-- Declarative semantic specification of valid multilateral obligation netting:
     1. Every account and asset preserves its exact net position (`netPosition`),
     2. Total settlement liquidity does not exceed gross exposure (`grossExposure`),
-    3. Every net transfer moves a strictly positive amount between distinct endpoints. -/
-def NettingSpec (q : NettingQuery) (c : NettingCert) : Prop :=
+    3. Every net transfer moves a strictly positive amount between distinct endpoints,
+    4. The gross batch being netted is itself well formed (`GrossWellFormed`). -/
+@[expose] def NettingSpec (q : NettingQuery) (c : NettingCert) : Prop :=
   (∀ (acc : AccountId) (ast : AssetId),
     netPosition c.netTransfers acc ast = netPosition q.grossObligations acc ast) ∧
   grossExposure c.netTransfers ≤ grossExposure q.grossObligations ∧
-  (∀ t ∈ c.netTransfers, 0 < t.amount ∧ t.payer ≠ t.payee)
+  (∀ t ∈ c.netTransfers, 0 < t.amount ∧ t.payer ≠ t.payee) ∧
+  GrossWellFormed q.grossObligations
+
+/-- **A query is nettable exactly when its gross batch is well formed**: a well-formed batch nets
+to itself, and any netting carries the batch's well-formedness. -/
+theorem nettingSpec_solvable_iff (q : NettingQuery) :
+    (∃ c, NettingSpec q c) ↔ GrossWellFormed q.grossObligations :=
+  ⟨fun ⟨_, h⟩ => h.2.2.2, fun hq => ⟨⟨q.grossObligations⟩, fun _ _ => rfl, Nat.le_refl _, hq, hq⟩⟩
+
+theorem grossWellFormed_solvable {q : NettingQuery} (hq : GrossWellFormed q.grossObligations) :
+    ∃ c, NettingSpec q c :=
+  (nettingSpec_solvable_iff q).mpr hq
 
 /-- **Conservation Theorem (`net_conserves`)**:
     Any valid netting `(q, c)` satisfying `NettingSpec q c` preserves per-account net positions
@@ -237,12 +266,98 @@ theorem net_reduces_gross_exposure {q : NettingQuery} {c : NettingCert} (h : Net
     grossExposure c.netTransfers ≤ grossExposure q.grossObligations :=
   h.2.1
 
-/--Symmetric obligations `[⟨a, b, ast, v⟩, ⟨b, a, ast, v⟩]` satisfy `NettingSpec` with empty `netTransfers := []`! -/
-theorem symmetric_nettingSpec_zero (a b : AccountId) (ast : AssetId) (v : Nat) :
+/-- Symmetric obligations `[⟨a, b, ast, v⟩, ⟨b, a, ast, v⟩]` of a positive amount between distinct
+accounts satisfy `NettingSpec` with empty `netTransfers := []`. -/
+theorem symmetric_nettingSpec_zero (a b : AccountId) (ast : AssetId) (v : Nat)
+    (hab : a ≠ b) (hv : 0 < v) :
     NettingSpec ⟨[⟨a, b, ast, v⟩, ⟨b, a, ast, v⟩]⟩ ⟨[]⟩ := by
   have ⟨hpos, _⟩ := symmetric_obligations_net_zero a b ast v
-  refine ⟨fun acc xAst => (hpos acc xAst).symm, Nat.zero_le _, ?_⟩
-  intro t ht; cases ht
+  refine ⟨fun acc xAst => (hpos acc xAst).symm, Nat.zero_le _, ?_, ?_⟩
+  · intro t ht; cases ht
+  · intro g hg
+    rcases List.mem_cons.mp hg with rfl | hg
+    · exact ⟨hv, hab⟩
+    · rcases List.mem_cons.mp hg with rfl | hg
+      · exact ⟨hv, fun h => hab h.symm⟩
+      · cases hg
+
+/-- Check that every gross obligation in `obs` has `0 < amount` and `payer ≠ payee`, naming the
+index of the first that does not. -/
+def checkWellFormedGross : Nat → List Obligation → Except NettingRefusal Unit
+  | _, [] => .ok ()
+  | idx, g :: rest =>
+    if g.amount == 0 then
+      .error (.malformedGrossObligation idx)
+    else if g.payer == g.payee then
+      .error (.malformedGrossObligation idx)
+    else
+      checkWellFormedGross (idx + 1) rest
+
+theorem checkWellFormedGross_sound : ∀ (idx : Nat) (obs : List Obligation),
+    checkWellFormedGross idx obs = .ok () → GrossWellFormed obs
+  | _, [], _ => by intro _ hm; cases hm
+  | idx, g :: rest, h => by
+    unfold checkWellFormedGross at h
+    by_cases hz : g.amount == 0
+    · simp [hz] at h
+    · simp only [hz, Bool.false_eq_true, ↓reduceIte] at h
+      by_cases hsl : g.payer == g.payee
+      · simp [hsl] at h
+      · simp only [hsl, Bool.false_eq_true, ↓reduceIte] at h
+        have hpos : 0 < g.amount := Nat.pos_of_ne_zero (fun h0 => hz (beq_iff_eq.mpr h0))
+        have hne : g.payer ≠ g.payee := fun heq => hsl (beq_iff_eq.mpr heq)
+        have ih := checkWellFormedGross_sound (idx + 1) rest h
+        intro x hx
+        rcases List.mem_cons.mp hx with rfl | htail
+        · exact ⟨hpos, hne⟩
+        · exact ih x htail
+
+theorem checkWellFormedGross_complete : ∀ (idx : Nat) (obs : List Obligation),
+    GrossWellFormed obs → checkWellFormedGross idx obs = .ok ()
+  | _, [], _ => rfl
+  | idx, g :: rest, h => by
+    have ⟨h0, hne⟩ := h g (List.Mem.head rest)
+    have hz : (g.amount == 0) = false := beq_eq_false_iff_ne.mpr (Nat.ne_of_gt h0)
+    have hsl : (g.payer == g.payee) = false := beq_eq_false_iff_ne.mpr hne
+    unfold checkWellFormedGross
+    rw [hz, hsl]
+    simp only [Bool.false_eq_true, ↓reduceIte]
+    exact checkWellFormedGross_complete (idx + 1) rest (fun x hx => h x (List.Mem.tail g hx))
+
+/-- **The refusal names the offending obligation**: an error of `checkWellFormedGross` started at
+`idx` is `malformedGrossObligation (idx + i)` for an `i` at which the batch holds an obligation
+with a zero amount or a self-payment, and every preceding obligation is well formed. -/
+theorem checkWellFormedGross_error : ∀ (idx : Nat) (obs : List Obligation) {e : NettingRefusal},
+    checkWellFormedGross idx obs = .error e →
+    ∃ i g, e = .malformedGrossObligation (idx + i) ∧ obs[i]? = some g ∧
+      (g.amount = 0 ∨ g.payer = g.payee) ∧ GrossWellFormed (obs.take i)
+  | _, [], _, h => by simp [checkWellFormedGross] at h
+  | idx, g :: rest, e, h => by
+    unfold checkWellFormedGross at h
+    by_cases hz : g.amount == 0
+    · rw [ite_eq_left hz] at h
+      cases h
+      exact ⟨0, g, rfl, rfl, .inl (beq_iff_eq.mp hz), by simp [GrossWellFormed]⟩
+    · rw [ite_eq_right hz] at h
+      by_cases hsl : g.payer == g.payee
+      · rw [ite_eq_left hsl] at h
+        cases h
+        exact ⟨0, g, rfl, rfl, .inr (beq_iff_eq.mp hsl), by simp [GrossWellFormed]⟩
+      · rw [ite_eq_right hsl] at h
+        obtain ⟨i, g', he, hi, hbad, hprefix⟩ := checkWellFormedGross_error (idx + 1) rest h
+        refine ⟨i + 1, g', ?_, ?_, hbad, ?_⟩
+        · rw [he, show idx + 1 + i = idx + (i + 1) by omega]
+        · rw [List.getElem?_cons_succ]; exact hi
+        · intro x hx
+          rcases List.mem_cons.mp hx with rfl | hx
+          · exact ⟨Nat.pos_of_ne_zero (fun heq => hz (beq_iff_eq.mpr heq)),
+              fun heq => hsl (beq_iff_eq.mpr heq)⟩
+          · exact hprefix x hx
+
+/-- The clauses whose refusal refutes the query: only a malformed gross batch. -/
+@[expose] def nettingRefutes : NettingRefusal → Bool
+  | .malformedGrossObligation _ => true
+  | _ => false
 
 /-- Check that every transfer in `ts` has `0 < amount` and `payer ≠ payee`. -/
 def checkWellFormedTransfers : Nat → List Obligation → Except NettingRefusal Unit
@@ -274,6 +389,20 @@ theorem checkWellFormedTransfers_sound : ∀ (idx : Nat) (ts : List Obligation),
         rcases List.mem_cons.mp hx with rfl | htail
         · exact ⟨hpos, hne⟩
         · exact ih x htail
+
+theorem checkWellFormedTransfers_not_refuting :
+    ∀ (idx : Nat) (ts : List Obligation) {e : NettingRefusal},
+      checkWellFormedTransfers idx ts = .error e → nettingRefutes e = false
+  | _, [], _, h => by simp [checkWellFormedTransfers] at h
+  | idx, t :: rest, e, h => by
+    unfold checkWellFormedTransfers at h
+    by_cases hz : t.amount == 0
+    · rw [ite_eq_left hz] at h; cases h; rfl
+    · rw [ite_eq_right hz] at h
+      by_cases hsl : t.payer == t.payee
+      · rw [ite_eq_left hsl] at h; cases h; rfl
+      · rw [ite_eq_right hsl] at h
+        exact checkWellFormedTransfers_not_refuting (idx + 1) rest h
 
 /-- Check net-position equality across every `(acc, ast)` in `accs × asts`. -/
 def checkPositionsGrid (gross net : List Obligation) :
@@ -308,8 +437,22 @@ theorem checkPositionsGrid_sound (gross net : List Obligation) :
           cases hsome
       · exact ih x htail ast hast
 
-/-- Executable verifier for `(q, c)`. -/
-def checkNetting (q : NettingQuery) (c : NettingCert) : Judge.Verdict NettingRefusal :=
+theorem checkPositionsGrid_not_refuting (gross net : List Obligation) :
+    ∀ (accs : List AccountId) (asts : List AssetId) {e : NettingRefusal},
+      checkPositionsGrid gross net accs asts = .error e → nettingRefutes e = false
+  | [], _, _, h => by simp [checkPositionsGrid] at h
+  | acc :: restAccs, asts, e, h => by
+    unfold checkPositionsGrid at h
+    cases hfind : asts.find? (fun ast => decide (netPosition net acc ast ≠ netPosition gross acc ast)) with
+    | some badAst => rw [hfind] at h; cases h; rfl
+    | none =>
+      rw [hfind] at h
+      exact checkPositionsGrid_not_refuting gross net restAccs asts h
+
+/-- The certificate's side of the check: its transfers are well formed, they do not raise the
+gross exposure, and they leave every touched `(account, asset)` position where the gross batch
+puts it. -/
+def checkNetTransfers (q : NettingQuery) (c : NettingCert) : Judge.Verdict NettingRefusal :=
   match checkWellFormedTransfers 0 c.netTransfers with
   | .error e => .refused e []
   | .ok () =>
@@ -324,9 +467,13 @@ def checkNetting (q : NettingQuery) (c : NettingCert) : Judge.Verdict NettingRef
       | .error e => .refused e []
       | .ok ()   => .ok
 
-theorem checkNetting_sound {q : NettingQuery} {c : NettingCert}
-    (h : checkNetting q c = .ok) : NettingSpec q c := by
-  unfold checkNetting at h
+theorem checkNetTransfers_sound {q : NettingQuery} {c : NettingCert}
+    (h : checkNetTransfers q c = .ok) :
+    (∀ (acc : AccountId) (ast : AssetId),
+      netPosition c.netTransfers acc ast = netPosition q.grossObligations acc ast) ∧
+    grossExposure c.netTransfers ≤ grossExposure q.grossObligations ∧
+    (∀ t ∈ c.netTransfers, 0 < t.amount ∧ t.payer ≠ t.payee) := by
+  unfold checkNetTransfers at h
   cases hwf : checkWellFormedTransfers 0 c.netTransfers with
   | error e => rw [hwf] at h; cases h
   | ok _ =>
@@ -373,9 +520,12 @@ theorem checkNetting_sound {q : NettingQuery} {c : NettingCert}
             (fun ob hob => hnotin ob (List.mem_append_left _ hob))
           rw [h1, h2]
 
-theorem checkNetting_complete {q : NettingQuery} {c : NettingCert}
-    (hspec : NettingSpec q c) : checkNetting q c = .ok := by
-  obtain ⟨hpos, hle, hwf⟩ := hspec
+theorem checkNetTransfers_complete {q : NettingQuery} {c : NettingCert}
+    (hpos : ∀ (acc : AccountId) (ast : AssetId),
+      netPosition c.netTransfers acc ast = netPosition q.grossObligations acc ast)
+    (hle : grossExposure c.netTransfers ≤ grossExposure q.grossObligations)
+    (hwf : ∀ t ∈ c.netTransfers, 0 < t.amount ∧ t.payer ≠ t.payee) :
+    checkNetTransfers q c = .ok := by
   have hwf_eq : ∀ (idx : Nat) (ts : List Obligation),
       (∀ t ∈ ts, 0 < t.amount ∧ t.payer ≠ t.payee) →
       checkWellFormedTransfers idx ts = .ok () := by
@@ -404,7 +554,7 @@ theorem checkNetting_complete {q : NettingQuery} {c : NettingCert}
         simp [hpos acc ast]
       rw [hnone]
       exact ih
-  unfold checkNetting
+  unfold checkNetTransfers
   rw [hwf_eq 0 c.netTransfers hwf]
   dsimp only
   have hexp : decide (grossExposure q.grossObligations < grossExposure c.netTransfers) = false :=
@@ -413,17 +563,113 @@ theorem checkNetting_complete {q : NettingQuery} {c : NettingCert}
   simp only [Bool.false_eq_true, ↓reduceIte]
   rw [hgrid_eq]
 
-/-- Registered `Judge` instance for multilateral obligation netting. -/
+/-- No refusal of the certificate's side is a refuting clause. -/
+theorem checkNetTransfers_not_refuting {q : NettingQuery} {c : NettingCert} {k : NettingRefusal}
+    {p : List Nat} (h : checkNetTransfers q c = .refused k p) : nettingRefutes k = false := by
+  unfold checkNetTransfers at h
+  cases hwf : checkWellFormedTransfers 0 c.netTransfers with
+  | error e =>
+    rw [hwf] at h
+    cases h
+    exact checkWellFormedTransfers_not_refuting 0 _ hwf
+  | ok u =>
+    cases u
+    rw [hwf] at h
+    dsimp only at h
+    by_cases hexp : decide (grossExposure q.grossObligations < grossExposure c.netTransfers) = true
+    · rw [ite_eq_left hexp] at h
+      cases h
+      rfl
+    · simp only [hexp, Bool.false_eq_true, ↓reduceIte] at h
+      cases hgrid : checkPositionsGrid q.grossObligations c.netTransfers
+          (touchedAccounts q.grossObligations c.netTransfers)
+          (touchedAssets q.grossObligations c.netTransfers) with
+      | error e =>
+        rw [hgrid] at h
+        cases h
+        exact checkPositionsGrid_not_refuting _ _ _ _ hgrid
+      | ok u => cases u; rw [hgrid] at h; cases h
+
+/-- Executable verifier for `(q, c)`: the query's gross batch first, then the certificate. -/
+def checkNetting (q : NettingQuery) (c : NettingCert) : Judge.Verdict NettingRefusal :=
+  match checkWellFormedGross 0 q.grossObligations with
+  | .error e => .refused e []
+  | .ok () => checkNetTransfers q c
+
+theorem checkNetting_sound {q : NettingQuery} {c : NettingCert}
+    (h : checkNetting q c = .ok) : NettingSpec q c := by
+  unfold checkNetting at h
+  cases hg : checkWellFormedGross 0 q.grossObligations with
+  | error e => rw [hg] at h; cases h
+  | ok u =>
+    cases u
+    rw [hg] at h
+    have hcert : checkNetTransfers q c = .ok := h
+    obtain ⟨hpos, hle, hwf⟩ := checkNetTransfers_sound hcert
+    exact ⟨hpos, hle, hwf, checkWellFormedGross_sound 0 _ hg⟩
+
+theorem checkNetting_complete {q : NettingQuery} {c : NettingCert}
+    (hspec : NettingSpec q c) : checkNetting q c = .ok := by
+  obtain ⟨hpos, hle, hwf, hgross⟩ := hspec
+  unfold checkNetting
+  rw [checkWellFormedGross_complete 0 _ hgross]
+  exact checkNetTransfers_complete hpos hle hwf
+
+/-- **A refuting refusal refutes the query**: when `checkNetting` refuses by a clause
+`nettingRefutes` marks, no certificate nets the query. A netting would make the gross batch well
+formed, so the gross check would pass and the refusal would come from the certificate's side,
+which emits no refuting clause. -/
+theorem checkNetting_refuted {q : NettingQuery} {c : NettingCert} {k : NettingRefusal}
+    {p : List Nat} (h : checkNetting q c = .refused k p) (hk : nettingRefutes k = true) :
+    ∀ c', ¬ NettingSpec q c' := by
+  intro c' hspec
+  unfold checkNetting at h
+  rw [checkWellFormedGross_complete 0 _ hspec.2.2.2] at h
+  have hcert : checkNetTransfers q c = .refused k p := h
+  rw [checkNetTransfers_not_refuting hcert] at hk
+  cases hk
+
+/-- Registered `Judge` instance for multilateral obligation netting. Its fragment is the
+well-formed gross batches, which are exactly the nettable queries (`nettingSpec_solvable_iff`);
+off the fragment the judge refuses by a refuting clause. -/
 instance nettingJudge : Judge NettingQuery NettingCert where
   Clause := NettingRefusal
   Meaning := NettingSpec
   check := fun _ q c => checkNetting q c
   sound := checkNetting_sound
-  refutes := fun _ => false
-  refuted := fun _ h => by cases h
-  Fragment := fun _ => True
-  complete := fun _ ⟨c, hc⟩ => ⟨c, 0, checkNetting_complete hc⟩
+  refutes := nettingRefutes
+  refuted := checkNetting_refuted
+  Fragment := fun q => GrossWellFormed q.grossObligations
+  complete := by
+    intro q hq _
+    obtain ⟨c, hc⟩ := grossWellFormed_solvable hq
+    exact ⟨c, 0, checkNetting_complete hc⟩
   mono := fun _ _ => rfl
+
+/-- Off the fragment the judge refutes, whatever the certificate. -/
+theorem checkNetting_refutes_malformed {q : NettingQuery} (c : NettingCert)
+    (hq : ¬ GrossWellFormed q.grossObligations) :
+    ∃ i, checkNetting q c = .refused (.malformedGrossObligation i) [] := by
+  unfold checkNetting
+  cases hg : checkWellFormedGross 0 q.grossObligations with
+  | ok u => exact absurd (checkWellFormedGross_sound 0 _ (by cases u; exact hg)) hq
+  | error e =>
+    obtain ⟨i, _, he, _⟩ := checkWellFormedGross_error 0 _ hg
+    exact ⟨0 + i, by subst he; rfl⟩
+
+/-- A refusal is marked exactly when the gross batch admits no valid netting certificate. -/
+theorem nettingRefutes_iff_unsolvable {q : NettingQuery} {c : NettingCert}
+    {k : NettingRefusal} {p : List Nat} (h : checkNetting q c = .refused k p) :
+    nettingRefutes k = true ↔ ∀ c', ¬ NettingSpec q c' := by
+  refine ⟨checkNetting_refuted h, fun hn => ?_⟩
+  have hbad : ¬ GrossWellFormed q.grossObligations := by
+    intro hg
+    obtain ⟨c', hc'⟩ := grossWellFormed_solvable hg
+    exact hn c' hc'
+  obtain ⟨i, hi⟩ := checkNetting_refutes_malformed c hbad
+  rw [hi] at h
+  cases h
+  rfl
 
 /-! ## 4. Settlement Realization on `Book` and `Register.Movement` -/
 
@@ -523,12 +769,59 @@ def decodeNettingCert (s : String) : Except String NettingCert := do
 def plantedBadNetting : NettingQuery × NettingCert :=
   (⟨[⟨1, 2, 0, 100⟩]⟩, ⟨[⟨1, 2, 0, 50⟩]⟩)
 
+-- fixture kept (2026-11-05): consumed by Format.bad_refused
 theorem plantedBadNetting_refused :
     ∃ k p, nettingJudge.check 0 plantedBadNetting.1 plantedBadNetting.2 = .refused k p :=
   ⟨.positionMismatch 1 0 (-100) (-50), [], rfl⟩
 
+/-! ### Witnesses: each checker accepts something and refuses something by the clause it names -/
+
+/-- A triangle `1 → 2 → 3 → 1` of 40 is in the fragment and nets to nothing. -/
+example : nettingJudge.Fragment ⟨[⟨1, 2, 0, 40⟩, ⟨2, 3, 0, 40⟩, ⟨3, 1, 0, 40⟩]⟩ := by
+  show GrossWellFormed [⟨1, 2, 0, 40⟩, ⟨2, 3, 0, 40⟩, ⟨3, 1, 0, 40⟩]
+  exact checkWellFormedGross_sound 0 _ rfl
+
+example : nettingJudge.check 0 ⟨[⟨1, 2, 0, 40⟩, ⟨2, 3, 0, 40⟩, ⟨3, 1, 0, 40⟩]⟩ ⟨[]⟩ = .ok := rfl
+
+/-- A self-payment at index 1 of the gross batch is refused there, by a refuting clause, so no
+certificate nets that query. -/
+example :
+    nettingJudge.check 0 ⟨[⟨1, 2, 0, 100⟩, ⟨3, 3, 0, 5⟩]⟩ ⟨[⟨1, 2, 0, 100⟩]⟩ =
+      .refused (.malformedGrossObligation 1) [] ∧
+    nettingJudge.refutes (.malformedGrossObligation 1) = true :=
+  ⟨rfl, rfl⟩
+
+example : ∀ c, ¬ NettingSpec ⟨[⟨1, 2, 0, 100⟩, ⟨3, 3, 0, 5⟩]⟩ c :=
+  checkNetting_refuted (q := ⟨[⟨1, 2, 0, 100⟩, ⟨3, 3, 0, 5⟩]⟩) (c := ⟨[]⟩)
+    (k := .malformedGrossObligation 1) (p := []) rfl rfl
+
+/-- A bad certificate for a valid batch can be replaced by a correct one. -/
+example :
+    nettingJudge.check 0 plantedBadNetting.1 plantedBadNetting.2 =
+      .refused (.positionMismatch 1 0 (-100) (-50)) [] ∧
+    nettingJudge.refutes (.positionMismatch 1 0 (-100) (-50)) = false ∧
+    nettingJudge.check 0 plantedBadNetting.1 ⟨plantedBadNetting.1.grossObligations⟩ = .ok :=
+  ⟨rfl, rfl, rfl⟩
+
+/-- `checkWellFormedTransfers` accepts positive transfers between distinct accounts. -/
+example : checkWellFormedTransfers 0 [⟨1, 2, 0, 60⟩, ⟨2, 3, 0, 5⟩] = .ok () := rfl
+
+/-- It names the index of a zero-amount transfer. -/
+example :
+    checkWellFormedTransfers 0 [⟨1, 2, 0, 60⟩, ⟨2, 3, 0, 0⟩] = .error (.zeroAmountTransfer 1) := rfl
+
+/-- `checkPositionsGrid` accepts `1 → 2` of 60 as the netting of `1 → 2` of 100 against `2 → 1` of
+40. -/
+example :
+    checkPositionsGrid [⟨1, 2, 0, 100⟩, ⟨2, 1, 0, 40⟩] [⟨1, 2, 0, 60⟩] [1, 2] [0] = .ok () := rfl
+
+/-- It names account 1's mismatch when the transfer is 50. -/
+example :
+    checkPositionsGrid [⟨1, 2, 0, 100⟩, ⟨2, 1, 0, 40⟩] [⟨1, 2, 0, 50⟩] [1, 2] [0] =
+      .error (.positionMismatch 1 0 (-60) (-50)) := rfl
+
 /-- Registered `Judge.Format` for multilateral obligation netting (`netting@1`). -/
-def nettingFormat : Judge.Format where
+@[expose] def nettingFormat : Judge.Format where
   name := "netting"
   version := "1"
   Obj := NettingQuery
