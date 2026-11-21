@@ -2129,6 +2129,20 @@ module = "Obend.Hardware.SystolicDataflowThroughput"
 theorem = "multiplexed_systolic_time_march_sound"
 description = "Time-multiplexed single symmetry-reduced `EulerGas3D`/`IdealMhd8Wave` systolic RTL cell matches the unrolled d-cell array in `d * N^d + 1` cycles (`multiplexed_single_cell_matches_unrolled_array`) and across multi-step Lie-split `stepQ32Axis` time-marching (`multiplexed_systolic_time_march_sound`)."
 
+[[apex]]
+id = "crypto-wire-domain-tags-cshake-binding"
+subsystem = "Crypto"
+module = "Obend.Crypto.WireDomainTags"
+theorem = "WireCall.first32_binds"
+description = "Canonical `obend-crypto-exec` 24-domain cSHAKE-256 wire registry (`WireCall.input_injective`, constructive `PSum` `WireCall.first32_binds`, 61-byte `canopyBindLimbs_bind`, and Fenzi `ChallengeStream.squeeze_domains`)."
+
+[[apex]]
+id = "polis-sandbox-custody-wire-domain-binding"
+subsystem = "Polis"
+module = "Obend.Polis.SandboxDomainTags"
+theorem = "custodyExecutionDigest_binds"
+description = "Byte-exact `obend-sandbox` Grain & cloud custody wire framing (`custodyExecutionDigest_binds`, `custodyTurnRequestDigest_binds`, `kernelVerifierId_binds`, and `r4KernelProofMac_binds` with unbounded-width collision counterexample)."
+
 # ==============================================================================
 # Planned Wave 5+ Vertical Spine Apex Theorems (`master_interface_and_systems_architecture.md`)
 # ==============================================================================

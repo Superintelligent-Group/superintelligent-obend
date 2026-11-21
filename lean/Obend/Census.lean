@@ -159,6 +159,7 @@ import Obend.Crypto.ThresholdFheAndLatticeVrf
 import Obend.Crypto.ThresholdHashMpc
 import Obend.Crypto.ThresholdMpcUcGames
 import Obend.Crypto.Transcript
+import Obend.Crypto.WireDomainTags
 import Obend.Core.AliasExposure
 import Obend.Core.Assumptions
 import Obend.Core.Bidirectional
@@ -499,6 +500,7 @@ import Obend.Polis.HouyhnhnmTurn
 import Obend.Polis.JointCoReceipt
 import Obend.Polis.PqThresholdCustody
 import Obend.Polis.PrivatePredicate
+import Obend.Polis.SandboxDomainTags
 import Obend.Polis.VerifiableCredentials
 import Obend.Polis.ZkBiscuit
 import Obend.Reasons

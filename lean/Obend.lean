@@ -310,6 +310,7 @@ public import Obend.Crypto.ThresholdFheAndLatticeVrf
 public import Obend.Crypto.ThresholdMpcUcGames
 public import Obend.Crypto.PqHashSignatures
 public import Obend.Crypto.ThresholdHashMpc
+public import Obend.Crypto.WireDomainTags
 public import Obend.Polis.EvidencedOcap
 public import Obend.Polis.ZkBiscuit
 public import Obend.Polis.BlumRam
@@ -329,6 +330,7 @@ public import Obend.Polis.JointCoReceipt
 public import Obend.Polis.GrainCustodyHost
 public import Obend.Polis.HermesEnv
 public import Obend.Polis.DecentralizedRulesMesh
+public import Obend.Polis.SandboxDomainTags
 public import Obend.Core.GradedCoreWeldDefs
 public import Obend.Core.GradedCoreWeld
 public import Obend.Core.GradedSessionMetatheory
