@@ -219,6 +219,15 @@ theorem within_sound {x : CanonicalRat} {I : Interval} {tol : CanonicalRat}
   simp only [Interval.within, Bool.and_eq_true, decide_eq_true_eq] at h
   exact ⟨Rat.le_trans h.1 hx.1, Rat.le_trans hx.2 h.2⟩
 
+theorem within_inhabited (tol : CanonicalRat) (htol : 0 ≤ tol) :
+    ∃ I : Interval, (-tol ∈ I ∧ tol ∈ I) ∧ I.within tol = true := by
+  refine ⟨⟨-tol, tol⟩, ⟨?_, ?_⟩, ?_⟩
+  · rw [Interval.mem_iff]
+    exact ⟨Rat.le_refl, by grind⟩
+  · rw [Interval.mem_iff]
+    exact ⟨by grind, Rat.le_refl⟩
+  · simp [Interval.within]
+
 /-- Scale an interval by a rational. -/
 @[expose] def scale (c : CanonicalRat) (I : Interval) : Interval :=
   Interval.mul (Interval.ofPoint c) I
@@ -359,43 +368,323 @@ theorem expEnclosure_of_half {x e₀ : CanonicalRat}
   unfold expEnclosure
   exact Interval.sqrIterRound_mem roundScale_pos (Interval.roundOut_mem roundScale_pos h) _
 
-private theorem expFn_mul_pow_two
-    (expFn : CanonicalRat → CanonicalRat)
-    (hDouble : ∀ t : CanonicalRat, expFn (2 * t) = expFn t * expFn t)
-    (t : CanonicalRat) :
-    ∀ k : Nat, expFn (t * ratPow 2 k) = ratPow (expFn t) (2 ^ k)
-  | 0 => by simp [ratPow]
-  | k + 1 => by
-    have harg : t * ratPow 2 (k + 1) = 2 * (t * ratPow 2 k) := by
+/-- Ordered ring/field extension of `CanonicalRat` (such as `ℝ` or `CanonicalRat` itself)
+supporting interval membership and squaring. `ofRat_le_iff` embeds `(ℚ, ≤)` faithfully
+(`q₁ ≤ q₂ ↔ le (ofRat q₁) (ofRat q₂)`), ruling out degenerate `0 = 1` models. -/
+structure OrderedRatExt.{u} (R : Type u) where
+  ofRat : CanonicalRat → R
+  mul : R → R → R
+  le : R → R → Prop
+  le_refl : ∀ a : R, le a a
+  le_trans : ∀ {a b c : R}, le a b → le b c → le a c
+  ofRat_le_iff : ∀ {q₁ q₂ : CanonicalRat}, le (ofRat q₁) (ofRat q₂) ↔ q₁ ≤ q₂
+  sqr_mem : ∀ {r : R} {I : Interval},
+    (le (ofRat I.lo) r ∧ le r (ofRat I.hi)) →
+    (le (ofRat (Interval.sqr I).lo) (mul r r) ∧ le (mul r r) (ofRat (Interval.sqr I).hi))
+
+namespace OrderedRatExt
+
+/-- Interval containment `I.lo ≤ r ≤ I.hi` inside an ordered extension `R` of `CanonicalRat`. -/
+def Mem.{u} {R : Type u} (E : OrderedRatExt R) (r : R) (I : Interval) : Prop :=
+  E.le (E.ofRat I.lo) r ∧ E.le r (E.ofRat I.hi)
+
+/-- Strict inequality `a < b` induced by `E.le`. -/
+def lt.{u} {R : Type u} (E : OrderedRatExt R) (a b : R) : Prop :=
+  E.le a b ∧ ¬ E.le b a
+
+/-- Iterated squaring `r ↦ r^{2^k}` in `R`. -/
+def iterSqr.{u} {R : Type u} (E : OrderedRatExt R) (r : R) : Nat → R
+  | 0 => r
+  | k + 1 => E.mul (E.iterSqr r k) (E.iterSqr r k)
+
+/-- Canonical `OrderedRatExt` instance on `CanonicalRat` itself. -/
+def rat : OrderedRatExt CanonicalRat where
+  ofRat q := q
+  mul a b := a * b
+  le a b := a ≤ b
+  le_refl _ := Rat.le_refl
+  le_trans h₁ h₂ := Rat.le_trans h₁ h₂
+  ofRat_le_iff := Iff.rfl
+  sqr_mem h := Interval.sqr_mem h
+
+/-- Any interval containing an element of an `OrderedRatExt` is well-formed (`I.lo ≤ I.hi` in `ℚ`). -/
+theorem mem_imp_wf.{u} {R : Type u} (E : OrderedRatExt R) {r : R} {I : Interval}
+    (hr : E.Mem r I) : I.Wf :=
+  E.ofRat_le_iff.mp (E.le_trans hr.1 hr.2)
+
+theorem roundOut_mem.{u} {R : Type u} (E : OrderedRatExt R) {r : R} {I : Interval} {s : Nat}
+    (hs : 0 < s) (hr : E.Mem r I) :
+    E.Mem r (I.roundOut s) := by
+  have hWf : I.lo ≤ I.hi := E.mem_imp_wf hr
+  have hLo : I.lo ∈ I.roundOut s := Interval.roundOut_mem hs ⟨Rat.le_refl, hWf⟩
+  have hHi : I.hi ∈ I.roundOut s := Interval.roundOut_mem hs ⟨hWf, Rat.le_refl⟩
+  rw [Interval.mem_iff] at hLo hHi
+  exact ⟨E.le_trans (E.ofRat_le_iff.mpr hLo.1) hr.1,
+         E.le_trans hr.2 (E.ofRat_le_iff.mpr hHi.2)⟩
+
+theorem sqrIterRound_mem.{u} {R : Type u} (E : OrderedRatExt R) {r : R} {I : Interval} {s : Nat}
+    (hs : 0 < s) (hr : E.Mem r I) :
+    ∀ k : Nat, E.Mem (E.iterSqr r k) (I.sqrIterRound s k)
+  | 0 => hr
+  | k + 1 => E.roundOut_mem hs (E.sqr_mem (E.sqrIterRound_mem hs hr k))
+
+end OrderedRatExt
+
+private theorem halvings_go_prev_gt_half :
+    ∀ (fuel : Nat) (a : CanonicalRat) (m : Nat),
+      m < halvings.go a fuel →
+      1 / 2 < a / ratPow 2 m
+  | 0, _, _, hm => by simp [halvings.go] at hm
+  | fuel + 1, a, m, hm => by
+    unfold halvings.go at hm
+    split at hm
+    · omega
+    · rename_i hgt
+      cases m with
+      | zero =>
+        simp only [ratPow]
+        grind
+      | succ m' =>
+        have ihm := halvings_go_prev_gt_half fuel (a / 2) m' (by omega)
+        have hdiv : (a / 2) / ratPow 2 m' = a / ratPow 2 (m' + 1) := by
+          have hs : (0 : CanonicalRat) < ratPow 2 m' := ratPow_pos (by decide) m'
+          rw [ratPow_succ, Rat.div_def, Rat.div_def, Rat.div_def, Rat.mul_assoc]
+          congr 1
+          grind
+        rwa [hdiv] at ihm
+
+private theorem halvings_intermediate_gt_half (x : CanonicalRat) {j : Nat}
+    (hj : j < halvings x) :
+    1 / 2 < ratAbs (2 * ((x / ratPow 2 (halvings x)) * ratPow 2 j)) := by
+  let k := halvings x
+  let m := k - (j + 1)
+  have hm_lt : m < k := by omega
+  have hmk : m + (j + 1) = k := by omega
+  have hprev : 1 / 2 < ratAbs x / ratPow 2 m := by
+    unfold halvings at hm_lt
+    exact halvings_go_prev_gt_half _ (ratAbs x) m hm_lt
+  have hsm : (0 : CanonicalRat) < ratPow 2 m := ratPow_pos (by decide) m
+  have hsj1 : (0 : CanonicalRat) < ratPow 2 (j + 1) := ratPow_pos (by decide) (j + 1)
+  have harg : 2 * ((x / ratPow 2 k) * ratPow 2 j) = x / ratPow 2 m := by
+    have hsplit : ratPow 2 k = ratPow 2 m * ratPow 2 (j + 1) := by
+      rw [← hmk, ratPow_add]
+    have hj1 : ratPow 2 (j + 1) = ratPow 2 j * 2 := ratPow_succ 2 j
+    rw [hsplit]
+    grind
+  rw [harg, ratAbs_div_of_pos hsm]
+  exact hprev
+
+private theorem expFn_iterSqr_along_halvings.{u}
+    {R : Type u} (E : OrderedRatExt R)
+    (expFn : CanonicalRat → R)
+    (hDouble : ∀ t : CanonicalRat, 1 / 2 < ratAbs (2 * t) → expFn (2 * t) = E.mul (expFn t) (expFn t))
+    (x : CanonicalRat) :
+    ∀ j : Nat, j ≤ halvings x →
+      expFn ((x / ratPow 2 (halvings x)) * ratPow 2 j) =
+        E.iterSqr (expFn (x / ratPow 2 (halvings x))) j
+  | 0, _ => by simp [ratPow, OrderedRatExt.iterSqr]
+  | j + 1, hj1 => by
+    let t₀ := x / ratPow 2 (halvings x)
+    have hgt : 1 / 2 < ratAbs (2 * (t₀ * ratPow 2 j)) :=
+      halvings_intermediate_gt_half x (by omega)
+    have harg : t₀ * ratPow 2 (j + 1) = 2 * (t₀ * ratPow 2 j) := by
       rw [ratPow_succ]
       grind
-    have hpow : ratPow (expFn t) (2 ^ (k + 1)) =
-        ratPow (expFn t) (2 ^ k) * ratPow (expFn t) (2 ^ k) := by
-      rw [Nat.pow_succ, Nat.mul_two, ratPow_add]
-    rw [harg, hDouble, expFn_mul_pow_two expFn hDouble t k, hpow]
+    rw [harg, hDouble (t₀ * ratPow 2 j) hgt,
+        expFn_iterSqr_along_halvings E expFn hDouble x j (by omega)]
+    rfl
 
 /-- **Unconditional Exponential Enclosure Soundness (`expEnclosure_sound`)**:
-For any exponential map `expFn` satisfying the local `[−1/2, 1/2]` Taylor–Lagrange enclosure `hHalf`
-and functional squaring law `hDouble` (`exp(2t) = exp(t)²`), `expFn x ∈ expEnclosure x` holds
-**unconditionally for every `x : CanonicalRat`** (with zero `|x| ≤ 2⁶³` restriction). -/
-theorem expEnclosure_sound
-    (expFn : CanonicalRat → CanonicalRat)
-    (hHalf : ∀ t : CanonicalRat, ratAbs t ≤ 1 / 2 → expFn t ∈ expHalfEnclosure t)
-    (hDouble : ∀ t : CanonicalRat, expFn (2 * t) = expFn t * expFn t)
+For any ordered extension `R` of `CanonicalRat` (`OrderedRatExt R`, including `ℝ` and `CanonicalRat`
+itself) and any exponential map `expFn : CanonicalRat → R` satisfying:
+1. `hHalf`: the local `[−1/2, 1/2]` Taylor–Lagrange enclosure `expFn t ∈ expHalfEnclosure t`, and
+2. `hDouble`: the range-reduction squaring law `expFn (2 * t) = expFn t * expFn t` whenever `2 * t`
+   lies outside `[−1/2, 1/2]` (`1 / 2 < |2 * t|`, which holds a fortiori when `exp(2t) = exp(t)²`
+   for all `t`),
+`E.Mem (expFn x) (expEnclosure x)` holds **unconditionally for every `x : CanonicalRat`**. -/
+theorem expEnclosure_sound.{u}
+    {R : Type u} (E : OrderedRatExt R)
+    (expFn : CanonicalRat → R)
+    (hHalf : ∀ t : CanonicalRat, ratAbs t ≤ 1 / 2 → E.Mem (expFn t) (expHalfEnclosure t))
+    (hDouble : ∀ t : CanonicalRat, 1 / 2 < ratAbs (2 * t) → expFn (2 * t) = E.mul (expFn t) (expFn t))
     (x : CanonicalRat) :
-    expFn x ∈ expEnclosure x := by
+    E.Mem (expFn x) (expEnclosure x) := by
   let k := halvings x
   let s := ratPow 2 k
   have hs : (0 : CanonicalRat) < s := ratPow_pos (by decide) k
-  have hmem : expFn (x / s) ∈ expHalfEnclosure (x / s) :=
+  have hmem : E.Mem (expFn (x / s)) (expHalfEnclosure (x / s)) :=
     hHalf (x / s) (halvings_arg_abs_le_half x)
-  have hpow : ratPow (expFn (x / s)) (2 ^ k) ∈ expEnclosure x :=
-    expEnclosure_of_half hmem
+  have hiter : E.Mem (E.iterSqr (expFn (x / s)) k) (expEnclosure x) := by
+    unfold expEnclosure
+    exact E.sqrIterRound_mem roundScale_pos (E.roundOut_mem roundScale_pos hmem) k
   have hx : (x / s) * s = x := by
     rw [Rat.div_def, Rat.mul_assoc, Rat.inv_mul_cancel s (Rat.ne_of_gt hs), Rat.mul_one]
-  have heq : expFn x = ratPow (expFn (x / s)) (2 ^ k) :=
-    (congrArg expFn hx.symm).trans (expFn_mul_pow_two expFn hDouble (x / s) k)
-  exact heq ▸ hpow
+  have heq : expFn x = E.iterSqr (expFn (x / s)) k :=
+    (congrArg expFn hx.symm).trans (expFn_iterSqr_along_halvings E expFn hDouble x k (Nat.le_refl k))
+  exact heq ▸ hiter
+
+/-- Concrete range-reduced rational Taylor witness `x ↦ T₁₂(x / 2ᵏ)^{2ᵏ}` (`k = halvings x`)
+constructively inhabiting the hypotheses of `expEnclosure_sound` at `R = CanonicalRat`. -/
+def expHalvingTaylor (x : CanonicalRat) : CanonicalRat :=
+  let k := halvings x
+  ratPow (expTaylor expDeg (x / ratPow 2 k)) (2 ^ k)
+
+private theorem one_le_ratPow_two : ∀ n : Nat, (1 : CanonicalRat) ≤ ratPow 2 n
+  | 0 => by simp [ratPow]
+  | n + 1 => by
+    have ih := one_le_ratPow_two n
+    rw [ratPow_succ]
+    grind
+
+private theorem nat_cast_le_ratPow_two : ∀ n : Nat, (n : CanonicalRat) ≤ ratPow 2 n
+  | 0 => by
+    simp only [ratPow]
+    decide
+  | n + 1 => by
+    have ih := nat_cast_le_ratPow_two n
+    have hpos := one_le_ratPow_two n
+    have hcast : ((n + 1 : Nat) : CanonicalRat) = (n : CanonicalRat) + 1 := by
+      exact_mod_cast (rfl : n + 1 = n + 1)
+    rw [hcast, ratPow_succ]
+    grind
+
+private theorem halvings_fuel_two_mul_le_pow (a : CanonicalRat) (ha : 0 ≤ a) :
+    2 * a ≤ ratPow 2 (2 * a).ceil.toNat := by
+  let fuel := (2 * a).ceil.toNat
+  have h2a_nonneg : (0 : Int) ≤ (2 * a).ceil := by
+    have h0 : (0 : CanonicalRat) ≤ 2 * a := by grind
+    exact_mod_cast (Rat.le_trans h0 Rat.le_ceil)
+  have hto : ((fuel : Nat) : Int) = (2 * a).ceil := Int.toNat_of_nonneg h2a_nonneg
+  have hc : 2 * a ≤ ((2 * a).ceil : CanonicalRat) := Rat.le_ceil
+  have hle_fuel : 2 * a ≤ (fuel : CanonicalRat) := by
+    rw [← hto] at hc
+    exact_mod_cast hc
+  exact Rat.le_trans hle_fuel (nat_cast_le_ratPow_two fuel)
+
+private theorem halvings_go_succ (a : CanonicalRat) (f : Nat) :
+    halvings.go a (f + 1) = if a ≤ 1 / 2 then 0 else halvings.go (a / 2) f + 1 := rfl
+
+private theorem halvings_go_fuel_irrel :
+    ∀ (fuel₁ fuel₂ : Nat) (a : CanonicalRat),
+      2 * a ≤ ratPow 2 fuel₁ →
+      2 * a ≤ ratPow 2 fuel₂ →
+      halvings.go a fuel₁ = halvings.go a fuel₂
+  | 0, fuel₂, a, h₁, _ => by
+    simp only [ratPow] at h₁
+    have ha : a ≤ 1 / 2 := by grind
+    cases fuel₂ with
+    | zero => rfl
+    | succ f₂ =>
+      change 0 = if a ≤ 1 / 2 then 0 else halvings.go (a / 2) f₂ + 1
+      split
+      · rfl
+      · rename_i hna
+        exact absurd ha hna
+  | f₁ + 1, fuel₂, a, h₁, h₂ => by
+    rw [halvings_go_succ]
+    split
+    · rename_i ha
+      cases fuel₂ with
+      | zero => rfl
+      | succ f₂ =>
+        rw [halvings_go_succ]
+        split
+        · rfl
+        · rename_i hna
+          exact absurd ha hna
+    · rename_i hgt
+      cases fuel₂ with
+      | zero =>
+        simp only [ratPow] at h₂
+        grind
+      | succ f₂ =>
+        rw [halvings_go_succ]
+        split
+        · rename_i ha
+          exact absurd ha hgt
+        · rw [ratPow_succ] at h₁ h₂
+          rw [halvings_go_fuel_irrel f₁ f₂ (a / 2) (by grind) (by grind)]
+
+theorem expHalvingTaylor_mem_half (t : CanonicalRat) (ht : ratAbs t ≤ 1 / 2) :
+    expHalvingTaylor t ∈ expHalfEnclosure t := by
+  have hk0 : halvings t = 0 := by
+    unfold halvings
+    exact halvings_go_fuel_irrel _ 0 (ratAbs t)
+      (halvings_fuel_two_mul_le_pow (ratAbs t) (ratAbs_nonneg t))
+      (by simp only [ratPow]; grind)
+  have hRemNonneg : 0 ≤ expHalfRem t := by
+    unfold expHalfRem fact13
+    have hp : 0 ≤ ratPow (ratAbs t) 13 := ratPow_nonneg (ratAbs_nonneg t) 13
+    have hinv : (0 : CanonicalRat) ≤ (6227020800 : CanonicalRat)⁻¹ :=
+      Rat.le_of_lt (Rat.inv_pos.2 (by decide))
+    rw [Rat.div_def]
+    exact Rat.mul_nonneg (by grind) hinv
+  unfold expHalvingTaylor expHalfEnclosure
+  rw [hk0, Interval.mem_iff]
+  dsimp only
+  simp only [Nat.pow_zero, ratPow]
+  have ht1 : t / 1 = t := by grind
+  rw [ht1]
+  grind
+
+theorem expHalvingTaylor_double_of_gt_half (t : CanonicalRat) (ht : 1 / 2 < ratAbs (2 * t)) :
+    expHalvingTaylor (2 * t) = expHalvingTaylor t * expHalvingTaylor t := by
+  have hAbs2 : ratAbs (2 * t) = 2 * ratAbs t := by
+    unfold ratAbs
+    by_cases h : t < 0
+    · have h2 : 2 * t < 0 := by grind
+      simp only [h, h2, ↓reduceIte]
+      grind
+    · have h2 : ¬ (2 * t < 0) := by grind
+      simp only [h, h2, ↓reduceIte]
+  have hgt : ¬ (2 * ratAbs t ≤ 1 / 2) := by rw [← hAbs2]; grind
+  have hk : halvings (2 * t) = halvings t + 1 := by
+    unfold halvings
+    rw [hAbs2]
+    let a := ratAbs t
+    let f₁ := (2 * a).ceil.toNat
+    have hf₁ : 2 * a ≤ ratPow 2 f₁ := halvings_fuel_two_mul_le_pow a (ratAbs_nonneg t)
+    have hf₂ : 2 * (2 * a) ≤ ratPow 2 (2 * (2 * a)).ceil.toNat :=
+      halvings_fuel_two_mul_le_pow (2 * a) (by have := ratAbs_nonneg t; grind)
+    have hEq := halvings_go_fuel_irrel (2 * (2 * a)).ceil.toNat (f₁ + 1) (2 * a) hf₂
+      (by rw [ratPow_succ]; grind)
+    rw [hEq, halvings_go_succ]
+    split
+    · rename_i hle
+      exact absurd hle hgt
+    · have hdiv : (2 * a) / 2 = a := by grind
+      rw [hdiv]
+  unfold expHalvingTaylor
+  dsimp only
+  rw [hk]
+  let k := halvings t
+  have harg : (2 * t) / ratPow 2 (k + 1) = t / ratPow 2 k := by
+    have hs : (0 : CanonicalRat) < ratPow 2 k := ratPow_pos (by decide) k
+    rw [ratPow_succ]
+    grind
+  rw [harg, Nat.pow_succ, Nat.mul_two, ratPow_add]
+
+/-- **Explicit Non-Vacuity & Inhabitedness Witness (`expEnclosure_sound_nonvacuous`)**:
+Exhibits `(CanonicalRat, OrderedRatExt.rat, expHalvingTaylor)` constructively satisfying **all**
+hypotheses of `expEnclosure_sound` (together with `2 < expFn 1`), deduces
+`expHalvingTaylor x ∈ expEnclosure x`, and certifies `(expEnclosure x).Wf` (`lo ≤ hi`) for all `x`. -/
+theorem expEnclosure_sound_nonvacuous (x : CanonicalRat) :
+    (∃ (R : Type) (E : OrderedRatExt R) (expFn : CanonicalRat → R),
+      (∀ t : CanonicalRat, ratAbs t ≤ 1 / 2 → E.Mem (expFn t) (expHalfEnclosure t)) ∧
+      (∀ t : CanonicalRat, 1 / 2 < ratAbs (2 * t) → expFn (2 * t) = E.mul (expFn t) (expFn t)) ∧
+      E.lt (E.ofRat 2) (expFn 1) ∧
+      E.Mem (expFn x) (expEnclosure x)) ∧
+    expHalvingTaylor x ∈ expEnclosure x ∧
+    (expEnclosure x).Wf := by
+  have hMem : expHalvingTaylor x ∈ expEnclosure x :=
+    expEnclosure_sound OrderedRatExt.rat expHalvingTaylor
+      expHalvingTaylor_mem_half expHalvingTaylor_double_of_gt_half x
+  have hGt2 : OrderedRatExt.rat.lt (OrderedRatExt.rat.ofRat 2) (expHalvingTaylor 1) := by
+    unfold OrderedRatExt.lt OrderedRatExt.rat expHalvingTaylor
+    decide +kernel
+  exact ⟨⟨CanonicalRat, OrderedRatExt.rat, expHalvingTaylor,
+          expHalvingTaylor_mem_half, expHalvingTaylor_double_of_gt_half, hGt2, hMem⟩,
+         hMem, Interval.mem_imp_wf hMem⟩
 
 /-! ## 4. The Bernoulli function -/
 
