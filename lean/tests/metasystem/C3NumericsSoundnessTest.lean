@@ -80,21 +80,35 @@ theorem enclosure_negative_large_input_halvings :
     Obend.Hardware.Device.ratAbs (x / Obend.Hardware.Device.ratPow 2 (halvings x)) = CanonicalRat.mk 1 2 := by
   decide +kernel
 
-/-- Universal instantiation of `halvings_arg_abs_le_half` and `expEnclosure_sound` at arbitrary `x`. -/
-theorem enclosure_unconditional_bridge
-    (expFn : CanonicalRat → CanonicalRat)
-    (hHalf : ∀ t : CanonicalRat, Obend.Hardware.Device.ratAbs t ≤ 1 / 2 → expFn t ∈ expHalfEnclosure t)
-    (hDouble : ∀ y : CanonicalRat, expFn (2 * y) = expFn y * expFn y)
+/-- Universal instantiation of `halvings_arg_abs_le_half`, `expEnclosure_sound`, and
+`expEnclosure_sound_nonvacuous` across any `OrderedRatExt R` at arbitrary `x`. -/
+theorem enclosure_unconditional_bridge.{u}
+    {R : Type u} (E : OrderedRatExt R)
+    (expFn : CanonicalRat → R)
+    (hHalf : ∀ t : CanonicalRat, Obend.Hardware.Device.ratAbs t ≤ 1 / 2 → E.Mem (expFn t) (expHalfEnclosure t))
+    (hDouble : ∀ y : CanonicalRat, 1 / 2 < Obend.Hardware.Device.ratAbs (2 * y) → expFn (2 * y) = E.mul (expFn y) (expFn y))
     (x : CanonicalRat) :
     Obend.Hardware.Device.ratAbs (x / Obend.Hardware.Device.ratPow 2 (halvings x)) ≤ 1 / 2 ∧
-    expFn x ∈ expEnclosure x :=
-  ⟨halvings_arg_abs_le_half x, expEnclosure_sound expFn hHalf hDouble x⟩
+    E.Mem (expFn x) (expEnclosure x) ∧
+    expHalvingTaylor x ∈ expEnclosure x ∧
+    (expEnclosure x).Wf :=
+  ⟨halvings_arg_abs_le_half x,
+   expEnclosure_sound E expFn hHalf hDouble x,
+   (expEnclosure_sound_nonvacuous x).2⟩
 
 def brokenHalvingsHardcoded64 (_ : CanonicalRat) : Nat :=
   64
 
 #tooth Obend.Hardware.Device.halvings_arg_abs_le_half
   by mutation Obend.Hardware.Device.halvings := brokenHalvingsHardcoded64
+
+def brokenCollapsedZeroExpEnclosure (_ : CanonicalRat) : Interval :=
+  Interval.ofPoint 0
+
+-- Under the old vacuous `expFn : ℚ → ℚ` signature, mutating `expEnclosure` to `[0, 0]` remained
+-- vacuously provable (`False → _`); `expEnclosure_sound_nonvacuous` kills this mutation immediately.
+#tooth Obend.Hardware.Device.expEnclosure_sound_nonvacuous
+  by mutation Obend.Hardware.Device.expEnclosure := brokenCollapsedZeroExpEnclosure
 
 
 /-! ## 2. P0 #24: `Obend.Analysis.SosLyapunov` — `10^24` Serialization, Decimal/Scientific Parsing & Dimension Refusal -/
@@ -429,6 +443,7 @@ def brokenSzegedyReflectIntPlus
 
 #print axioms Obend.Hardware.Device.halvings_arg_abs_le_half
 #print axioms Obend.Hardware.Device.expEnclosure_sound
+#print axioms Obend.Hardware.Device.expEnclosure_sound_nonvacuous
 #print axioms Obend.Analysis.checkSosLyapunov_sound
 #print axioms Obend.Analysis.checkSosLyapunovProblem_sound
 #print axioms Obend.Analysis.checkSosLyapunovProblem_refuted

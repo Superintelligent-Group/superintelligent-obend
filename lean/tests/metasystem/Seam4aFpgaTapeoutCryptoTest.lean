@@ -404,29 +404,83 @@ def countingState : Poseidon2State12 :=
    ⟨Goldilocks.ofNat 4, Goldilocks.ofNat 5, Goldilocks.ofNat 6, Goldilocks.ofNat 7⟩,
    ⟨Goldilocks.ofNat 8, Goldilocks.ofNat 9, Goldilocks.ofNat 10, Goldilocks.ofNat 11⟩⟩
 
--- The vectors of `test_poseidon2_perm12_matches_lean` and `test_poseidon2_hash32_matches_lean`.
+-- The vectors of `test_poseidon2_perm12_matches_lean` and `test_poseidon2_hash32_matches_lean` (`V[0] = -64`).
 theorem poseidon2Perm12_zero_kat :
     (poseidon2Perm12 ⟨lane4Zero, lane4Zero, lane4Zero⟩).toList.map (·.val) =
-    [444626622888223479, 10486189390627733761, 5399253379101132897, 5052010181030417489, 6267397916963039069,
-     9245911245446346418, 9661705423445490201, 787089484585814203, 14953692268052641311, 11458212182116269477,
-     16934754160153525625, 6948793053817514326] := by decide +kernel
+    [11097132300696900493, 4817033503716131495, 7555460377608229031, 224872347733495109, 12839575527406164415,
+     4503213659669793860, 3856907550950136457, 12429174811543629109, 2496023140331315972,
+     14004296959070018086, 17098536311382213852, 11122848566303444518] := by decide +kernel
 theorem poseidon2Perm12_counting_kat :
     (poseidon2Perm12 countingState).toList.map (·.val) =
-    [12427618818045938679, 15603055080602884714, 13440107678219667309, 8886947539732114456, 14710374340000099479,
-     10111918623281920586, 1604190142837255372, 14400339433171367428, 13181657164602338457, 12801330883977696413,
-     8886499513080244401, 2541968083255470153] := by decide +kernel
+    [15394614472075140167, 17426717166088917338, 6801718797131174547, 16472111479231588472,
+     17448160488936968945, 17334337553305053015, 8224495231203272238, 10470295389528806840,
+     2356879640365327750, 5001479999475202058, 16968076913882017596, 10007092176717462225] := by decide +kernel
 theorem poseidon2Hash32_empty_kat : poseidon2Hash32 [] =
-    [138, 190, 114, 201, 171, 117, 245, 165, 115, 111, 42, 219, 119, 171, 10, 76, 186, 173, 182, 128, 209, 69, 108,
-     220, 169, 239, 117, 130, 81, 43, 90, 65] := by decide +kernel
+    [98, 50, 199, 227, 113, 250, 97, 21, 153, 172, 101, 152, 3, 218, 74, 102, 125, 82, 16, 81, 67, 240, 169,
+     3, 182, 44, 175, 103, 208, 108, 236, 182] := by decide +kernel
 theorem poseidon2Hash32_zero_byte_kat : poseidon2Hash32 [0x00] =
-    [233, 139, 182, 115, 89, 72, 21, 126, 245, 149, 62, 120, 26, 254, 106, 209, 111, 96, 153, 251, 141, 207, 186,
-     100, 74, 174, 87, 99, 85, 43, 117, 48] := by decide +kernel
+    [5, 212, 79, 90, 246, 154, 224, 32, 82, 183, 111, 43, 242, 36, 0, 62, 47, 3, 145, 143, 202, 209, 65, 236,
+     138, 142, 242, 94, 112, 126, 127, 119] := by decide +kernel
 theorem poseidon2Hash32_three_byte_kat : poseidon2Hash32 [0x01, 0x02, 0x03] =
-    [196, 180, 177, 170, 216, 21, 133, 248, 62, 149, 42, 39, 133, 17, 81, 112, 144, 59, 209, 93, 95, 26, 110, 112,
-     237, 219, 50, 120, 128, 103, 142, 202] := by decide +kernel
+    [145, 131, 157, 142, 227, 174, 48, 41, 30, 211, 105, 211, 177, 29, 194, 184, 170, 56, 57, 241, 28, 165,
+     224, 218, 95, 234, 79, 237, 120, 163, 28, 86] := by decide +kernel
 theorem poseidon2Hash32_two_block_kat : poseidon2Hash32 ((List.range 65).map UInt8.ofNat) =
-    [39, 156, 89, 149, 6, 55, 81, 19, 223, 99, 122, 54, 228, 229, 22, 100, 172, 170, 142, 201, 25, 219, 70, 102,
-     137, 73, 207, 135, 141, 48, 175, 71] := by decide +kernel
+    [229, 231, 194, 177, 87, 165, 63, 177, 245, 133, 98, 146, 205, 194, 227, 85, 207, 215, 52, 194, 155, 126,
+     23, 97, 106, 82, 205, 115, 209, 0, 79, 199] := by decide +kernel
+
+section SupersededNegTwoDiagonalRegression
+open Obend.Crypto.Fast
+
+private def state12ScaleTest (c : Goldilocks) (v : Poseidon2State12) : Poseidon2State12 :=
+  ⟨lane4Scale c v.b0, lane4Scale c v.b1, lane4Scale c v.b2⟩
+
+private def applyMIFirstEntryNegTwo (st : Poseidon2State12) : Poseidon2State12 :=
+  let s := state12Sum st
+  ⟨⟨Goldilocks.add (Goldilocks.mul (goldOfInt (-2)) st.b0.x0) s,
+    Goldilocks.add st.b0.x1 s,
+    Goldilocks.add (Goldilocks.mul (goldOfInt 2) st.b0.x2) s,
+    Goldilocks.add (Goldilocks.mul (goldOfInt 4) st.b0.x3) s⟩,
+   ⟨Goldilocks.add (Goldilocks.mul (goldOfInt 8) st.b1.x0) s,
+    Goldilocks.add (Goldilocks.mul (goldOfInt 16) st.b1.x1) s,
+    Goldilocks.add (Goldilocks.mul (goldOfInt 32) st.b1.x2) s,
+    Goldilocks.add (Goldilocks.mul (goldOfInt 64) st.b1.x3) s⟩,
+   ⟨Goldilocks.add (Goldilocks.mul (goldOfInt 128) st.b2.x0) s,
+    Goldilocks.add (Goldilocks.mul (goldOfInt 256) st.b2.x1) s,
+    Goldilocks.add (Goldilocks.mul (goldOfInt 512) st.b2.x2) s,
+    Goldilocks.add (Goldilocks.mul (goldOfInt 1024) st.b2.x3) s⟩⟩
+
+private def miRationalEigvec0 : Poseidon2State12 :=
+  ⟨⟨Goldilocks.ofNat 8415733694666260766, Goldilocks.ofNat 10081604446170657914,
+    Goldilocks.ofNat 13429757962329074280, Goldilocks.ofNat 7212905167159261059⟩,
+   ⟨Goldilocks.ofNat 7177536167446655380, Goldilocks.ofNat 16173559831921257667,
+    Goldilocks.ofNat 11410676009809774369, Goldilocks.ofNat 263994636750658321⟩,
+   ⟨Goldilocks.ofNat 11338638786567724180, Goldilocks.ofNat 17416777037312523837,
+    Goldilocks.ofNat 8867871345638664998, Goldilocks.ofNat 17338153400129577477⟩⟩
+
+/-- `#tooth` Regression witness: the superseded `V[0] = -2` internal matrix had a rational
+Goldilocks eigenvector (`λ₀ = 8914261387277420341`), whereas the deployed `V[0] = -64` `applyMI`
+maps `miRationalEigvec0` strictly outside its entire 1D span (`newMatrixBreaksOldEigenline`). -/
+theorem oldEigenlineRegression :
+    miRationalEigvec0 ≠ ⟨lane4Zero, lane4Zero, lane4Zero⟩ ∧
+    applyMIFirstEntryNegTwo miRationalEigvec0 =
+      state12ScaleTest (Goldilocks.ofNat 8914261387277420341) miRationalEigvec0 ∧
+    ¬ (applyMI miRationalEigvec0 =
+      state12ScaleTest (Goldilocks.ofNat 8914261387277420341) miRationalEigvec0) := by decide +kernel
+
+theorem newMatrixBreaksOldEigenline (c : Goldilocks) :
+    applyMI miRationalEigvec0 ≠ state12ScaleTest c miRationalEigvec0 := by
+  let v := miRationalEigvec0
+  have minor : Goldilocks.mul (applyMI v).b0.x0 v.b0.x1 ≠
+      Goldilocks.mul (applyMI v).b0.x1 v.b0.x0 := by decide +kernel
+  intro h
+  apply minor
+  change applyMI v = state12ScaleTest c v at h
+  rw [h]
+  change CommRingOps.mul (CommRingOps.mul c v.b0.x0) v.b0.x1 =
+    CommRingOps.mul (CommRingOps.mul c v.b0.x1) v.b0.x0
+  rw [LawfulCommRing.mul_assoc, LawfulCommRing.mul_assoc, LawfulCommRing.mul_comm v.b0.x0]
+
+end SupersededNegTwoDiagonalRegression
 #guard (poseidon2PadBytes [0x01, 0x02, 0x03]).map (·.val) == [283686901645312, 1, 0, 0, 0, 0, 0, 72057594037927936]
 #guard poseidon2Perm12Inv (poseidon2Perm12 countingState) == countingState
 
