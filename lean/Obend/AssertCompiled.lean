@@ -3,89 +3,46 @@ module
 Re-runs actual closed Boolean oracle claims; rejects arbitrary named axioms.
 This marks compiler trust and does not certify general source refinement. -/
 public import Obend.AssertAxioms
-@[expose] public section
+public section
 
 /- Lean v4.35 removed `Lean.ofReduceBool` and `Lean.ofReduceNat` (and `Lean.reduceBool`) from
 `Init`. Until v4.30 this command accepted those two by name, sound only because the prelude
 occupied the names; at v4.35 the names are free, so a user `axiom Lean.ofReduceBool : False` could
 be declared and would have been accepted. Every oracle is now an axiom whose `<closed Bool> = true`
-claim is re-run below; there is no by-name branch. -/
+claim is re-run through `Obend.AssertAxioms.verifyNativeOracleAxiom`; there is no by-name branch. -/
 
-/-- The Boolean claim a `native_decide`/`bv_decide` oracle axiom makes, if its type has the shape
-that machinery emits. `Lean.Meta.nativeEqTrue` builds the axiom type as
-`mkApp3 (mkConst ``Eq [1]) (mkConst ``Bool) e (mkConst ``Bool.true)` for a CLOSED `e : Bool` it has
-just watched evaluate to `true`; this returns that `e`.
-
-Returning the CLAIM rather than a yes/no about the name is the whole point: it is what lets the
-caller go and re-run `e` for itself. A type that is not of this shape is not a compiled-evaluation
-claim at all and there is nothing to re-run — which is a refusal, not a pass. -/
+/-- Alias for `Obend.AssertAxioms.nativeOracleClaim?`: extracts `<closed Bool expr>` from
+`<closed Bool expr> = true` oracle axiom types and returns `none` on all other shapes. -/
 meta def Obend.AssertCompiled.nativeOracleClaim? (type : Lean.Expr) : Option Lean.Expr :=
-  match type.eq? with
-  | some (α, lhs, rhs) =>
-      if α.isConstOf ``Bool && rhs.isConstOf ``Bool.true then some lhs else none
-  | none => none
+  Obend.AssertAxioms.nativeOracleClaim? type
 
 open Lean Elab Command in
-/-- `#assert_compiled foo` — see the section note above. For every axiom `foo` rests on that is not
-kernel-clean, this command requires an axiom asserting `<closed Bool expr> = true` whose
-expression this command RE-RUNS through the compiled evaluator and watches return `true`. Anything
-else is a hard ERROR. It ALSO errors if `foo` rests on no oracle at all (then it is kernel-clean and
-the census `#assert_axioms_tree` already covers it). A name is never the test — see the `⚑ WHY A NAME CANNOT BE THE TEST`
-note above, which records the forgery this command used to accept. -/
+/-- `#assert_compiled foo` — for every axiom `foo` rests on outside Lean's standard three, this
+command requires a universe-monomorphic axiom asserting `<closed Bool expr> = true` whose Boolean
+claim re-evaluates to `true` via `Obend.AssertAxioms.verifyNativeOracleAxiom`. Anything else is a
+hard ERROR. It ALSO errors if `foo` rests on no oracle at all (then it is kernel-clean and
+`#assert_axioms_tree` already covers it). A name is never the test. -/
 elab "#assert_compiled" id:ident : command => do
   let name ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo id
   let axs ← Lean.collectAxioms name
-  let env ← getEnv
-  let mut candidates : Array (Name × Expr) := #[]
-  let mut refusals : Array MessageData := #[]
+  let mut nonStandard : Array Name := #[]
   for a in axs do
-    if Obend.AssertAxioms.standard.contains a then continue
-    match env.find? a with
-    | none =>
-      refusals := refusals.push m!"{a} — not present in the environment, so its claim cannot be \
-        re-run"
-    | some info =>
-      match Obend.AssertCompiled.nativeOracleClaim? info.type with
-      | none =>
-        refusals := refusals.push m!"{a} : {info.type} — NOT a compiled-evaluation claim. A \
-          `native_decide`/`bv_decide` oracle has type `<closed Bool expr> = true`; this axiom \
-          asserts something else, so there is nothing to re-run and nothing here is checkable \
-          by compiled evaluation"
-      | some claim =>
-        if info.levelParams.isEmpty then
-          candidates := candidates.push (a, claim)
-        else
-          refusals := refusals.push m!"{a} — universe-polymorphic ({info.levelParams}), so its \
-            claim is not a single closed Boolean this command can re-run"
-  -- ⚑ THE TEST. Not "is it named like an oracle" — "does the evaluator I am declaring trust in
-  -- still say what this axiom says". Same engine `native_decide` and `#guard` run on.
-  unless candidates.isEmpty do
-    let evalRefusals ← liftTermElabM do
+    unless Obend.AssertAxioms.standard.contains a do
+      nonStandard := nonStandard.push a
+  unless nonStandard.isEmpty do
+    let refusals ← liftTermElabM do
       let mut fails : Array MessageData := #[]
-      for (a, claim) in candidates do
-        let verdict : Option MessageData ←
-          try
-            let b ← unsafe Lean.Meta.evalExpr Bool (Lean.mkConst ``Bool) claim (checkMeta := false)
-            pure <| if b then none else
-              some m!"{a} — the compiled evaluator returns `false` for the claim this axiom \
-                asserts TRUE:{Lean.indentExpr claim}\nThis axiom is either forged or stale; \
-                either way nothing may rest on it"
-          catch ex =>
-            pure <| some m!"{a} — its claim could not be re-run through the compiled evaluator \
-              ({ex.toMessageData}), so the compiled-evaluation label is unsupported"
-        if let some f := verdict then fails := fails.push f
-      pure fails
-    refusals := refusals ++ evalRefusals
-  unless refusals.isEmpty do
-    throwError "compiled-pin FAIL: {name} rests on {refusals.size} axiom(s) this command REFUSES \
-      to certify as compiled evaluation:{Lean.indentD (MessageData.joinSep refusals.toList m!"\n")}\
-      \nA compiled-evaluation pin certifies a FACT re-run through the evaluator, never a name."
-  if candidates.isEmpty then
+      for a in nonStandard do
+        if let some err ← Obend.AssertAxioms.verifyNativeOracleAxiom a then
+          fails := fails.push err
+      return fails
+    unless refusals.isEmpty do
+      throwError "compiled-pin FAIL: {name} rests on {refusals.size} axiom(s) this command REFUSES \
+        to certify as compiled evaluation:{Lean.indentD (MessageData.joinSep refusals.toList m!"\n")}\
+        \nA compiled-evaluation pin certifies a FACT re-run through the evaluator, never a name."
+  if nonStandard.isEmpty then
     throwError "compiled-pin REFUSED: {name} rests on NO compiled-evaluation oracle — it is \
       kernel-clean, so the census already covers it and it needs no compiled pin. \
       Labelling a kernel-clean fact 'compiled' throws away its real footing"
-
-
-
 
 end
